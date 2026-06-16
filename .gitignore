@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+
+# API keys & secrets
+AWM/config.py
+*.env
+*.env.local
+
+# Large data files (only keep dummy_data.json for testing)
+data/eval/multiwoz21/data.zip
+data/eval/multiwoz21/data/data/dialogues.json
+data/eval/multiwoz21/.cache/
+data/eval/taskmaster/
+data/eval/csds/
+data/eval/abcd/
+data/eval/multiwoz22/
+data/eval/woz2/
+
+# Generated outputs
+outputs/
+logs/
+*.log
+
+# IDE & OS
+.idea/
+.vscode/
+*.swp
+*.swo
+Thumbs.db
+
+# Claude Code settings
+.claude/
+
+# Third-party repos (clone separately, see README)
+AWM/
+ExpeL/
+Trace2Skill/
