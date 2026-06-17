@@ -34,7 +34,6 @@ Thumbs.db
 # Claude Code settings
 .claude/
 
-# Third-party repos (clone separately, see README)
+# External repos (AWM/ExpeL not in git — clone/configure manually per README)
 AWM/
 ExpeL/
-Trace2Skill/

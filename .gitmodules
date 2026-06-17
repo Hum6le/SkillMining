@@ -1,0 +1,3 @@
+[submodule "Trace2Skill"]
+	path = Trace2Skill
+	url = https://github.com/Qwen-Applications/Trace2Skill.git

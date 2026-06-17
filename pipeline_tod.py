@@ -12,11 +12,17 @@ from pathlib import Path
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 os.environ["PYTHONUTF8"] = "1"
 
-# Inject API keys from AWM config
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "AWM"))
-from config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL
-os.environ["OPENAI_API_KEY"] = DEEPSEEK_API_KEY
-os.environ["OPENAI_BASE_URL"] = DEEPSEEK_BASE_URL
+# Ensure API keys are set (from env or fall back to AWM config)
+if "OPENAI_API_KEY" not in os.environ:
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "AWM"))
+        from config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL
+        os.environ["OPENAI_API_KEY"] = DEEPSEEK_API_KEY
+        os.environ["OPENAI_BASE_URL"] = DEEPSEEK_BASE_URL
+    except ImportError:
+        print("WARNING: Set OPENAI_API_KEY and OPENAI_BASE_URL env vars")
+        print("  or clone AWM with config.py to the project root.")
+        print("  git clone https://github.com/zorazrw/agent-workflow-memory.git AWM")
 
 # ── Paths ──────────────────────────────────────────────────────
 BASE = Path(__file__).resolve().parent
