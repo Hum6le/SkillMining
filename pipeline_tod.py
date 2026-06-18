@@ -40,7 +40,7 @@ MAX_TURNS = 6
 SEED = 41
 
 OUT = BASE / "outputs" / "tod_pipeline"
-SKILL_DIR = EVAL_TOD / "skills" / "tod"
+SKILL_DIR = EVAL_TOD / "skills"  # parent dir containing skill subdirs
 DB_DIR = "data/eval/multiwoz21/data/data"
 
 # ── Helpers ────────────────────────────────────────────────────
@@ -167,7 +167,7 @@ if failed_cases:
     evolved_skills_dir = str(OUT / "evolved_skills")
     os.makedirs(evolved_skills_dir, exist_ok=True)
     shutil.copytree(
-        str(SKILL_DIR),
+        str(SKILL_DIR / "tod"),
         os.path.join(evolved_skills_dir, "tod"),
         dirs_exist_ok=True,
     )
@@ -199,7 +199,7 @@ if failed_cases:
 
     evolved_agent = SkillPreloadedAgent(
         kb=kb,
-        skills_dir=os.path.join(evolved_skills_dir, "tod"),
+        skills_dir=evolved_skills_dir,
         model=MODEL,
         max_turns=MAX_TURNS,
         log_dir=str(OUT / "trajectories_evolved"),
