@@ -38,6 +38,8 @@ WORKERS_AGENT = 1  # Agent workers (keep 1 for LLM rate limiting)
 WORKERS_ANALYSIS = 4  # Error analysis parallel workers
 MAX_TURNS = 6
 SEED = 41
+LLM_JUDGE = True  # Enable multi-agent LLM Judge evaluation
+LLM_JUDGE_SAMPLE = 5  # Max dialogues to judge (cost control)
 
 OUT = BASE / "outputs" / "tod_pipeline"
 SKILL_DIR = EVAL_TOD / "skills"  # parent dir containing skill subdirs
@@ -108,10 +110,17 @@ eval_result = eval_func(
     predictions_path=str(OUT / "predictions_seed.json"),
     split=SPLIT,
     output_path=str(OUT / "eval_seed.json"),
+    llm_judge=LLM_JUDGE,
+    llm_model=MODEL,
+    llm_judge_sample_size=min(LLM_JUDGE_SAMPLE, len(dialogues)),
 )
 
 agg = eval_result["aggregate"]
 print(f"  Seed IR: {agg['info_rate']:.4f}, Success: {agg['success_rate']:.4f}")
+if LLM_JUDGE and eval_result.get("llm_judge"):
+    js = eval_result["llm_judge"]
+    if js:
+        print(f"  Seed Judge: {', '.join(f'{k}={v:.2f}' for k, v in js.items())}")
 
 # ═══════════════════════════════════════════════════════════════
 # STAGE 3: Error Analysis
@@ -216,11 +225,18 @@ if failed_cases:
         predictions_path=str(OUT / "predictions_evolved.json"),
         split=SPLIT,
         output_path=str(OUT / "eval_evolved.json"),
+        llm_judge=LLM_JUDGE,
+        llm_model=MODEL,
+        llm_judge_sample_size=min(LLM_JUDGE_SAMPLE, len(dialogues)),
     )
 
     agg_ev = eval_evolved["aggregate"]
     print(f"\n  Evolved IR:      {agg_ev['info_rate']:.4f}  (seed: {agg['info_rate']:.4f})")
     print(f"  Evolved Success: {agg_ev['success_rate']:.4f}  (seed: {agg['success_rate']:.4f})")
+    if LLM_JUDGE and eval_evolved.get("llm_judge"):
+        js = eval_evolved["llm_judge"]
+        if js:
+            print(f"  Evolved Judge:   {', '.join(f'{k}={v:.2f}' for k, v in js.items())}")
 
 # ═══════════════════════════════════════════════════════════════
 print(f"\n{'='*60}")
