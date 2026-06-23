@@ -1,0 +1,16 @@
+# ============================================================
+# ToD Skill Evolution Pipeline — minimal dependencies
+# ============================================================
+# Python >= 3.10 required (for | None type union syntax)
+
+# ── LLM API ────────────────────────────────────────────────
+openai>=2.0,<3.0       # OpenAI-compatible client (DeepSeek, vLLM, etc.)
+httpx>=0.27,<1.0       # HTTP transport for openai SDK
+tiktoken>=0.5           # Token counting
+
+# ── Skill Evolution ───────────────────────────────────────
+tqdm>=4.60              # Progress bars in MAP/REDUCE phases
+diskcache>=5.0          # LLM response cache (reduces duplicate API calls)
+
+# ── Optional but recommended ─────────────────────────────
+python-dotenv>=1.0      # Load API keys from .env file
