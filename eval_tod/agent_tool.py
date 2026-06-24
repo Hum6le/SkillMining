@@ -203,6 +203,7 @@ class ToolBasedTodAgent:
         ontology_path: str | None = None,
         log_dir: str | None = None,
         extra_system_prompt: str = "",
+        response_logger = None,
     ):
         self.kb = kb
         self.model = model
@@ -213,6 +214,7 @@ class ToolBasedTodAgent:
         self.ontology_path = ontology_path
         self.log_dir = log_dir
         self.extra_system_prompt = extra_system_prompt  # skill content injected here
+        self._response_logger = response_logger
 
         # Build ontology text for prompt (same filtered approach as TodPredictionAgent)
         from .agent import _load_ontology, _build_ontology_text
@@ -365,6 +367,19 @@ class ToolBasedTodAgent:
             max_tokens=1024,
             temperature=0.3,
         )
+
+        # Log raw response if logger is configured
+        if self._response_logger is not None:
+            try:
+                self._response_logger.log(
+                    messages=messages,
+                    response=resp,
+                    call_tag="agent_chat",
+                    extra={"model": self.model, "max_tokens": 1024, "temperature": 0.3},
+                )
+            except Exception:
+                pass
+
         return resp.choices[0].message.content or ""
 
     def generate_predictions(

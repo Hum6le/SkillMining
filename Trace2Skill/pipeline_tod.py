@@ -407,6 +407,7 @@ def _run_validation(
     out: Path,
     label: str,
     agent=None,
+    response_logger=None,
 ) -> dict:
     """Run evaluation on a validation or test set.
 
@@ -448,6 +449,7 @@ def _run_validation(
             log_dir=str(out / "val_trajectories" / label),
             api_key=api_key,
             base_url=base_url,
+            response_logger=response_logger,
         )
 
     preds = agent.run_and_save(
@@ -501,6 +503,7 @@ def _run_training_iteration(
     batch_idx: int,
     out: Path,
     agent=None,
+    response_logger=None,
 ) -> dict:
     """Run one training iteration: agent -> eval -> error analysis -> evolution.
 
@@ -546,6 +549,7 @@ def _run_training_iteration(
             log_dir=log_dir,
             api_key=api_key,
             base_url=base_url,
+            response_logger=response_logger,
         )
 
     preds_path = batch_preds_dir / f"{label}.json"
@@ -606,6 +610,7 @@ def _run_training_iteration(
         workers=config.workers_analysis,
         api_key=api_key,
         base_url=base_url,
+        response_logger=response_logger,
     )
     analyzer.analyze_batch(failed_cases, output_dir=error_dir)
 
@@ -650,6 +655,7 @@ def _run_training_iteration(
     evolver_client = get_client(
         model=model, api_key=api_key, base_url=base_url,
         cache_tag=f"evolver_batch_{batch_idx}",
+        response_logger=response_logger,
     )
 
     intermediates_dir = out / "intermediates" / label
@@ -723,6 +729,7 @@ def _run_oneshot_pipeline(
     start: int,
     end: int,
     total_in_split: int,
+    response_logger=None,
 ) -> PipelineResult:
     """Run the original one-shot pipeline (stages 1-6) on a single set of dialogues.
 
@@ -749,6 +756,7 @@ def _run_oneshot_pipeline(
         log_dir=log_dir,
         api_key=api_key,
         base_url=base_url,
+        response_logger=response_logger,
     )
 
     preds = agent.run_and_save(
@@ -815,6 +823,7 @@ def _run_oneshot_pipeline(
                 workers=config.workers_analysis,
                 api_key=api_key,
                 base_url=base_url,
+                response_logger=response_logger,
             )
             error_dir = str(out / "error_analysis")
             analyzer.analyze_batch(failed_cases, output_dir=error_dir)
@@ -862,6 +871,7 @@ def _run_oneshot_pipeline(
             evolver_client = get_client(
                 model=model, api_key=api_key, base_url=base_url,
                 cache_tag="evolver",
+                response_logger=response_logger,
             )
 
             intermediates_dir = out / "intermediates"
@@ -926,6 +936,7 @@ def _run_oneshot_pipeline(
                 log_dir=str(out / "trajectories_evolved"),
                 api_key=api_key,
                 base_url=base_url,
+                response_logger=response_logger,
             )
 
             evolved_preds = evolved_agent.run_and_save(
@@ -1019,11 +1030,16 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs) -> PipelineResu
     )
     model, api_key, base_url = cfg["model"], cfg["api_key"], cfg["base_url"]
 
-    # ── Prepare output directory ────────────────────────────────
-    out = config.resolved_output_dir
-    if out.exists():
-        shutil.rmtree(out)
+    # ── Prepare timestamped output directory ────────────────────
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    out = config.resolved_output_dir / timestamp
     out.mkdir(parents=True, exist_ok=True)
+    print(f"\nOutput dir: {out}")
+
+    # ── Response logger ─────────────────────────────────────────
+    from eval_tod.response_logger import ResponseLogger
+    response_logger = ResponseLogger(str(out / "llm_responses"))
 
     # ══════════════════════════════════════════════════════════════
     # STAGE 0: Load dataset, report splits, select dialogues
@@ -1048,7 +1064,7 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs) -> PipelineResu
     # ── Branch: batch training vs oneshot ───────────────────────
     if config.batch_training and not config.smoke_test:
         return _run_batch_training_pipeline(
-            config, model, api_key, base_url, out, kb, split_counts,
+            config, model, api_key, base_url, out, kb, split_counts, response_logger,
         )
     else:
         # Original one-shot flow
@@ -1082,6 +1098,7 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs) -> PipelineResu
         return _run_oneshot_pipeline(
             config, model, api_key, base_url, out, kb,
             dialogues, split_counts, start, end, total_in_split,
+            response_logger,
         )
 
 
@@ -1093,6 +1110,7 @@ def _run_batch_training_pipeline(
     out: Path,
     kb,
     split_counts: dict,
+    response_logger=None,
 ) -> PipelineResult:
     """Run the iterative batch-training pipeline.
 
@@ -1141,6 +1159,7 @@ def _run_batch_training_pipeline(
         config, model, api_key, base_url, kb,
         str(config.resolved_skill_dir),  # seed skill
         val_dialogues, out, "seed_baseline",
+        response_logger=response_logger,
     )
     seed_val_metrics = val_result["metrics"]
     print(f"  Seed val IR: {seed_val_metrics['info_rate']:.4f}, "
@@ -1151,6 +1170,7 @@ def _run_batch_training_pipeline(
         config, model, api_key, base_url, kb,
         str(config.resolved_skill_dir),  # seed skill
         test_dialogues, out, "test_seed_baseline",
+        response_logger=response_logger,
     )
     seed_test_metrics = test_result_seed["metrics"]
     print(f"  Seed test IR: {seed_test_metrics['info_rate']:.4f}, "
@@ -1165,6 +1185,7 @@ def _run_batch_training_pipeline(
         log_dir=str(out / "trajectories"),
         api_key=api_key,
         base_url=base_url,
+        response_logger=response_logger,
     )
 
     # ── Stage 2: Batch training loop ────────────────────────────
@@ -1190,6 +1211,7 @@ def _run_batch_training_pipeline(
             config, model, api_key, base_url, kb,
             evolved_skills_dir, evolved_skill_dir,
             batch, epoch_num, out, agent=agent,
+            response_logger=response_logger,
         )
 
         batch_metrics.append(iter_result["metrics"])
@@ -1212,6 +1234,7 @@ def _run_batch_training_pipeline(
                 config, model, api_key, base_url, kb,
                 str(evolved_skills_dir),
                 val_dialogues, out, f"val_step_{epoch_num:04d}",
+                response_logger=response_logger,
             )
             vm = val_result["metrics"]
             val_history.append(vm)
@@ -1241,6 +1264,7 @@ def _run_batch_training_pipeline(
         config, model, api_key, base_url, kb,
         str(evolved_skills_dir),
         test_dialogues, out, "test_final",
+        response_logger=response_logger,
     )
     final_test_metrics = test_result_final["metrics"]
 

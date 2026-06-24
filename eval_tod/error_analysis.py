@@ -140,11 +140,13 @@ class ErrorAnalyzer:
         api_key: str | None = None,
         base_url: str | None = None,
         workers: int = 4,
+        response_logger = None,
     ):
         self.model = model
         self.api_key = api_key
         self.base_url = base_url
         self.workers = workers
+        self._response_logger = response_logger
 
     def analyze_single(self, case: dict) -> str:
         """Analyze one failed case and return the analysis report text."""
@@ -259,15 +261,30 @@ class ErrorAnalyzer:
             kwargs["base_url"] = url
         client = OpenAI(**kwargs)
 
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ]
+
         resp = client.chat.completions.create(
             model=self.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ],
+            messages=messages,
             max_tokens=2048,
             temperature=0.3,
         )
+
+        # Log raw response if logger is configured
+        if self._response_logger is not None:
+            try:
+                self._response_logger.log(
+                    messages=messages,
+                    response=resp,
+                    call_tag="error_analysis",
+                    extra={"model": self.model, "max_tokens": 2048, "temperature": 0.3},
+                )
+            except Exception:
+                pass
+
         return resp.choices[0].message.content or ""
 
 

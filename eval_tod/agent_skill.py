@@ -130,6 +130,7 @@ class SkillPreloadedAgent(ToolBasedTodAgent):
         delay: float = 0.3,
         ontology_path: str | None = None,
         log_dir: str | None = None,
+        response_logger = None,
     ):
         self.skills_dir = os.path.abspath(skills_dir)
         self.skills = discover_skills(self.skills_dir)
@@ -149,6 +150,7 @@ class SkillPreloadedAgent(ToolBasedTodAgent):
             ontology_path=ontology_path,
             log_dir=log_dir,
             extra_system_prompt=skill_section,
+            response_logger=response_logger,
         )
 
     def reload_skills(self) -> None:

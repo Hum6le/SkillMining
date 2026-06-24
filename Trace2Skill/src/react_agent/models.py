@@ -175,6 +175,7 @@ class OpenAIClient(LLMClient):
         generation_config: dict | None = None,
         retry_times: tuple[int, ...] = (5, 10, 30),
         timeout: float | None = 600.0,
+        response_logger = None,
     ):
         """
         Initialize OpenAI-compatible client.
@@ -193,6 +194,7 @@ class OpenAIClient(LLMClient):
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         self.base_url = base_url or os.getenv("OPENAI_BASE_URL")
         self.retry_times = retry_times
+        self._response_logger = response_logger
         
         if not self.api_key:
             raise ValueError(
@@ -361,14 +363,26 @@ class OpenAIClient(LLMClient):
             log.debug("Loaded response from cache")
             reply, reasoning_content = cached
             return (reply, reasoning_content) if return_reasoning else reply
-        
+
         # Send request
         response = self._send_request_with_retry(openai_messages, config)
         reply, reasoning_content = self._parse_response(response)
-        
+
+        # Log raw response if logger is configured
+        if self._response_logger is not None:
+            try:
+                self._response_logger.log(
+                    messages=openai_messages,
+                    response=response,
+                    call_tag=f"chat_{self.model}",
+                    extra={"model": self.model, "config": config},
+                )
+            except Exception:
+                pass  # never let logging break the main flow
+
         # Cache the response
         self._save_to_cache(cache_key, (reply, reasoning_content))
-        
+
         return (reply, reasoning_content) if return_reasoning else reply
     
     async def chat_async(
