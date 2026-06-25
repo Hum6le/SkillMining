@@ -87,20 +87,32 @@ skills_dir/
 
 ---
 
-## 4. 数据集：MultiWOZ 2.1
+## 4. 数据集
 
-### 4.1 概览
+`data/eval/` 目录下共收集了 **6 个数据集**，覆盖任务型对话、客服对话、动作型对话等多种场景：
+
+| 数据集 | 对话数 | 领域数 | 语言 | 状态 |
+|--------|--------|--------|------|------|
+| **MultiWOZ 2.1** | 10,438 | 7 | EN | ✅ 已接入 |
+| **MultiWOZ 2.2** | 10,438 | 7 | EN | ⬜ 待接入 |
+| **ABCD** | ~10,000 | 55 意图 | EN | ⬜ 待接入 |
+| **CSDS** | ~800×3 | 客服场景 | ZH | ⬜ 待接入 |
+| **Taskmaster** | 55,000+ | 12+ | EN | ⬜ 待接入 |
+| **WOZ 2.0** | — | 1 | EN | ⬜ 待接入 |
+
+---
+
+### 4.1 MultiWOZ 2.1（主要数据集）
 
 | 属性 | 值 |
 |------|-----|
 | 全称 | Multi-Domain Wizard-of-Oz 2.1 |
-| 类型 | 多领域任务型对话 |
-| 对话数 | **10,438** |
-| 划分 | train: 8,438 / validation: 1,000 / test: 1,000 |
+| 类型 | 多领域任务型对话（人-人） |
+| 对话数 | **10,438**（train 8,438 / val 1,000 / test 1,000） |
 | 语言 | 英语 |
-| 来源 | [budzianowski/multiwoz](https://github.com/budzianowski/multiwoz) |
+| 论文 | [Eric et al., 2019](https://arxiv.org/abs/1907.01669) |
 
-### 4.2 领域 (7 domains)
+#### 领域 (7 domains)
 
 | 领域 | 描述 | 槽位数 |
 |------|------|--------|
@@ -112,7 +124,7 @@ skills_dir/
 | `hospital` | 查找医院 | 4 |
 | `police` | 查找警察局 | 4 |
 
-### 4.3 数据结构
+#### 数据结构
 
 每条对话（`Dialogue`）包含：
 
@@ -132,7 +144,39 @@ turns:
     booked:     {hotel: [...]}  # booking info
 ```
 
-### 4.4 Agent 预测格式
+### 4.2 MultiWOZ 2.2
+
+MultiWOZ 2.1 的改进版本（[Zang et al., 2020](https://aclanthology.org/2020.nlp4convai-1.13/)），修复了 17.3% 的话语状态标注错误，重新定义了槽位本体。数据规模和划分与 2.1 相同（8,438/1,000/1,000）。已通过 HuggingFace 下载到本地，待接入评估框架。
+
+### 4.3 ABCD（Action-Based Conversations Dataset）
+
+客服场景数据集（[Chen et al., 2021](https://arxiv.org/abs/2104.00783)），约 10,000 条人-人对话，特点：
+- 55 种用户意图，每种对应独特的动作序列
+- 对话中穿插结构化动作（按键点击、信息填写）
+- 评估任务包括意图分类、动作预测、槽位填充、话语排序
+- 已有预处理代码在 `data/eval/abcd/main.py`
+
+### 4.4 CSDS（Chinese Service Dialogue Dataset）
+
+中文客服对话数据集，约 800 条 / split。结构特点：
+- 每条对话包含 `QRole`、问答对（`QA`）
+- 问答对含问题摘要、短答案、长答案
+- 适用于中文 ToD 评估和跨语言迁移实验
+
+### 4.5 Taskmaster
+
+Google 发布的 Taskmaster 语料库（[Byrne et al., 2019](https://arxiv.org/abs/1909.05358)），包含 TM-1、TM-2、TM-3 三个子集：
+- 总计 **55,000+ 条**对话（口语 + 文字）
+- 覆盖 12+ 领域（订餐、电影票、航班、酒店等）
+- 当前仅下载了 README，完整数据需通过 Google Research Datasets 获取
+
+### 4.6 WOZ 2.0
+
+经典的 Wizard-of-Oz 餐厅预订数据集（[Wen et al., 2017](https://arxiv.org/abs/1604.04562)），单一领域（restaurant）。数据目录当前为空，需单独下载。
+
+---
+
+### 4.7 Agent 预测格式
 
 ```json
 {
@@ -150,7 +194,7 @@ turns:
 }
 ```
 
-### 4.5 评估流程
+### 4.8 评估流程
 
 ```python
 from eval_tod import evaluate
@@ -234,10 +278,13 @@ MultiWOZ 2.1 已预置 train/val/test 划分。Pipeline 支持三种模式：
 
 ```python
 _LOADERS: dict[str, callable] = {
-    "multiwoz21": load_multiwoz21,
-    # "multiwoz22": load_multiwoz22,   # 未来
-    # "abcd":      load_abcd,          # 未来
+    "multiwoz21": load_multiwoz21,    # ✅ 已接入
+    # "multiwoz22": load_multiwoz22,  # ⬜ 待接入
+    # "abcd":      load_abcd,         # ⬜ 待接入
+    # "csds":      load_csds,         # ⬜ 待接入
+    # "taskmaster": load_taskmaster,  # ⬜ 待接入
+    # "woz2":      load_woz2,         # ⬜ 待接入
 }
 ```
 
-新数据集只需实现 loader 函数，返回 `list[Dialogue]` 即可复用全部评估指标。
+新数据集只需实现 loader 函数，返回 `list[Dialogue]` 即可复用全部评估指标和 pipeline。
