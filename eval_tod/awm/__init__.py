@@ -1,31 +1,18 @@
-"""AWM (Agent Workflow Memory) for MultiWOZ.
+"""AWM (Agent Workflow Memory) for MultiWOZ — adapted from AWM/mind2web/.
 
-Core AWM loop:
-1. Agent runs on a batch of dialogues
-2. Evaluate results
-3. ``induce_workflows()`` calls LLM to extract workflow patterns from trajectories
-4. Patterns accumulated in ``WorkflowStore``
-5. Next batch: workflow injected into agent's system prompt
+Two modes (mirroring AWM/mind2web/pipeline.py):
+- **offline**: pre-induce workflows from training data, then evaluate
+- **online**: interleave batch inference + workflow induction
 
-Usage::
-
-    from eval_tod.awm import AWMAgent, WorkflowStore
-    from eval_tod.kb import MultiWOZKB
-
-    kb = MultiWOZKB("data/eval/multiwoz21/data/data")
-    workflow = WorkflowStore()
-    agent = AWMAgent(kb=kb, workflow=workflow)
-
-    # Batch loop
-    for batch in batches:
-        preds = agent.generate_predictions(batch)
-        result = evaluate_predictions(batch, preds)
-        agent.induce(batch, preds, result["per_dialogue"])
-        agent.save_workflow("outputs/awm_workflow.txt")
+Core components:
+- ``AWMAgent`` — ReAct agent with workflow/exemplar injection
+- ``MemoryStore`` — stores concrete exemplars (successful dialogue trajectories)
+- ``WorkflowStore`` — accumulates LLM-induced workflow patterns
+- ``induce_workflows()`` — LLM analyzes trajectories → extracts patterns
 """
 
-from .memory import WorkflowStore
+from .memory import MemoryStore, WorkflowStore
 from .agent import AWMAgent
 from .induction import induce_workflows
 
-__all__ = ["AWMAgent", "WorkflowStore", "induce_workflows"]
+__all__ = ["AWMAgent", "MemoryStore", "WorkflowStore", "induce_workflows"]

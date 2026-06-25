@@ -1,24 +1,11 @@
-"""AWM Agent for MultiWOZ.
+"""AWM Agent for MultiWOZ — adapted from AWM/mind2web/memory.py eval_sample().
 
-Wraps ``ToolBasedTodAgent`` with AWM workflow injection.  After each
-batch of dialogues, calls ``induce_workflows()`` to extract patterns
-from the trajectories and appends them to a ``WorkflowStore``.
-
-Usage::
-
-    from eval_tod.awm import AWMAgent, WorkflowStore
-    from eval_tod.kb import MultiWOZKB
-
-    kb = MultiWOZKB("data/eval/multiwoz21/data/data")
-    workflow = WorkflowStore()
-    agent = AWMAgent(kb=kb, workflow=workflow)
-
-    # Run a batch
-    predictions = agent.generate_predictions(dialogues)
-
-    # Induce workflows from this batch
-    agent.induce(dialogues, predictions, eval_results)
-    workflow.save("outputs/awm_workflow.txt")
+Follows the original AWM agent pattern:
+1. Load exemplars from MemoryStore (mirrors get_exemplars)
+2. Load workflow text from WorkflowStore (mirrors workflow_path)
+3. Build prompt: system_message + exemplars + workflow + current_query
+4. Run ReAct loop with ToolBasedTodAgent
+5. After batch: induce new workflows from trajectories
 """
 
 from __future__ import annotations
@@ -39,29 +26,43 @@ from eval_tod.schemas import Dialogue, Prediction
 from eval_tod.evaluate import AbstractTodAgent
 from eval_tod.kb import MultiWOZKB
 
-from .memory import WorkflowStore
+from .memory import MemoryStore, WorkflowStore
 
 
 class AWMAgent(AbstractTodAgent):
-    """AWM-enhanced ToD agent for MultiWOZ.
+    """AWM agent for MultiWOZ — mirrors AWM/mind2web/memory.py pattern.
 
-    Core AWM loop (per batch):
-    1. Inject current workflow into agent's system prompt
-    2. Run agent on the batch
-    3. Evaluate results
-    4. Call ``induce_workflows()`` to extract new patterns from trajectories
-    5. Append to WorkflowStore for future batches
+    Architecture (matching original AWM):
+    - **MemoryStore**: concrete exemplars (successful trajectories)
+    - **WorkflowStore**: LLM-induced workflow patterns (.txt file)
+    - **Agent loop**: system_prompt + exemplars + workflow + current_query → LLM
 
-    Attributes:
-        kb: MultiWOZ knowledge base.
-        workflow: ``WorkflowStore`` with accumulated patterns.
-        model: LLM model name.
-        max_turns: Max ReAct loop turns per dialogue.
+    Pipeline usage (mirrors AWM/mind2web/pipeline.py online mode)::
+
+        agent = AWMAgent(kb=kb)
+
+        for batch_idx, batch in enumerate(batches):
+            # 1. Agent runs on batch (using current workflow + exemplars)
+            preds = agent.generate_predictions(batch)
+
+            # 2. Evaluate
+            result = evaluate_predictions(batch, preds)
+
+            # 3. Induce new workflows from batch (mirrors online_induction.py)
+            agent.induce(batch, preds, result["per_dialogue"])
+
+            # 4. Update exemplar memory with successes
+            agent.update_memory(batch, preds, result["per_dialogue"])
+
+            # 5. Save
+            agent.save_workflow(f"outputs/awm_workflow_step_{batch_idx}.txt")
+            agent.save_memory("outputs/awm_exemplars.json")
     """
 
     def __init__(
         self,
         kb: MultiWOZKB,
+        memory: MemoryStore | None = None,
         workflow: WorkflowStore | None = None,
         model: str = "deepseek-chat",
         api_key: str | None = None,
@@ -76,6 +77,7 @@ class AWMAgent(AbstractTodAgent):
         self.base_url = cfg["base_url"]
 
         self.kb = kb
+        self.memory = memory if memory is not None else MemoryStore()
         self.workflow = workflow if workflow is not None else WorkflowStore()
         self.max_turns = max_turns
         self.log_dir = log_dir
@@ -84,19 +86,29 @@ class AWMAgent(AbstractTodAgent):
     # ── AbstractTodAgent interface ──────────────────────────────
 
     def generate_predictions(self, dialogues: list[Dialogue]) -> list[Prediction]:
-        """Run AWM agent on a list of dialogues.
+        """Run agent on dialogues.
 
-        For each dialogue, injects the current workflow into the
-        system prompt before running the ReAct loop.
+        For each dialogue, builds prompt with exemplar few-shots + workflow
+        patterns (mirrors eval_sample's sys_message + demo_message + query).
         """
         predictions: list[Prediction] = []
         total = len(dialogues)
-        workflow_text = self.workflow.format_prompt()
 
         for i, dialogue in enumerate(dialogues):
+            has_ex = "yes" if self.memory else "no"
             has_wf = "yes" if self.workflow else "no"
             print(f"  [{i+1}/{total}] {dialogue.dialogue_id} "
-                  f"({', '.join(dialogue.domains)})  wf={has_wf}")
+                  f"({', '.join(dialogue.domains)})  ex={has_ex} wf={has_wf}")
+
+            # Build enriched prompt (mirrors sys_message + demo_message + query)
+            prompt_parts = []
+            wf = self.workflow.format_prompt()
+            if wf:
+                prompt_parts.append(wf)
+            ex = self.memory.format_prompt(dialogue.domains)
+            if ex:
+                prompt_parts.append(ex)
+            extra_prompt = "\n".join(prompt_parts).strip()
 
             agent = ToolBasedTodAgent(
                 kb=self.kb,
@@ -105,7 +117,7 @@ class AWMAgent(AbstractTodAgent):
                 base_url=self.base_url,
                 max_turns=self.max_turns,
                 log_dir=self.log_dir,
-                extra_system_prompt=workflow_text,
+                extra_system_prompt=extra_prompt,
                 response_logger=self._response_logger,
             )
 
@@ -114,28 +126,35 @@ class AWMAgent(AbstractTodAgent):
 
         return predictions
 
-    # ── AWM induction ───────────────────────────────────────────
+    # ── Memory update (mirrors building exemplars.json) ─────────
+
+    def update_memory(self, dialogues, predictions, eval_results: list[dict]):
+        """Store successful dialogues as exemplars."""
+        for dm, dialogue, pred in zip(eval_results, dialogues, predictions):
+            if dm.get("success"):
+                self.memory.add(dialogue, pred)
+
+    def save_memory(self, path: str):
+        """Save exemplars to JSON (mirrors exemplars.json)."""
+        self.memory.save(path)
+
+    def load_memory(self, path: str):
+        """Load exemplars from JSON."""
+        self.memory.load(path)
+
+    # ── Workflow induction (mirrors online_induction.py) ────────
 
     def induce(
         self,
-        dialogues: list[Dialogue],
-        predictions: list[Prediction],
+        dialogues,
+        predictions,
         eval_results: list[dict],
         trajectory_dir: str | None = None,
     ) -> str:
-        """Induce workflow patterns from a batch and update the store.
+        """Induce workflows from a batch (mirrors online_induction.py main()).
 
-        Calls the LLM to analyze this batch's trajectories, extracts
-        workflow patterns, and appends them to ``self.workflow``.
-
-        Args:
-            dialogues: Ground-truth dialogues.
-            predictions: Agent predictions.
-            eval_results: Per-dialogue metrics from evaluate_predictions().
-            trajectory_dir: Directory with agent trajectory .md files.
-
-        Returns:
-            The induced pattern text (empty string on failure).
+        Calls the LLM to analyze trajectories and extract workflow patterns,
+        then updates self.workflow with the result.
         """
         from .induction import induce_workflows
 
@@ -146,18 +165,21 @@ class AWMAgent(AbstractTodAgent):
             model=self.model,
             api_key=self.api_key,
             base_url=self.base_url,
-            trajectory_dir=trajectory_dir,
-            existing_workflow=self.workflow.text,
+            trajectory_dir=trajectory_dir or self.log_dir,
+            existing_workflow=self.workflow.text if self.workflow else "",
         )
 
         if pattern.strip():
             self.workflow.update(pattern)
-            print(f"  [AWM] Induced {len(pattern.splitlines())} lines of workflow patterns")
+            n_lines = len(pattern.splitlines())
+            print(f"  [AWM] Induced workflow: {n_lines} lines")
 
         return pattern
 
     def save_workflow(self, path: str):
+        """Save workflow to .txt file (mirrors workflow_path)."""
         self.workflow.save(path)
 
     def load_workflow(self, path: str):
+        """Load workflow from .txt file."""
         self.workflow.load(path)
