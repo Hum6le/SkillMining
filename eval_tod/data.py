@@ -240,6 +240,12 @@ def load_predictions(pred_path: str) -> List[Dict[str, Any]]:
 # Splitting utilities
 # ══════════════════════════════════════════════════════════════════
 
+_MULTIWOZ_DOMAINS = [
+    "attraction", "hotel", "restaurant", "train",
+    "taxi", "hospital", "police",
+]
+
+
 def split_train_val(
     dialogues: list,
     val_fraction: float = 0.2,
@@ -266,6 +272,79 @@ def split_train_val(
     train = [dialogues[i] for i in sorted(train_indices)]
     val = [dialogues[i] for i in sorted(val_indices)]
     return train, val
+
+
+def split_by_domain(
+    dialogues: list,
+    train_frac: float = 0.8,
+    val_frac: float = 0.1,
+    test_frac: float = 0.1,
+    seed: int = 42,
+    domains: list[str] | None = None,
+) -> dict[str, dict[str, list]]:
+    """Split dialogues per domain with balanced proportions.
+
+    MultiWOZ dialogues often span multiple domains (e.g. hotel+train).
+    This function produces 7 domain-aligned splits where each dialogue
+    appears in *every* domain it involves.  Within each domain, dialogues
+    are randomly assigned to train/val/test with the given fractions.
+
+    Args:
+        dialogues: List of Dialogue objects.
+        train_frac: Fraction for training set (default 0.8).
+        val_frac: Fraction for validation set (default 0.1).
+        test_frac: Fraction for test set (default 0.1).
+        seed: Random seed.
+        domains: Which domains to split (default: all 7 MultiWOZ domains).
+
+    Returns:
+        Dict of ``{domain: {"train": [...], "val": [...], "test": [...]}}``.
+
+    Example::
+
+        splits = split_by_domain(dialogues)
+        hotel_train = splits["hotel"]["train"]   # all hotel dialogues, 80%
+        hotel_val   = splits["hotel"]["val"]
+    """
+    assert abs(train_frac + val_frac + test_frac - 1.0) < 0.001, (
+        f"Fractions must sum to 1.0, got {train_frac}+{val_frac}+{test_frac}"
+    )
+    domain_list = domains or _MULTIWOZ_DOMAINS
+    rng = random.Random(seed)
+
+    result: dict[str, dict[str, list]] = {}
+
+    for domain in domain_list:
+        # Collect all dialogues involving this domain
+        indices = [i for i, d in enumerate(dialogues) if domain in d.domains]
+        n = len(indices)
+        if n == 0:
+            result[domain] = {"train": [], "val": [], "test": []}
+            continue
+
+        rng.shuffle(indices)
+        n_train = max(1, int(n * train_frac))
+        n_val = max(1, int(n * val_frac))
+        # Adjust to avoid zero-splits and ensure correct total
+        n_test = n - n_train - n_val
+        if n_test < 1 and n > 2:
+            n_test = 1
+            n_val = max(1, n - n_train - n_test)
+        if n_val < 1 and n > 2:
+            n_val = 1
+            n_train = n - n_val - n_test
+
+        train_idx = indices[:n_train]
+        val_idx = indices[n_train:n_train + n_val]
+        test_idx = indices[n_train + n_val:]
+
+        result[domain] = {
+            "train": [dialogues[i] for i in sorted(train_idx)],
+            "val":   [dialogues[i] for i in sorted(val_idx)],
+            "test":  [dialogues[i] for i in sorted(test_idx)],
+        }
+
+    return result
 
 
 def build_batches(

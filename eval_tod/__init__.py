@@ -39,6 +39,7 @@ from .data import (
     load_multiwoz21,
     load_predictions,
     register_loader,
+    split_by_domain,
     split_train_val,
 )
 from .evaluate import (
@@ -85,6 +86,7 @@ __all__ = [
     "register_loader",
     "load_and_split",
     "split_train_val",
+    "split_by_domain",
     "build_batches",
     # ── Metrics ──
     "compute_information_rate",

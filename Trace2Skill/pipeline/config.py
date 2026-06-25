@@ -114,6 +114,12 @@ class PipelineConfig:
     seed_split: int = 42                # random seed for train/val split
     resume_from: str | None = None      # resume from checkpoint path
 
+    # ── Domain-based splitting ──────────────────────────────────
+    # When True, use split_by_domain() to produce 7 per-domain
+    # train/val/test splits with balanced proportions.
+    domain_split: bool = False            # split by 7 MultiWOZ domains
+    domain_train_frac: float = 0.8        # train fraction per domain
+
     # ── derived paths ──
     @property
     def skill_subdir(self) -> str:
