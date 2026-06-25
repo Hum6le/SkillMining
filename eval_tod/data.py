@@ -246,6 +246,15 @@ _MULTIWOZ_DOMAINS = [
 ]
 
 
+def _scenario_key(dialogue) -> tuple:
+    """Unique scenario key: sorted tuple of non-general domains.
+
+    e.g. ``('hotel', 'train')`` or ``('restaurant',)``.
+    Each dialogue maps to exactly one scenario.
+    """
+    return tuple(sorted(d for d in dialogue.domains if d != "general"))
+
+
 def split_train_val(
     dialogues: list,
     val_fraction: float = 0.2,
@@ -274,63 +283,69 @@ def split_train_val(
     return train, val
 
 
-def split_by_domain(
+def split_by_scenario(
     dialogues: list,
     train_frac: float = 0.8,
     val_frac: float = 0.1,
     test_frac: float = 0.1,
     seed: int = 42,
-    domains: list[str] | None = None,
-) -> dict[str, dict[str, list]]:
-    """Split dialogues per domain with balanced proportions.
+) -> dict[tuple, dict[str, list]]:
+    """Split dialogues by unique domain-combination scenario.
 
-    MultiWOZ dialogues often span multiple domains (e.g. hotel+train).
-    This function produces 7 domain-aligned splits where each dialogue
-    appears in *every* domain it involves.  Within each domain, dialogues
-    are randomly assigned to train/val/test with the given fractions.
+    Each dialogue belongs to **exactly one** scenario (defined by its
+    domain combination, e.g. ``('hotel','train')``).  Within each
+    scenario, dialogues are randomly assigned to train/val/test with
+    the given fractions.  Tiny scenarios (< 3 dialogues) are placed
+    entirely in train.
 
     Args:
         dialogues: List of Dialogue objects.
-        train_frac: Fraction for training set (default 0.8).
-        val_frac: Fraction for validation set (default 0.1).
-        test_frac: Fraction for test set (default 0.1).
+        train_frac: Train fraction (default 0.8).
+        val_frac: Val fraction (default 0.1).
+        test_frac: Test fraction (default 0.1).
         seed: Random seed.
-        domains: Which domains to split (default: all 7 MultiWOZ domains).
 
     Returns:
-        Dict of ``{domain: {"train": [...], "val": [...], "test": [...]}}``.
+        Dict of ``{scenario_tuple: {"train": [...], "val": [...], "test": [...]}}``.
+        Each dialogue appears in exactly one scenario's split.
 
     Example::
 
-        splits = split_by_domain(dialogues)
-        hotel_train = splits["hotel"]["train"]   # all hotel dialogues, 80%
-        hotel_val   = splits["hotel"]["val"]
+        splits = split_by_scenario(dialogues)
+        # Train on hotel+train scenario
+        ht_train = splits[("hotel", "train")]["train"]
+        ht_test  = splits[("hotel", "train")]["test"]
     """
-    assert abs(train_frac + val_frac + test_frac - 1.0) < 0.001, (
-        f"Fractions must sum to 1.0, got {train_frac}+{val_frac}+{test_frac}"
-    )
-    domain_list = domains or _MULTIWOZ_DOMAINS
+    assert abs(train_frac + val_frac + test_frac - 1.0) < 0.001
+
+    from collections import defaultdict
+    groups: dict[tuple, list[int]] = defaultdict(list)
+    for i, d in enumerate(dialogues):
+        groups[_scenario_key(d)].append(i)
+
     rng = random.Random(seed)
+    result: dict[tuple, dict[str, list]] = {}
 
-    result: dict[str, dict[str, list]] = {}
-
-    for domain in domain_list:
-        # Collect all dialogues involving this domain
-        indices = [i for i, d in enumerate(dialogues) if domain in d.domains]
+    for scenario, indices in sorted(groups.items()):
         n = len(indices)
-        if n == 0:
-            result[domain] = {"train": [], "val": [], "test": []}
+        rng.shuffle(indices)
+
+        if n < 3:
+            # Too small to split — put all in train
+            result[scenario] = {
+                "train": [dialogues[i] for i in sorted(indices)],
+                "val": [],
+                "test": [],
+            }
             continue
 
-        rng.shuffle(indices)
         n_train = max(1, int(n * train_frac))
         n_val = max(1, int(n * val_frac))
-        # Adjust to avoid zero-splits and ensure correct total
         n_test = n - n_train - n_val
-        if n_test < 1 and n > 2:
+        if n_test < 1:
             n_test = 1
             n_val = max(1, n - n_train - n_test)
-        if n_val < 1 and n > 2:
+        if n_val < 1:
             n_val = 1
             n_train = n - n_val - n_test
 
@@ -338,7 +353,7 @@ def split_by_domain(
         val_idx = indices[n_train:n_train + n_val]
         test_idx = indices[n_train + n_val:]
 
-        result[domain] = {
+        result[scenario] = {
             "train": [dialogues[i] for i in sorted(train_idx)],
             "val":   [dialogues[i] for i in sorted(val_idx)],
             "test":  [dialogues[i] for i in sorted(test_idx)],
