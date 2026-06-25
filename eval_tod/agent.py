@@ -24,7 +24,7 @@ import sys
 import time
 from typing import Any
 
-from .data_loader import load_multiwoz21, load_dataset
+from .data import load_multiwoz21, load_dataset
 from .judge.llm_client import call_llm_structured
 from .schemas import Dialogue, Prediction
 

@@ -107,7 +107,7 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs) -> PipelineResu
     print("=" * 60)
 
     from eval_tod.kb import MultiWOZKB
-    from eval_tod.data_loader import load_dataset, list_available_splits
+    from eval_tod.data import load_dataset, list_available_splits
 
     kb = MultiWOZKB(str(config.resolved_db_dir))
     print(f"KB loaded: {kb.domains}")

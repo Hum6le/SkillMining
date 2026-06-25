@@ -1,53 +1,52 @@
 """ToD Evaluation Module.
 
-Provides evaluation metrics for Task-oriented Dialogue (ToD) agent outputs:
+Two-layer API:
 
-- **Information Rate**: Slot-level precision — what fraction of goal slots
-  (inform + request) were correctly handled.
-- **Success Rate**: Binary per-dialogue pass/fail.
-- **LLM-as-a-Judge**: Multi-agent LLM-based evaluation system (adapted from
-  ``LLMasaJudge``). Uses 5 specialist judges + 1 combiner to score dialogues
-  on task_completion, slot_accuracy, dialogue_fluency, helpfulness, efficiency.
+**Core** (framework-agnostic, any agent):
+  - ``evaluate_predictions(dialogues, predictions)`` -- the main entry point
+  - ``load_dataset`` / ``load_and_split`` -- data loading
+  - ``AbstractTodAgent`` -- agent interface to implement
 
-Usage::
+**Convenience** (file-based, quick eval):
+  - ``evaluate(dataset_name, data_path, predictions_path)``
 
-    from eval_tod import evaluate, load_dataset, load_predictions
+Quick start::
 
-    # Quick evaluation
-    result = evaluate(
-        dataset_name="multiwoz21",
-        data_path="data/eval/multiwoz21",
-        predictions_path="outputs/predictions.json",
-        split="test",
-    )
-    print(f"Info Rate:  {result['aggregate']['info_rate']:.4f}")
-    print(f"Success Rate: {result['aggregate']['success_rate']:.4f}")
+    from eval_tod import evaluate_predictions
+    from eval_tod.data import load_dataset
 
-    # With LLM Judge
-    result = evaluate(
-        dataset_name="multiwoz21",
-        data_path="data/eval/multiwoz21",
-        predictions_path="outputs/predictions.json",
-        split="test",
-        llm_judge=True,
-        llm_model="deepseek-chat",
-        llm_judge_sample_size=50,  # optional cost control
-    )
+    dialogues = load_dataset("multiwoz21", data_path, split="test")
+    predictions = my_agent.generate_predictions(dialogues)
+    result = evaluate_predictions(dialogues, predictions)
+    print(result["aggregate"]["info_rate"])
 
-Or from the command line::
+Plug in your own agent::
 
-    python -m eval_tod.cli --dataset multiwoz21 --data_path data/eval/multiwoz21 --predictions preds.json
-    python -m eval_tod.cli --dataset multiwoz21 --data_path data/eval/multiwoz21 --predictions preds.json --llm_judge
+    from eval_tod import AbstractTodAgent
+
+    class MyAgent(AbstractTodAgent):
+        def generate_predictions(self, dialogues):
+            ...  # your logic here
+
+    result = evaluate_predictions(dialogues, MyAgent().generate_predictions(dialogues))
 """
 
-from .agent import TodPredictionAgent
-from .data_loader import (
+from .data import (
+    build_batches,
+    list_available_splits,
+    load_and_split,
     load_dataset,
     load_multiwoz21,
     load_predictions,
-    list_available_splits,
+    register_loader,
+    split_train_val,
 )
-from .evaluate import evaluate, print_summary
+from .evaluate import (
+    AbstractTodAgent,
+    evaluate,
+    evaluate_predictions,
+    print_summary,
+)
 from .metrics import (
     DEFAULT_LLM_DIMENSIONS,
     compute_aggregate_metrics,
@@ -65,25 +64,38 @@ from .schemas import (
     Turn,
 )
 
+from .agent import TodPredictionAgent
+from .agent_skill import SkillPreloadedAgent
+from .kb import MultiWOZKB
+
 __all__ = [
-    # Main entry points
-    "evaluate",
+    # ── Core evaluation ──
+    "evaluate_predictions",       # generic: (dialogues, preds) -> results
+    "evaluate",                   # convenience: loads from files
     "print_summary",
-    # Agent
+    # ── Agent interface ──
+    "AbstractTodAgent",           # ABC to implement for new methods
     "TodPredictionAgent",
-    # Data loading
+    "SkillPreloadedAgent",
+    # ── Data ──
     "load_dataset",
     "load_multiwoz21",
     "load_predictions",
     "list_available_splits",
-    # Metrics
-    "DEFAULT_LLM_DIMENSIONS",
+    "register_loader",
+    "load_and_split",
+    "split_train_val",
+    "build_batches",
+    # ── Metrics ──
     "compute_information_rate",
     "compute_success",
     "compute_dialogue_metrics",
     "compute_aggregate_metrics",
     "llm_judge_evaluate",
-    # Schemas
+    "DEFAULT_LLM_DIMENSIONS",
+    # ── KB ──
+    "MultiWOZKB",
+    # ── Schemas ──
     "Dialogue",
     "Goal",
     "Turn",
