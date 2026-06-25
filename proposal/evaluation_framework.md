@@ -16,16 +16,46 @@ Dialogue (用户goal + 对话历史) → Agent → Prediction → Evaluator → 
 
 ### 2.1 Information Rate（信息率）
 
-**定义**：槽位级精度 —— 预测的 inform 槽位和 request 槽位与 ground truth 的匹配比例。
+**定义**：槽位级精度 —— 衡量 agent 对用户 goal 的完整覆盖程度。
+
+在 ToD 场景中，用户 goal 由两类槽位组成：
+
+| 槽位类型 | 来源 | 含义 | 评估方式 | 示例 |
+|---------|------|------|---------|------|
+| **inform** | `goal.inform` | 用户**告诉**系统的约束，agent 需通过 KB 查询确定对应值 | 预测值 == ground truth？ | `hotel.area = "east"` → agent 输出 `hotel.area = "east"` ✅ |
+| **request** | `goal.request` | 用户**想从系统获取**的信息，agent 需识别并列出槽位名 | 预测的 request 列表包含该槽位名？ | `hotel.address` → agent 输出 `request_slots: {hotel: ["address", "phone"]}` ✅ |
 
 ```
 IR = (correct_inform + correct_request) / (total_inform + total_request)
 ```
 
-- **inform 槽位**：从 `dialogue.goal.inform` 中提取，评估预测值是否与 ground truth 匹配（支持管道分隔的多值选项 `value1|value2`）
-- **request 槽位**：从 `dialogue.goal.request` 中提取，检查预测是否请求了需要的槽位
-- **值匹配**：大小写归一化、数字词归一化（`"one"` → `"1"`）、`"don't care"` 等变体统一
-- 聚合模式：全局 `sum(correct)/sum(total)`（宏观 IR）和 `mean(per_dialogue_IR)`（微观 IR）
+**为什么合并计算？** 因为从用户视角看，对话成功 = agent 既填对了约束（inform）**又**识别出用户想要什么信息（request）。两者合在一起才是完整的任务完成度。
+
+**示例** — 一条 hotel+train 对话的 IR 计算：
+
+```
+goal.inform:                           agent 预测:
+  hotel.parking = "yes"          →     hotel.parking = "yes"        ✅
+  hotel.type = "guesthouse"      →     hotel.type = "hotel"         ❌
+  hotel.area = "east"            →     hotel.area = "east"          ✅
+  train.destination = "cambridge" →    train.destination = "cambridge" ✅
+  train.day = "wednesday"        →     train.day = "thursday"       ❌
+
+goal.request:                         agent 预测 request_slots:
+  hotel.address                         hotel: ["address", "phone"]  ✅
+  hotel.phone
+
+inform:   3 correct / 5 total = 0.60
+request:  2 correct / 2 total = 1.00
+──────────────────────────────────
+IR = (3 + 2) / (5 + 2) = 5/7 = 0.714
+```
+
+**实现细节**：
+- **值匹配**：大小写归一化、数字词归一化（`"one"` → `"1"`）、管道分隔多值选项（`value1|value2` 匹配任一即正确）、`"don't care"` 变体统一
+- **request 空字典**（`hotel: {}` 表示"给我所有信息"）：跳过，不参与计数（无法枚举"所有"是什么）
+- **booking 子槽位**（`book day`, `book people` 等）：不计入 inform 槽位，独立通过 booking reference 检查（见 2.2）
+- **聚合模式**：宏观 IR = `sum(correct)/sum(total)`（全局汇总），微观 IR = `mean(per_dialogue_IR)`（每条对话 IR 的平均）
 
 ### 2.2 Success Rate（成功率）
 
@@ -41,10 +71,9 @@ IR = (correct_inform + correct_request) / (total_inform + total_request)
 
 | Judge | 关注维度 | 评分范围 |
 |-------|---------|---------|
-| Task Completion Judge | 任务是否成功完成 | 1–5 |
-| Slot Accuracy Judge | 槽位值是否准确 | 1–5 |
+| Tone Profession Judge | 回复语气是否得当 | 1–5 |
+| Problem Resolution Judge | 回复是否解决问题 | 1–5 |
 | Fluency & Coherence Judge | 对话是否自然流畅 | 1–5 |
-| Helpfulness Judge | 回复是否有实际帮助 | 1–5 |
 | Efficiency Judge | 对话效率是否合理 | 1–5 |
 
 工作流：5 位 specialist 独立评分 → 1 位 combiner 综合打分 → 最终 5 维分数。
