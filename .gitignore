@@ -35,5 +35,5 @@ Thumbs.db
 .claude/
 
 # External repos (AWM/ExpeL not in git — clone/configure manually per README)
-AWM/
-ExpeL/
+/AWM/
+/ExpeL/
