@@ -1,14 +1,14 @@
 """LLM client — single import, single call.
 
 Usage:
-    from llm import chat, resolve_config
+    from llm import chat
 
+    reply = chat("What is the capital of France?")
     reply = chat([{"role": "user", "content": "Hello"}])
-    reply = chat("What is the capital of France?")   # string auto-wraps as user message
     reply = chat([...], model="deepseek-chat", temperature=0.0)
 
-All LLM calls in the project should go through ``chat()``.
-For advanced use (caching, streaming), use ``get_client()``.
+Every LLM call in the project goes through ``chat()``.  There is no
+other public API — just ``prompt in, response out``.
 """
 
 from __future__ import annotations
@@ -144,10 +144,10 @@ def chat(
 
 
 # ══════════════════════════════════════════════════════════════════
-# Advanced client (for evolver: caching, retry, token management)
+# Internal: OpenAIClient factory (needed by Trace2Skill evolver)
 # ══════════════════════════════════════════════════════════════════
 
-def get_client(
+def _get_client(
     model: str = "deepseek-chat",
     api_key: str | None = None,
     base_url: str | None = None,

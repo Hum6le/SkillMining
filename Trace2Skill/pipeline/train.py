@@ -21,7 +21,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 if str(_TRACE2SKILL) not in sys.path:
     sys.path.insert(0, str(_TRACE2SKILL))
 
-from llm import get_client, resolve_config
+from llm import _get_client, resolve_config
 
 
 def _run_training_iteration(
@@ -185,7 +185,7 @@ def _run_training_iteration(
             "llm_calls": 0,
         }
 
-    evolver_client = get_client(
+    evolver_client = _get_client(
         model=model, api_key=api_key, base_url=base_url,
         cache_tag=f"evolver_batch_{batch_idx}",
         response_logger=response_logger,
@@ -396,7 +396,7 @@ def _run_oneshot_pipeline(
             with open(out / "error_analysis_parsed.json", "r", encoding="utf-8") as f:
                 records = json.load(f)
 
-            evolver_client = get_client(
+            evolver_client = _get_client(
                 model=model, api_key=api_key, base_url=base_url,
                 cache_tag="evolver",
                 response_logger=response_logger,
