@@ -249,43 +249,19 @@ class ErrorAnalyzer:
 
     def _chat(self, system_prompt: str, user_message: str) -> str:
         """Single LLM call for error analysis."""
-        from openai import OpenAI
-
-        key = self.api_key or os.environ.get("OPENAI_API_KEY")
-        url = self.base_url or os.environ.get("OPENAI_BASE_URL", None)
-        if not key:
-            raise RuntimeError("OPENAI_API_KEY not set")
-
-        kwargs: dict = {"api_key": key}
-        if url:
-            kwargs["base_url"] = url
-        client = OpenAI(**kwargs)
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
-        ]
-
-        resp = client.chat.completions.create(
+        from llm import chat
+        return chat(
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
             model=self.model,
-            messages=messages,
+            api_key=self.api_key,
+            base_url=self.base_url,
             max_tokens=2048,
             temperature=0.3,
+            response_logger=self._response_logger,
         )
-
-        # Log raw response if logger is configured
-        if self._response_logger is not None:
-            try:
-                self._response_logger.log(
-                    messages=messages,
-                    response=resp,
-                    call_tag="error_analysis",
-                    extra={"model": self.model, "max_tokens": 2048, "temperature": 0.3},
-                )
-            except Exception:
-                pass
-
-        return resp.choices[0].message.content or ""
 
 
 # ── Helper: build case dicts from eval results ───────────────────

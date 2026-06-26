@@ -193,13 +193,6 @@ def induce_workflows(
     Returns:
         Induced workflow text string.
     """
-    from openai import OpenAI
-
-    key = api_key or os.environ.get("OPENAI_API_KEY")
-    url = base_url or os.environ.get("OPENAI_BASE_URL", None)
-    if not key:
-        raise RuntimeError("OPENAI_API_KEY not set")
-
     # ── 1. Collect trajectories (mirrors get_trajectory loop) ──
     cases = []
     for dialogue, pred, metrics in zip(dialogues, predictions, eval_results):
@@ -244,18 +237,11 @@ def induce_workflows(
     user_message = "\n\n".join(prompt_parts)
 
     # ── 4. LLM call (mirrors client.chat.completions.create) ────
-    client_kwargs = {"api_key": key}
-    if url:
-        client_kwargs["base_url"] = url
-    client = OpenAI(**client_kwargs)
-
-    try:
-        resp = client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": user_message}],
-            temperature=0.0,
-        )
-        return resp.choices[0].message.content or ""
-    except Exception as exc:
-        print(f"  [AWM induction] LLM error: {exc}")
-        return ""
+    from llm import chat
+    return chat(
+        user_message,
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        temperature=0.0,
+    )

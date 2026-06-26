@@ -189,7 +189,6 @@ def write_prompt_log(
 # ---------------------------------------------------------------------------
 
 def analyze_instance(
-    client: OpenAI,
     model: str,
     system_prompt: str,
     user_template: str,
@@ -210,12 +209,9 @@ def analyze_instance(
     request_kwargs.pop("model", None)
     request_kwargs.pop("messages", None)
 
-    response = client.chat.completions.create(
-        model=model,
-        messages=input_messages,
-        **request_kwargs,
-    )
-    return input_messages, response.choices[0].message.content
+    from llm import chat
+    response = chat(input_messages, model=model, **request_kwargs)
+    return input_messages, response
 
 
 # ---------------------------------------------------------------------------
@@ -302,10 +298,6 @@ def main():
         print("Error: model must be specified via --model or OPENAI_MODEL env var", file=sys.stderr)
         sys.exit(1)
 
-    base_url = args.base_url or os.getenv("OPENAI_BASE_URL", "http://localhost:8000/v1")
-    api_key = args.api_key or os.getenv("OPENAI_API_KEY", "EMPTY")
-    client = OpenAI(api_key=api_key, base_url=base_url)
-
     system_prompt = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
     user_template = USER_PROMPT_PATH.read_text(encoding="utf-8")
 
@@ -371,7 +363,7 @@ def main():
     def run_one(iid: str, log_path: str, out_path: str) -> str:
         prompt_path = Path(args.output_dir) / f"error_analysis_{iid}_prompt.md"
         input_messages, report = analyze_instance(
-            client, model, system_prompt, user_template, log_path, generation_config
+            model, system_prompt, user_template, log_path, generation_config
         )
         Path(out_path).write_text(report, encoding="utf-8")
         write_prompt_log(prompt_path, input_messages, report)

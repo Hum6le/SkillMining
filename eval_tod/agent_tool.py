@@ -349,38 +349,16 @@ class ToolBasedTodAgent:
 
     def _chat(self, messages: list[dict]) -> str:
         """Send messages to the LLM and return the response text."""
-        from openai import OpenAI
-
-        key = self.api_key or os.environ.get("OPENAI_API_KEY")
-        url = self.base_url or os.environ.get("OPENAI_BASE_URL", None)
-        if not key:
-            raise RuntimeError("OPENAI_API_KEY not set")
-
-        client_kwargs: dict = {"api_key": key}
-        if url:
-            client_kwargs["base_url"] = url
-        client = OpenAI(**client_kwargs)
-
-        resp = client.chat.completions.create(
+        from llm import chat
+        return chat(
+            messages,
             model=self.model,
-            messages=messages,
+            api_key=self.api_key,
+            base_url=self.base_url,
             max_tokens=1024,
             temperature=0.3,
+            response_logger=self._response_logger,
         )
-
-        # Log raw response if logger is configured
-        if self._response_logger is not None:
-            try:
-                self._response_logger.log(
-                    messages=messages,
-                    response=resp,
-                    call_tag="agent_chat",
-                    extra={"model": self.model, "max_tokens": 1024, "temperature": 0.3},
-                )
-            except Exception:
-                pass
-
-        return resp.choices[0].message.content or ""
 
     def generate_predictions(
         self, dialogues: list[Dialogue], verbose: bool = True,

@@ -1,11 +1,14 @@
-"""LLM client factory — single import for all pipeline components.
+"""LLM client — single import, single call.
 
 Usage:
-    from llm import get_client, resolve_config
+    from llm import chat, resolve_config
 
-    client = get_client("deepseek-chat")
-    # or with explicit config:
-    client = get_client("deepseek-chat", api_key="sk-...", base_url="https://...")
+    reply = chat([{"role": "user", "content": "Hello"}])
+    reply = chat("What is the capital of France?")   # string auto-wraps as user message
+    reply = chat([...], model="deepseek-chat", temperature=0.0)
+
+All LLM calls in the project should go through ``chat()``.
+For advanced use (caching, streaming), use ``get_client()``.
 """
 
 from __future__ import annotations
@@ -21,8 +24,9 @@ _TRACE2SKILL = Path(__file__).resolve().parent / "Trace2Skill"
 _CLIENT_CACHE: dict[str, object] = {}
 
 
-# ── Config resolution ─────────────────────────────────────────
-
+# ══════════════════════════════════════════════════════════════════
+# Config resolution
+# ══════════════════════════════════════════════════════════════════
 
 def resolve_config(
     api_key: str | None = None,
@@ -31,14 +35,15 @@ def resolve_config(
 ) -> dict[str, str]:
     """Resolve effective API configuration.
 
-    Priority: explicit args > AWM config > environment variables.
+    Priority: explicit args > environment variables.
+    Also tries AWM/config.py and .env for backward compat.
 
     Returns dict with keys: model, api_key, base_url.
     """
     if not api_key:
-        api_key = _try_awm_config("DEEPSEEK_API_KEY")
+        api_key = _try_local_config("DEEPSEEK_API_KEY")
     if not base_url:
-        base_url = _try_awm_config("DEEPSEEK_BASE_URL")
+        base_url = _try_local_config("DEEPSEEK_BASE_URL")
     if not api_key:
         api_key = os.getenv("OPENAI_API_KEY", "")
     if not base_url:
@@ -46,29 +51,101 @@ def resolve_config(
 
     if not api_key or not base_url:
         raise RuntimeError(
-            "LLM API not configured. Provide api_key/base_url, set "
-            "OPENAI_API_KEY/OPENAI_BASE_URL env vars, or clone "
-            "https://github.com/zorazrw/agent-workflow-memory.git as AWM/"
+            "LLM API not configured. Set OPENAI_API_KEY / OPENAI_BASE_URL "
+            "environment variables, or pass api_key/base_url explicitly."
         )
 
     return {"model": model, "api_key": api_key, "base_url": base_url}
 
 
-def _try_awm_config(key: str) -> str | None:
-    """Try to read a config value from AWM/config.py."""
+# ══════════════════════════════════════════════════════════════════
+# Core API: prompt in, response out
+# ══════════════════════════════════════════════════════════════════
+
+def chat(
+    messages: str | list[dict],
+    *,
+    model: str = "deepseek-chat",
+    temperature: float = 0.3,
+    max_tokens: int | None = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    response_logger=None,
+    **kwargs,
+) -> str:
+    """Send messages to the LLM and return the response text.
+
+    The single entry point for all LLM calls in the project.
+    Handles config resolution, client creation, and error recovery.
+
+    Args:
+        messages: Either a string (auto-wrapped as a user message) or a list
+                  of ``{"role": "...", "content": "..."}`` dicts.
+        model: Model name (default ``"deepseek-chat"``).
+        temperature: Sampling temperature.
+        max_tokens: Max tokens in response (None = model default).
+        api_key: API key (resolved from env if None).
+        base_url: API base URL (resolved from env if None).
+        response_logger: Optional ``ResponseLogger`` to record raw I/O.
+        **kwargs: Extra args passed to the API (e.g. ``stop=["Task:"]``).
+
+    Returns:
+        The response text string.  Empty string on failure.
+    """
+    from openai import OpenAI
+
+    # Normalize messages
+    if isinstance(messages, str):
+        messages = [{"role": "user", "content": messages}]
+    # Handle Message objects from Trace2Skill
+    clean = []
+    for m in messages:
+        if hasattr(m, "role") and hasattr(m, "content"):
+            clean.append({"role": m.role, "content": m.content})
+        elif isinstance(m, dict):
+            clean.append(m)
+        else:
+            clean.append({"role": "user", "content": str(m)})
+
+    # Resolve config
+    cfg = resolve_config(api_key=api_key, base_url=base_url, model=model)
+
+    # Create client
+    client_kwargs = {"api_key": cfg["api_key"]}
+    if cfg["base_url"]:
+        client_kwargs["base_url"] = cfg["base_url"]
+    client = OpenAI(**client_kwargs)
+
+    # Build request
+    request_kwargs: dict = {
+        "model": cfg["model"],
+        "messages": clean,
+        "temperature": temperature,
+    }
+    if max_tokens is not None:
+        request_kwargs["max_tokens"] = max_tokens
+    request_kwargs.update(kwargs)
+
+    # Call
     try:
-        awm_path = str(_TRACE2SKILL.parent / "AWM")
-        if awm_path not in sys.path:
-            sys.path.insert(0, awm_path)
-        from config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL
-        mapping = {"DEEPSEEK_API_KEY": DEEPSEEK_API_KEY, "DEEPSEEK_BASE_URL": DEEPSEEK_BASE_URL}
-        return mapping.get(key)
-    except ImportError:
-        return None
+        resp = client.chat.completions.create(**request_kwargs)
+
+        # Log raw response if logger configured
+        if response_logger is not None:
+            try:
+                response_logger.log(messages=clean, response=resp, call_tag="chat")
+            except Exception:
+                pass
+
+        return resp.choices[0].message.content or ""
+    except Exception as exc:
+        log.warning(f"LLM call failed: {exc}")
+        return ""
 
 
-# ── Client factory ────────────────────────────────────────────
-
+# ══════════════════════════════════════════════════════════════════
+# Advanced client (for evolver: caching, retry, token management)
+# ══════════════════════════════════════════════════════════════════
 
 def get_client(
     model: str = "deepseek-chat",
@@ -79,7 +156,10 @@ def get_client(
     cache_tag: str = "",
     **kwargs,
 ):
-    """Get (or reuse) an OpenAI-compatible LLM client.
+    """Get (or reuse) an OpenAIClient with caching and retry logic.
+
+    Used by the skill evolver (Trace2Skill) which needs disk caching
+    and token-aware retry.  For simple LLM calls, use ``chat()`` instead.
 
     Args:
         model: Model name.
@@ -111,6 +191,23 @@ def get_client(
     if cache:
         _CLIENT_CACHE[cache_key] = client
     return client
+
+
+def _try_local_config(key: str) -> str | None:
+    """Try to read config from local config.py files."""
+    from pathlib import Path
+    for config_dir in ["awm", "AWM"]:
+        config_path = Path(__file__).resolve().parent / config_dir / "config.py"
+        if config_path.exists():
+            try:
+                import importlib.util
+                spec = importlib.util.spec_from_file_location(f"_{config_dir}_config", str(config_path))
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                return getattr(mod, key, None)
+            except Exception:
+                pass
+    return None
 
 
 def clear_cache() -> None:
