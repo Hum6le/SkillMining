@@ -1,0 +1,509 @@
+[
+  {
+    "dialogue_id": "multiwoz21-validation-627",
+    "original_id": "PMUL1132.json",
+    "domains": [
+      "attraction",
+      "train",
+      "general",
+      "restaurant"
+    ],
+    "goal": {
+      "description": "You are looking for information in Cambridge. You are looking for a <span class='emphasis'>train</span>. The train should go to <span class='emphasis'>norwich</span> and should <span class='emphasis'>leave after 17:45</span>. The train should depart from <span class='emphasis'>cambridge</span> and should leave on <span class='emphasis'>tuesday</span>. Once you find the train you want to make a booking for <span class='emphasis'>2 people</span>. Make sure you get the <span class='emphasis'>reference number</span>. You are also looking for <span class='emphasis'>places to go</span> in town. The attraction should be in the <span class='emphasis'>centre</span> and should be in the type of <span class='emphasis'>entertainment</span>. If there is no such attraction, how about one that is in <span class='emphasis'>the type of architecture</span>. Make sure you get <span class='emphasis'>address</span>",
+      "inform": {
+        "attraction": {
+          "type": "entertainment|architecture",
+          "area": "centre|centre"
+        },
+        "train": {
+          "leave at": "17:45",
+          "destination": "norwich",
+          "day": "tuesday",
+          "departure": "cambridge",
+          "book people": "2"
+        }
+      },
+      "request": {
+        "attraction": {
+          "address": ""
+        },
+        "train": {}
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "Hi I need a train to go to Norwich, I need to leave after 17:45.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "destination",
+              "value": "Norwich",
+              "start": 27,
+              "end": 34
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "17:45",
+              "start": 58,
+              "end": 63
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Where are you departing from?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "departure"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I'll be leaving from Cambridge on Tuesday.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "day",
+              "value": "tuesday"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Okay, there is an 18:36 train that will arrive by 19:55.  Just that sound good? ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "arrive by",
+              "value": "19:55",
+              "start": 50,
+              "end": 55
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "18:36",
+              "start": 18,
+              "end": 23
+            }
+          ],
+          "binary": [
+            {
+              "intent": "select",
+              "domain": "train",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Sounds great. Can you buy me two tickets?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "book people",
+              "value": "two",
+              "start": 29,
+              "end": 32
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Your booking was successful.  You will be paying 35.20 at the station and your reference number is VAJDAW8J.  Can I help you further?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "ref",
+              "value": "VAJDAW8J",
+              "start": 99,
+              "end": 107
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "price",
+              "value": "35.20",
+              "start": 49,
+              "end": 54
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            },
+            {
+              "intent": "book",
+              "domain": "train",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes, what is there for food?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "What type of food do you like ?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "food"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Did I say food? Sorry, I meant places to go. I'm looking for entertainment in the centre of town.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "centre"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "We have many available attractions in city centre. Would you be interested in a nightclub, cinema, theatre, or another type of entertainment?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "select",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "nightclub"
+            },
+            {
+              "intent": "select",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "cinema"
+            },
+            {
+              "intent": "select",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "theatre"
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "city centre"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "choice",
+              "value": "many available",
+              "start": 8,
+              "end": 22
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "What options do you have for entertainment?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "entertainment"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Sorry, there are no results for that query. Would you like to try a different area or type?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I am looking for an attraction in the centre of the city.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "centre"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I'm sorry we have no entertainment attractions in centre. Should I look for another type of attraction?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "nooffer",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "centre"
+            },
+            {
+              "intent": "nooffer",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "entertainment"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes, let's try to find architecture instead. Can you recommend your favorite and tell me the address?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "architecture"
+            }
+          ],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "address"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "All saints church is a great architecture attraction on jesus lane. Entrance is free. Anything else today?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "architecture"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "entrance fee",
+              "value": "free",
+              "start": 80,
+              "end": 84
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "address",
+              "value": "jesus lane",
+              "start": 56,
+              "end": 66
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "All saints church",
+              "start": 0,
+              "end": 17
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Great, can I please have the address for All Saints church?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "All Saints church",
+              "start": 41,
+              "end": 58
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "address"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The address is jesus lane in centre.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "centre"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "address",
+              "value": "jesus lane",
+              "start": 15,
+              "end": 25
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Great! Thank you for all your help!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Is there anything else you need today?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "That is it for today, thank you. Bye",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You're very welcome. Good day.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            },
+            {
+              "intent": "welcome",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

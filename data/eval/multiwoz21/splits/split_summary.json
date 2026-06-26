@@ -1,0 +1,601 @@
+{
+  "attraction": {
+    "full": {
+      "train": 116,
+      "val": 14,
+      "test": 15
+    },
+    "sampled_1_10": {
+      "train": 11,
+      "val": 1,
+      "test": 1
+    }
+  },
+  "attraction_hospital": {
+    "full": {
+      "train": 1,
+      "val": 0,
+      "test": 0
+    },
+    "sampled_1_10": {
+      "train": 1,
+      "val": 0,
+      "test": 0
+    }
+  },
+  "attraction_hospital_hotel": {
+    "full": {
+      "train": 1,
+      "val": 0,
+      "test": 0
+    },
+    "sampled_1_10": {
+      "train": 1,
+      "val": 0,
+      "test": 0
+    }
+  },
+  "attraction_hospital_hotel_taxi": {
+    "full": {
+      "train": 1,
+      "val": 0,
+      "test": 0
+    },
+    "sampled_1_10": {
+      "train": 1,
+      "val": 0,
+      "test": 0
+    }
+  },
+  "attraction_hospital_restaurant": {
+    "full": {
+      "train": 1,
+      "val": 0,
+      "test": 0
+    },
+    "sampled_1_10": {
+      "train": 1,
+      "val": 0,
+      "test": 0
+    }
+  },
+  "attraction_hotel": {
+    "full": {
+      "train": 417,
+      "val": 52,
+      "test": 53
+    },
+    "sampled_1_10": {
+      "train": 41,
+      "val": 5,
+      "test": 5
+    }
+  },
+  "attraction_hotel_police_taxi": {
+    "full": {
+      "train": 1,
+      "val": 0,
+      "test": 0
+    },
+    "sampled_1_10": {
+      "train": 1,
+      "val": 0,
+      "test": 0
+    }
+  },
+  "attraction_hotel_restaurant": {
+    "full": {
+      "train": 24,
+      "val": 3,
+      "test": 4
+    },
+    "sampled_1_10": {
+      "train": 2,
+      "val": 1,
+      "test": 1
+    }
+  },
+  "attraction_hotel_restaurant_taxi": {
+    "full": {
+      "train": 44,
+      "val": 5,
+      "test": 7
+    },
+    "sampled_1_10": {
+      "train": 4,
+      "val": 1,
+      "test": 1
+    }
+  },
+  "attraction_hotel_restaurant_train": {
+    "full": {
+      "train": 1,
+      "val": 0,
+      "test": 0
+    },
+    "sampled_1_10": {
+      "train": 1,
+      "val": 0,
+      "test": 0
+    }
+  },
+  "attraction_hotel_taxi": {
+    "full": {
+      "train": 412,
+      "val": 51,
+      "test": 52
+    },
+    "sampled_1_10": {
+      "train": 41,
+      "val": 5,
+      "test": 5
+    }
+  },
+  "attraction_hotel_taxi_train": {
+    "full": {
+      "train": 2,
+      "val": 1,
+      "test": 0
+    },
+    "sampled_1_10": {
+      "train": 1,
+      "val": 1,
+      "test": 0
+    }
+  },
+  "attraction_hotel_train": {
+    "full": {
+      "train": 16,
+      "val": 2,
+      "test": 2
+    },
+    "sampled_1_10": {
+      "train": 1,
+      "val": 1,
+      "test": 1
+    }
+  },
+  "attraction_police_train": {
+    "full": {
+      "train": 2,
+      "val": 0,
+      "test": 0
+    },
+    "sampled_1_10": {
+      "train": 1,
+      "val": 0,
+      "test": 0
+    }
+  },
+  "attraction_restaurant": {
+    "full": {
+      "train": 424,
+      "val": 53,
+      "test": 54
+    },
+    "sampled_1_10": {
+      "train": 42,
+      "val": 5,
+      "test": 5
+    }
+  },
+  "attraction_restaurant_taxi": {
+    "full": {
+      "train": 413,
+      "val": 51,
+      "test": 53
+    },
+    "sampled_1_10": {
+      "train": 41,
+      "val": 5,
+      "test": 5
+    }
+  },
+  "attraction_restaurant_taxi_train": {
+    "full": {
+      "train": 4,
+      "val": 1,
+      "test": 0
+    },
+    "sampled_1_10": {
+      "train": 1,
+      "val": 1,
+      "test": 0
+    }
+  },
+  "attraction_restaurant_train": {
+    "full": {
+      "train": 26,
+      "val": 3,
+      "test": 4
+    },
+    "sampled_1_10": {
+      "train": 2,
+      "val": 1,
+      "test": 1
+    }
+  },
+  "attraction_taxi": {
+    "full": {
+      "train": 2,
+      "val": 0,
+      "test": 0
+    },
+    "sampled_1_10": {
+      "train": 1,
+      "val": 0,
+      "test": 0
+    }
+  },
+  "attraction_taxi_train": {
+    "full": {
+      "train": 3,
+      "val": 1,
+      "test": 0
+    },
+    "sampled_1_10": {
+      "train": 1,
+      "val": 1,
+      "test": 0
+    }
+  },
+  "attraction_train": {
+    "full": {
+      "train": 924,
+      "val": 115,
+      "test": 116
+    },
+    "sampled_1_10": {
+      "train": 92,
+      "val": 11,
+      "test": 11
+    }
+  },
+  "hospital": {
+    "full": {
+      "train": 220,
+      "val": 27,
+      "test": 28
+    },
+    "sampled_1_10": {
+      "train": 22,
+      "val": 2,
+      "test": 2
+    }
+  },
+  "hospital_hotel": {
+    "full": {
+      "train": 2,
+      "val": 0,
+      "test": 0
+    },
+    "sampled_1_10": {
+      "train": 1,
+      "val": 0,
+      "test": 0
+    }
+  },
+  "hospital_hotel_restaurant_taxi": {
+    "full": {
+      "train": 1,
+      "val": 0,
+      "test": 0
+    },
+    "sampled_1_10": {
+      "train": 1,
+      "val": 0,
+      "test": 0
+    }
+  },
+  "hospital_hotel_train": {
+    "full": {
+      "train": 2,
+      "val": 0,
+      "test": 0
+    },
+    "sampled_1_10": {
+      "train": 1,
+      "val": 0,
+      "test": 0
+    }
+  },
+  "hospital_police": {
+    "full": {
+      "train": 4,
+      "val": 1,
+      "test": 0
+    },
+    "sampled_1_10": {
+      "train": 1,
+      "val": 1,
+      "test": 0
+    }
+  },
+  "hospital_restaurant": {
+    "full": {
+      "train": 1,
+      "val": 0,
+      "test": 0
+    },
+    "sampled_1_10": {
+      "train": 1,
+      "val": 0,
+      "test": 0
+    }
+  },
+  "hospital_taxi": {
+    "full": {
+      "train": 5,
+      "val": 1,
+      "test": 1
+    },
+    "sampled_1_10": {
+      "train": 1,
+      "val": 1,
+      "test": 1
+    }
+  },
+  "hotel": {
+    "full": {
+      "train": 499,
+      "val": 62,
+      "test": 63
+    },
+    "sampled_1_10": {
+      "train": 49,
+      "val": 6,
+      "test": 6
+    }
+  },
+  "hotel_police": {
+    "full": {
+      "train": 1,
+      "val": 0,
+      "test": 0
+    },
+    "sampled_1_10": {
+      "train": 1,
+      "val": 0,
+      "test": 0
+    }
+  },
+  "hotel_police_train": {
+    "full": {
+      "train": 2,
+      "val": 0,
+      "test": 0
+    },
+    "sampled_1_10": {
+      "train": 1,
+      "val": 0,
+      "test": 0
+    }
+  },
+  "hotel_restaurant": {
+    "full": {
+      "train": 460,
+      "val": 57,
+      "test": 59
+    },
+    "sampled_1_10": {
+      "train": 46,
+      "val": 5,
+      "test": 5
+    }
+  },
+  "hotel_restaurant_taxi": {
+    "full": {
+      "train": 426,
+      "val": 53,
+      "test": 54
+    },
+    "sampled_1_10": {
+      "train": 42,
+      "val": 5,
+      "test": 5
+    }
+  },
+  "hotel_restaurant_taxi_train": {
+    "full": {
+      "train": 2,
+      "val": 1,
+      "test": 0
+    },
+    "sampled_1_10": {
+      "train": 1,
+      "val": 1,
+      "test": 0
+    }
+  },
+  "hotel_restaurant_train": {
+    "full": {
+      "train": 23,
+      "val": 2,
+      "test": 4
+    },
+    "sampled_1_10": {
+      "train": 2,
+      "val": 1,
+      "test": 1
+    }
+  },
+  "hotel_taxi": {
+    "full": {
+      "train": 2,
+      "val": 1,
+      "test": 0
+    },
+    "sampled_1_10": {
+      "train": 1,
+      "val": 1,
+      "test": 0
+    }
+  },
+  "hotel_taxi_train": {
+    "full": {
+      "train": 6,
+      "val": 1,
+      "test": 1
+    },
+    "sampled_1_10": {
+      "train": 1,
+      "val": 1,
+      "test": 1
+    }
+  },
+  "hotel_train": {
+    "full": {
+      "train": 1063,
+      "val": 132,
+      "test": 134
+    },
+    "sampled_1_10": {
+      "train": 106,
+      "val": 13,
+      "test": 13
+    }
+  },
+  "police": {
+    "full": {
+      "train": 188,
+      "val": 23,
+      "test": 25
+    },
+    "sampled_1_10": {
+      "train": 18,
+      "val": 2,
+      "test": 2
+    }
+  },
+  "police_restaurant": {
+    "full": {
+      "train": 2,
+      "val": 1,
+      "test": 0
+    },
+    "sampled_1_10": {
+      "train": 1,
+      "val": 1,
+      "test": 0
+    }
+  },
+  "police_restaurant_train": {
+    "full": {
+      "train": 2,
+      "val": 0,
+      "test": 0
+    },
+    "sampled_1_10": {
+      "train": 1,
+      "val": 0,
+      "test": 0
+    }
+  },
+  "police_taxi": {
+    "full": {
+      "train": 6,
+      "val": 1,
+      "test": 1
+    },
+    "sampled_1_10": {
+      "train": 1,
+      "val": 1,
+      "test": 1
+    }
+  },
+  "restaurant": {
+    "full": {
+      "train": 1042,
+      "val": 130,
+      "test": 131
+    },
+    "sampled_1_10": {
+      "train": 104,
+      "val": 13,
+      "test": 13
+    }
+  },
+  "restaurant_taxi": {
+    "full": {
+      "train": 4,
+      "val": 1,
+      "test": 1
+    },
+    "sampled_1_10": {
+      "train": 1,
+      "val": 1,
+      "test": 1
+    }
+  },
+  "restaurant_taxi_train": {
+    "full": {
+      "train": 3,
+      "val": 1,
+      "test": 0
+    },
+    "sampled_1_10": {
+      "train": 1,
+      "val": 1,
+      "test": 0
+    }
+  },
+  "restaurant_train": {
+    "full": {
+      "train": 936,
+      "val": 117,
+      "test": 118
+    },
+    "sampled_1_10": {
+      "train": 93,
+      "val": 11,
+      "test": 11
+    }
+  },
+  "taxi": {
+    "full": {
+      "train": 332,
+      "val": 41,
+      "test": 42
+    },
+    "sampled_1_10": {
+      "train": 33,
+      "val": 4,
+      "test": 4
+    }
+  },
+  "taxi_train": {
+    "full": {
+      "train": 4,
+      "val": 1,
+      "test": 0
+    },
+    "sampled_1_10": {
+      "train": 1,
+      "val": 1,
+      "test": 0
+    }
+  },
+  "train": {
+    "full": {
+      "train": 269,
+      "val": 33,
+      "test": 35
+    },
+    "sampled_1_10": {
+      "train": 26,
+      "val": 3,
+      "test": 3
+    }
+  },
+  "_totals": {
+    "original": 10438,
+    "sampled_1_10": {
+      "train": 846,
+      "val": 114,
+      "test": 105
+    },
+    "dedup_note": "all_*.json are deduplicated (each dialogue appears once); scenario_*.json may contain duplicates for multi-domain dialogues",
+    "seed": 42,
+    "sample_frac": 0.1
+  }
+}

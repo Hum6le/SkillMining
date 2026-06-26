@@ -1,0 +1,2751 @@
+[
+  {
+    "dialogue_id": "multiwoz21-train-502",
+    "original_id": "SSNG0164.json",
+    "domains": [
+      "restaurant",
+      "general"
+    ],
+    "goal": {
+      "description": "You are looking for a <span class='emphasis'>place to dine</span>. The restaurant should serve <span class='emphasis'>japanese</span> food and should be in the <span class='emphasis'>south</span>. If there is no such restaurant, how about one that serves <span class='emphasis'>mexican</span> food. Once you find the <span class='emphasis'>restaurant</span> you want to book a table for <span class='emphasis'>6 people</span> at <span class='emphasis'>13:15</span> on <span class='emphasis'>saturday</span>. If the booking fails how about different <span class='emphasis'>restaurant</span> in the same <span class='emphasis'>area</span> and <span class='emphasis'>pricerange</span>. Make sure you get the <span class='emphasis'>reference number</span>",
+      "inform": {
+        "restaurant": {
+          "food": "japanese|mexican",
+          "area": "south|south",
+          "book time": "13:15|12:15",
+          "book people": "6",
+          "book day": "saturday"
+        }
+      },
+      "request": {
+        "restaurant": {}
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I am looking for Japanese food in the south part of town.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "south"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Japanese",
+              "start": 17,
+              "end": 25
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I am sorry. There is no japanese restaurant in the south area? Would you like to try another area or food type? ",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "south"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "japanese",
+              "start": 24,
+              "end": 32
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "area"
+            },
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "food"
+            },
+            {
+              "intent": "nooffer",
+              "domain": "restaurant",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Try Mexican, then. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Mexican",
+              "start": 4,
+              "end": 11
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Unfortunately, I was not able to locate a Mexican restaurant in the south part of time. Would you like me to search for a different cuisine?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "south part of time"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Mexican",
+              "start": 42,
+              "end": 49
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "food"
+            },
+            {
+              "intent": "nooffer",
+              "domain": "restaurant",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I'll take any type of cuisine, then. I just need a reservation for 6 at 13:15 on Saturday.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "book day",
+              "value": "saturday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "dontcare"
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "There are Japanese, Italian, Modern European, Portuguese, Indian, and Mexican. Which of these do you prefer?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Japanese",
+              "start": 10,
+              "end": 18
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Italian",
+              "start": 20,
+              "end": 27
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Modern European",
+              "start": 29,
+              "end": 44
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Portuguese",
+              "start": 46,
+              "end": 56
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Indian",
+              "start": 58,
+              "end": 64
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Mexican",
+              "start": 70,
+              "end": 77
+            }
+          ],
+          "binary": [
+            {
+              "intent": "select",
+              "domain": "restaurant",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Mexican, please. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The Mexican place is not open then, shall I try another place to dine?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes please. Are you sure there are no Japanese or Mexican places in the same price range open on the south side that day?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "No I am sorry. But there is a Portuguese restaurant if you are interested.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Portuguese",
+              "start": 30,
+              "end": 40
+            }
+          ],
+          "binary": [
+            {
+              "intent": "nooffer",
+              "domain": "restaurant",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Okay I guess. Try booking there please.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Great! I was able to book you there and your reference number is W2A8GHG8.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "ref",
+              "value": "W2A8GHG8",
+              "start": 65,
+              "end": 73
+            }
+          ],
+          "binary": [
+            {
+              "intent": "book",
+              "domain": "restaurant",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you for your help. Have a great day.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Thank you for using the Cambridge TownInfo centre. Have a wonderful day!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-505",
+    "original_id": "WOZ20385.json",
+    "domains": [
+      "restaurant",
+      "general"
+    ],
+    "goal": {
+      "description": "T. a. s. k.  . 0. 1. 0. 3. 5. :.  . Y. o. u.  . a. r. e.  . l. o. o. k. i. n. g.  . f. o. r.  . a.  . m. o. d. e. r. a. t. e. l. y.  . p. r. i. c. e. d.  . r. e. s. t. a. u. r. a. n. t.  . a. n. d.  . i. t.  . s. h. o. u. l. d.  . b. e.  . i. n.  . t. h. e.  . s. o. u. t. h.  . p. a. r. t.  . o. f.  . t. o. w. n. ..  . M. a. k. e.  . s. u. r. e.  . y. o. u.  . g. e. t.  . t. h. e.  . a. d. d. r. e. s. s.  . a. n. d.  . p. h. o. n. e.  . n. u. m. b. e. r.  . o. f.  . t. h. e.  . v. e. n. u. e. .",
+      "inform": {
+        "restaurant": {
+          "price range": "moderate",
+          "area": "south"
+        }
+      },
+      "request": {
+        "restaurant": {
+          "address": "",
+          "phone": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "Hey, I'm up south can you give me a place to eat?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "south"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "What kind of food would you like?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "food"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Don't care.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "dontcare"
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I recommend Chiquito Restaurant Bar",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "recommend",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "Chiquito Restaurant Bar",
+              "start": 12,
+              "end": 35
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Can I have the address and telephone number?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "address"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Chiquito Restaurant Bar is located at 2G Cambridge Leisure Park Cherry Hinton Road Cherry Hinton.  The phone number is 01223 400170.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "phone",
+              "value": "01223 400170",
+              "start": 119,
+              "end": 131
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "Chiquito Restaurant Bar",
+              "start": 0,
+              "end": 23
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "address",
+              "value": "2 G Cambridge Leisure Park Cherry Hinton Road Cherry Hinton"
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "THAT WILL BE FINE.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You're welcome, goodbye.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            },
+            {
+              "intent": "welcome",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-525",
+    "original_id": "WOZ20340.json",
+    "domains": [
+      "restaurant",
+      "general"
+    ],
+    "goal": {
+      "description": "T. a. s. k.  . 0. 3. 6. 4. 2. :.  . Y. o. u.  . a. r. e.  . l. o. o. k. i. n. g.  . f. o. r.  . a.  . r. e. s. t. a. u. r. a. n. t.  . i. n.  . t. h. e.  . s. o. u. t. h.  . p. a. r. t.  . o. f.  . t. o. w. n.  . a. n. d.  . i. t.  . s. h. o. u. l. d.  . s. e. r. v. e.  . m. e. x. i. c. a. n.  . f. o. o. d. ..  . M. a. k. e.  . s. u. r. e.  . y. o. u.  . g. e. t.  . t. h. e.  . a. d. d. r. e. s. s. ,.  . p. h. o. n. e.  . n. u. m. b. e. r. ,.  . a. n. d.  . p. o. s. t. c. o. d. e.  . o. f.  . t. h. e.  . v. e. n. u. e. .",
+      "inform": {
+        "restaurant": {
+          "food": "mexican",
+          "area": "south"
+        }
+      },
+      "request": {
+        "restaurant": {
+          "address": "",
+          "phone": "",
+          "postcode": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I am looking for a restaurant that serves Mexican food and located in the south part of town.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "south"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Mexican",
+              "start": 42,
+              "end": 49
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Chiquito Restaurant Bar serves Mexican food.  It's an expensive restaurant in the south part of town.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "price range",
+              "value": "expensive"
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "south"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Mexican",
+              "start": 31,
+              "end": 38
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "Chiquito Restaurant Bar",
+              "start": 0,
+              "end": 23
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "What is the address, phone number, and postcode?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "phone"
+            },
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "postcode"
+            },
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "address"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Chiquito restaurant bar is located at 2G Cambridge leisure park cherry hinton road cherry hinton. Its phone number is 01223 400170 and the postcode is CB17DY. Is there anything else I can help with? ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "address",
+              "value": "2 G Cambridge leisure park cherry hinton road cherry hinton"
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "Chiquito restaurant bar",
+              "start": 0,
+              "end": 23
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "phone",
+              "value": "01223 400170",
+              "start": 118,
+              "end": 130
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "postcode",
+              "value": "CB17DY",
+              "start": 151,
+              "end": 157
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Nope, that's all I need, thank you very much!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You're welcome.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "welcome",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-1660",
+    "original_id": "WOZ20171.json",
+    "domains": [
+      "restaurant",
+      "general"
+    ],
+    "goal": {
+      "description": "T. a. s. k.  . 0. 3. 8. 4. 3. :.  . Y. o. u.  . w. a. n. t.  . t. o.  . f. i. n. d.  . a.  . c. h. e. a. p.  . r. e. s. t. a. u. r. a. n. t.  . a. n. d.  . i. t.  . s. h. o. u. l. d.  . b. e.  . i. n.  . t. h. e.  . w. e. s. t.  . p. a. r. t.  . o. f.  . t. o. w. n. ..  . M. a. k. e.  . s. u. r. e.  . y. o. u.  . g. e. t.  . t. h. e.  . a. d. d. r. e. s. s.  . a. n. d.  . t. y. p. e.  . o. f.  . f. o. o. d. .",
+      "inform": {
+        "restaurant": {
+          "price range": "cheap",
+          "area": "west"
+        }
+      },
+      "request": {
+        "restaurant": {
+          "address": "",
+          "food": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I want to find a cheap restaurant in the west part of town. What is the address and food?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "price range",
+              "value": "cheap"
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "west"
+            }
+          ],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "food"
+            },
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "address"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "La margherita an italian restaurant in the west part of town and in the cheap price range.  Their address is 15 magdalene street City Centre",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "price range",
+              "value": "cheap"
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "west"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "italian",
+              "start": 17,
+              "end": 24
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "address",
+              "value": "15 magdalene street City Centre",
+              "start": 109,
+              "end": 140
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "La margherita",
+              "start": 0,
+              "end": 13
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You are welcome",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "welcome",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-1801",
+    "original_id": "WOZ20556.json",
+    "domains": [
+      "restaurant",
+      "general"
+    ],
+    "goal": {
+      "description": "T. a. s. k.  . 0. 4. 6. 2. 0. :.  . Y. o. u.  . w. a. n. t.  . t. o.  . f. i. n. d.  . a.  . m. o. d. e. r. a. t. e. l. y.  . p. r. i. c. e. d.  . r. e. s. t. a. u. r. a. n. t.  . a. n. d.  . i. t.  . s. h. o. u. l. d.  . b. e.  . i. n.  . t. h. e.  . s. o. u. t. h.  . p. a. r. t.  . o. f.  . t. o. w. n. ..  . M. a. k. e.  . s. u. r. e.  . y. o. u.  . g. e. t.  . t. h. e.  . a. d. d. r. e. s. s.  . a. n. d.  . p. o. s. t. c. o. d. e.  . o. f.  . t. h. e.  . v. e. n. u. e. .",
+      "inform": {
+        "restaurant": {
+          "price range": "moderate",
+          "area": "south"
+        }
+      },
+      "request": {
+        "restaurant": {
+          "address": "",
+          "postcode": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "Hi, I want a moderately priced restaurant located in the south part of town.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "price range",
+              "value": "moderate"
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "south"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Pizza hut cherry hinton is in the south part of town and in the moderate price range.  Would you like their location? ",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "price range",
+              "value": "moderate"
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "south part of town"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "Pizza hut cherry hinton",
+              "start": 0,
+              "end": 23
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "address and postcode please",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "postcode"
+            },
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "address"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Their address is G4 Cambridge Leisure Park Clifton Way Cherry Hinton and their postcode is C.B 1, 7 D.Y. Is there anything else I can do for you today?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "address",
+              "value": "G4 Cambridge Leisure Park Clifton Way Cherry Hinton",
+              "start": 17,
+              "end": 68
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "postcode",
+              "value": "C.B 1",
+              "start": 91,
+              "end": 96
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "postcode",
+              "value": "7 D.Y",
+              "start": 98,
+              "end": 103
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "No, thank you, goodbye.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "enjoy your meal!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "greet",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-1914",
+    "original_id": "SNG1206.json",
+    "domains": [
+      "restaurant",
+      "general"
+    ],
+    "goal": {
+      "description": "You are looking for a <span class='emphasis'>particular restaurant</span>. Its name is called <span class='emphasis'>city stop restaurant</span>. Make sure you get <span class='emphasis'>area</span>, <span class='emphasis'>postcode</span>, and <span class='emphasis'>phone number</span>",
+      "inform": {
+        "restaurant": {
+          "name": "ugly duckling|city stop restaurant"
+        }
+      },
+      "request": {
+        "restaurant": {
+          "area": "",
+          "postcode": "",
+          "phone": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I'm looking for a particular restaurant. Its name is called city stop restaurant.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "city stop restaurant",
+              "start": 60,
+              "end": 80
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "City Stop is located in the north of the city, and serves European food. May I help with anything else?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "north"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "European",
+              "start": 58,
+              "end": 66
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "City Stop",
+              "start": 0,
+              "end": 9
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "What is the postcode and their phone number?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "phone"
+            },
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "postcode"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "City stop's post code is cb41uy and they can be reached at 01223363270. Would you like a reservation? ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "City stop",
+              "start": 0,
+              "end": 9
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "phone",
+              "value": "01223363270",
+              "start": 59,
+              "end": 70
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "postcode",
+              "value": "cb41uy",
+              "start": 25,
+              "end": 31
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Nope, that's all I needed today. Thanks for you help!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You are welcome and enjoy your  Stay",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            },
+            {
+              "intent": "welcome",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-1964",
+    "original_id": "WOZ20660.json",
+    "domains": [
+      "restaurant",
+      "general"
+    ],
+    "goal": {
+      "description": "T. a. s. k.  . 1. 2. 0. 0. 9. :.  . Y. o. u.  . a. r. e.  . l. o. o. k. i. n. g.  . f. o. r.  . a.  . r. e. s. t. a. u. r. a. n. t.  . i. n.  . a. n. y.  . a. r. e. a.  . a. n. d.  . i. t.  . s. h. o. u. l. d.  . s. e. r. v. e.  . t. u. r. k. i. s. h.  . f. o. o. d. ..  . M. a. k. e.  . s. u. r. e.  . y. o. u.  . g. e. t.  . t. h. e.  . a. d. d. r. e. s. s.  . a. n. d.  . p. o. s. t. c. o. d. e. .",
+      "inform": {
+        "restaurant": {
+          "food": "turkish",
+          "area": "dontcare"
+        }
+      },
+      "request": {
+        "restaurant": {
+          "address": "",
+          "postcode": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "need a restaurant serving turkish style venue",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "turkish",
+              "start": 26,
+              "end": 33
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "OK, so you would like a Turkish restaurant. In what area would you like to eat?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Turkish",
+              "start": 24,
+              "end": 31
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "area"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Any area would be fine! Could I please get the address and postcode of a Turkish restaurant?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "dontcare"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Turkish",
+              "start": 73,
+              "end": 80
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "postcode"
+            },
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "address"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Anatolia is a Turkish restaurant at 30 Bridge Street City Centre, C.B 2, 1 U.J. Is there anything else I can help you with today?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "address",
+              "value": "30 Bridge Street City Centre",
+              "start": 36,
+              "end": 64
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "Anatolia",
+              "start": 0,
+              "end": 8
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "postcode",
+              "value": "C.B 2",
+              "start": 66,
+              "end": 71
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "postcode",
+              "value": "1 U.J.",
+              "start": 73,
+              "end": 79
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you goodbye.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Thank you, goodbye.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-2397",
+    "original_id": "SNG0743.json",
+    "domains": [
+      "restaurant",
+      "general"
+    ],
+    "goal": {
+      "description": "You are looking for a <span class='emphasis'>restaurant</span>. The restaurant should serve <span class='emphasis'>international</span> food and should be in the <span class='emphasis'>moderate</span> price range. Make sure you get <span class='emphasis'>area</span>",
+      "inform": {
+        "restaurant": {
+          "food": "international",
+          "price range": "moderate"
+        }
+      },
+      "request": {
+        "restaurant": {
+          "area": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "Hi.  I am looking for international food, hopefully someplace moderately priced.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "price range",
+              "value": "moderate"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "international",
+              "start": 22,
+              "end": 35
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The center of town offers two: the Varsity restaurant, and the Bloomsbury restaurant.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "center of town"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "choice",
+              "value": "two",
+              "start": 26,
+              "end": 29
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "the Varsity restaurant",
+              "start": 31,
+              "end": 53
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "the Bloomsbury restaurant",
+              "start": 59,
+              "end": 84
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Great thank you for all your help",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Was that all you needed today?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yep! Thanks - I'm all done.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Let me know if you need any more info.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you for your help, that's all I needed.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Thank you for calling, goodbye.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-3935",
+    "original_id": "WOZ20302.json",
+    "domains": [
+      "restaurant",
+      "general"
+    ],
+    "goal": {
+      "description": "T. a. s. k.  . 0. 0. 3. 9. 6. :.  . Y. o. u.  . w. a. n. t.  . t. o.  . f. i. n. d.  . a.  . m. o. d. e. r. a. t. e. l. y.  . p. r. i. c. e. d.  . r. e. s. t. a. u. r. a. n. t.  . a. n. d.  . i. t.  . s. h. o. u. l. d.  . b. e.  . i. n.  . t. h. e.  . s. o. u. t. h.  . p. a. r. t.  . o. f.  . t. o. w. n. ..  . M. a. k. e.  . s. u. r. e.  . y. o. u.  . g. e. t.  . t. h. e.  . a. d. d. r. e. s. s. ,.  . p. h. o. n. e.  . n. u. m. b. e. r. ,.  . a. n. d.  . p. o. s. t. c. o. d. e. .",
+      "inform": {
+        "restaurant": {
+          "price range": "moderate",
+          "area": "south"
+        }
+      },
+      "request": {
+        "restaurant": {
+          "address": "",
+          "phone": "",
+          "postcode": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "A moderately priced restaurant in the south, please.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "price range",
+              "value": "moderate"
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "south"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "There are two restaurants in the south area, Pizza Hut cherry hinton and Restaurant Alimentum which serves modern European. Would you like more information?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "south"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "modern European",
+              "start": 107,
+              "end": 122
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "choice",
+              "value": "two",
+              "start": 10,
+              "end": 13
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "Pizza Hut cherry hinton",
+              "start": 45,
+              "end": 68
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "Restaurant Alimentum",
+              "start": 73,
+              "end": 93
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I would like the address and phone number for one of those restaurants please.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "phone"
+            },
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "address"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Pizza hut cherry hinton is at G4 Cambridge Leisure Park Clifton Way Cherry Hinton and its number is 01223 323737.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "address",
+              "value": "G4 Cambridge Leisure Park Clifton Way Cherry Hinton",
+              "start": 30,
+              "end": 81
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "Pizza hut cherry hinton",
+              "start": 0,
+              "end": 23
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "phone",
+              "value": "01223 323737",
+              "start": 100,
+              "end": 112
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "What is the postcode?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "postcode"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The postcode for pizza hut cherry hinton is C.B.1 7 D.Y",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "pizza hut cherry hinton",
+              "start": 17,
+              "end": 40
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "postcode",
+              "value": "C.B.1 7 D.Y",
+              "start": 44,
+              "end": 55
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you, that'll be all!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Thank you and good bye.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            },
+            {
+              "intent": "welcome",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-3985",
+    "original_id": "WOZ20620.json",
+    "domains": [
+      "restaurant",
+      "general"
+    ],
+    "goal": {
+      "description": "T. a. s. k.  . 0. 7. 5. 6. 3. :.  . Y. o. u.  . a. r. e.  . l. o. o. k. i. n. g.  . f. o. r.  . a.  . c. h. e. a. p.  . r. e. s. t. a. u. r. a. n. t.  . a. n. d.  . i. t.  . s. h. o. u. l. d.  . b. e.  . i. n.  . t. h. e.  . s. o. u. t. h.  . p. a. r. t.  . o. f.  . t. o. w. n. ..  . Y. o. u.  . w. a. n. t.  . t. o.  . k. n. o. w.  . t. h. e.  . a. d. d. r. e. s. s. ,.  . p. h. o. n. e.  . n. u. m. b. e. r. ,.  . a. n. d.  . t. y. p. e.  . o. f.  . f. o. o. d. .",
+      "inform": {
+        "restaurant": {
+          "price range": "cheap",
+          "area": "south"
+        }
+      },
+      "request": {
+        "restaurant": {
+          "address": "",
+          "phone": "",
+          "food": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I am looking for a restaurant in the south part of town that is in the cheap price range.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "price range",
+              "value": "cheap"
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "south"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I have two restaurants that meet your requirements.  Do you have a cuisine preference? ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "choice",
+              "value": "two",
+              "start": 7,
+              "end": 10
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "food"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I would like Italian food.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Italian",
+              "start": 13,
+              "end": 20
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "food"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I'm sorry, there are no restaurants matching your request.  Would you like to try something else? ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "nooffer",
+              "domain": "restaurant",
+              "slot": ""
+            },
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I don't care. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "dontcare"
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Nandos is cheap restaurant in the south part of town serving Portuguese food. Would you like their phone number?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "south"
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "price range",
+              "value": "cheap"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Portuguese",
+              "start": 61,
+              "end": 71
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "Nandos",
+              "start": 0,
+              "end": 6
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes, also I will need their address.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "address"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Their address is Cambridge Leisure Park Clifton Way.  Would you also like the phone number?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "address",
+              "value": "Cambridge Leisure Park Clifton Way",
+              "start": 17,
+              "end": 51
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes, please give me their number.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The phone number for Nandos is 01223 327908. Is there anything else I can help you with? ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "phone",
+              "value": "01223 327908",
+              "start": 31,
+              "end": 43
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "Nandos",
+              "start": 21,
+              "end": 27
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "No, thanks.  I'll head to Nandos now.  Goodbye.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "Nandos",
+              "start": 26,
+              "end": 32
+            }
+          ],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Have a nice day! ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-4134",
+    "original_id": "SNG0467.json",
+    "domains": [
+      "restaurant",
+      "general"
+    ],
+    "goal": {
+      "description": "You are looking for a <span class='emphasis'>restaurant</span>. The restaurant should be in the <span class='emphasis'>west</span> and should be in the <span class='emphasis'>cheap</span> price range. The restaurant should serve <span class='emphasis'>lebanese</span> food. If there is no such restaurant, how about one that serves <span class='emphasis'>vietnamese</span> food. Make sure you get <span class='emphasis'>postcode</span>",
+      "inform": {
+        "restaurant": {
+          "food": "lebanese|vietnamese",
+          "price range": "cheap|cheap",
+          "area": "west|west"
+        }
+      },
+      "request": {
+        "restaurant": {
+          "postcode": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I'm looking for an inexpensive restaurant in the west section of Cambridge.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "west"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I have an Italian place and a Vietnamese, which would you prefer?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Italian",
+              "start": 10,
+              "end": 17
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Vietnamese",
+              "start": 30,
+              "end": 40
+            }
+          ],
+          "binary": [
+            {
+              "intent": "select",
+              "domain": "restaurant",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I would actually prefer some cheap Lebanese food if possible? ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Lebanese",
+              "start": 35,
+              "end": 43
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I am sorry I have no results for restaurants serving lebanese food in the west.  Would you like to find another type of cuisine?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "nooffer",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "west"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "nooffer",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "lebanese",
+              "start": 53,
+              "end": 61
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "food"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Ok, maybe we can try the Vietnamese one you mentioned. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Vietnamese",
+              "start": 25,
+              "end": 35
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Okay would you like me to make a reservation?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Um, I think I'll just take the postcode and the name for now thanks.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "postcode"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The Vietnamese restaurant is called Thanh Binh and is located in the CB30AF postcode. Is there anything else I can do for you?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "postcode",
+              "value": "CB30AF",
+              "start": 69,
+              "end": 75
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "Thanh Binh",
+              "start": 36,
+              "end": 46
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Vietnamese",
+              "start": 4,
+              "end": 14
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Nope, that is all I needed. Thank you so much!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Thank you for choosing Cambridge TownInfo centre. Have a wonderful day!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-4959",
+    "original_id": "SNG0472.json",
+    "domains": [
+      "restaurant",
+      "general"
+    ],
+    "goal": {
+      "description": "You are looking for a <span class='emphasis'>restaurant</span>. The restaurant should serve <span class='emphasis'>chinese</span> food and should be in the <span class='emphasis'>expensive</span> price range. The restaurant should be in the <span class='emphasis'>south</span>. Once you find the <span class='emphasis'>restaurant</span> you want to book a table for <span class='emphasis'>5 people</span> at <span class='emphasis'>11:15</span> on <span class='emphasis'>wednesday</span>. Make sure you get the <span class='emphasis'>reference number</span>",
+      "inform": {
+        "restaurant": {
+          "food": "chinese",
+          "price range": "expensive",
+          "area": "south",
+          "book time": "11:15",
+          "book day": "wednesday",
+          "book people": "5"
+        }
+      },
+      "request": {
+        "restaurant": {}
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I'd like an expensive restuarant with Chinese food.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "price range",
+              "value": "expensive"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Chinese",
+              "start": 38,
+              "end": 45
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Sure, I have 9 restaurants like that. Is there a certain area you had in mind?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "choice",
+              "value": "9",
+              "start": 13,
+              "end": 14
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "area"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I would like to stay in the south please.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "south"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I have 2 chinese restaurants in the south. Both are expensive but worth the money! I have the Peking Restaurant and the Good Luck Chinese Food Takeaway. ",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "price range",
+              "value": "expensive"
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "south"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "choice",
+              "value": "2",
+              "start": 7,
+              "end": 8
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "Peking Restaurant",
+              "start": 94,
+              "end": 111
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "Good Luck Chinese Food Takeaway",
+              "start": 120,
+              "end": 151
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "chinese",
+              "start": 9,
+              "end": 16
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Could you reserve a table for 5 at Peking Restaurant.  I need it for Wednesday at 11:15.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "book day",
+              "value": "wednesday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "book time",
+              "value": "11:15",
+              "start": 82,
+              "end": 87
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "book people",
+              "value": "5",
+              "start": 30,
+              "end": 31
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "Peking Restaurant",
+              "start": 35,
+              "end": 52
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I was able to successfully book at table for 5 at Peking restaurant for 11:15. Your reference number is WOK3FTDI. Your table will be reserved for 15 minutes.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you so much, that is all that I needed!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You are welcome!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-7351",
+    "original_id": "SSNG0129.json",
+    "domains": [
+      "restaurant"
+    ],
+    "goal": {
+      "description": "You are looking for a <span class='emphasis'>restaurant</span>. The restaurant should be in the <span class='emphasis'>moderate</span> price range and should be in the <span class='emphasis'>centre</span>. The restaurant should serve <span class='emphasis'>vegetarian</span> food. If there is no such restaurant, how about one that serves <span class='emphasis'>international</span> food. Once you find the <span class='emphasis'>restaurant</span> you want to book a table for <span class='emphasis'>6 people</span> at <span class='emphasis'>20:00</span> on <span class='emphasis'>saturday</span>. If the booking fails how about different <span class='emphasis'>restaurant</span> in the same <span class='emphasis'>area</span> and <span class='emphasis'>pricerange</span>. Make sure you get the <span class='emphasis'>reference number</span>",
+      "inform": {
+        "restaurant": {
+          "food": "vegetarian|international",
+          "price range": "moderate|moderate",
+          "area": "centre|centre",
+          "book day": "saturday|wednesday",
+          "book people": "6",
+          "book time": "20:00"
+        }
+      },
+      "request": {
+        "restaurant": {}
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I am looking for a restaurant in the centre area.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "centre"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I have 69 places, which type of food would you like or price range?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "choice",
+              "value": "69",
+              "start": 7,
+              "end": 9
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "area"
+            },
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "food"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I'd like a vegetarian restaurant.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "vegetarian",
+              "start": 11,
+              "end": 21
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Unfortunately, there are no vegetarian restaurants. Is there another cuisine you would like to try?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "vegetarian",
+              "start": 28,
+              "end": 38
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "food"
+            },
+            {
+              "intent": "nooffer",
+              "domain": "restaurant",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "That's disappointing. Can you try international food instead?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "international",
+              "start": 34,
+              "end": 47
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I have two international restaurants available.  is there a price range you would like to stay within?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "choice",
+              "value": "two",
+              "start": 7,
+              "end": 10
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "international",
+              "start": 11,
+              "end": 24
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "price range"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I am looking for something in the moderate price range.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "price range",
+              "value": "moderate"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "the varsity restaurant and bloomsbury restaurant are in the moderate price range. Which one would you like?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "price range",
+              "value": "moderate"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "varsity restaurant",
+              "start": 4,
+              "end": 22
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "bloomsbury restaurant",
+              "start": 27,
+              "end": 48
+            }
+          ],
+          "binary": [
+            {
+              "intent": "select",
+              "domain": "restaurant",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

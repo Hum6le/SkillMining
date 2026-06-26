@@ -1,0 +1,177 @@
+[
+  {
+    "dialogue_id": "multiwoz21-train-893",
+    "original_id": "SNG02003.json",
+    "domains": [
+      "hospital",
+      "general",
+      "restaurant"
+    ],
+    "goal": {
+      "description": "You got injured and are looking for a <span class='emphasis'>hospital</span> nearby. The hospital should have the <span class='emphasis'>infectious diseases</span> department. Make sure you get <span class='emphasis'>postcode</span>",
+      "inform": {
+        "hospital": {
+          "department": "infectious diseases"
+        }
+      },
+      "request": {
+        "hospital": {
+          "postcode": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "Am injured and are looking for a hospital nearby it should have the infectious diseases department.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "department",
+              "value": "infectious diseases",
+              "start": 68,
+              "end": 87
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The Addenbrookes Hospital has a phone number of 01223217314 for the infectious diseases department.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "department",
+              "value": "infectious diseases",
+              "start": 68,
+              "end": 87
+            },
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "phone",
+              "value": "01223217314",
+              "start": 48,
+              "end": 59
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you. Can I have the postcode?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "hospital",
+              "slot": "postcode"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Their postcode is CB20QQ. Can I get you any more information about them?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "postcode",
+              "value": "CB20QQ",
+              "start": 18,
+              "end": 24
+            },
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "postcode",
+              "value": "CB20QQ",
+              "start": 18,
+              "end": 24
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "No, that's all I needed. Thanks!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "welcome. at your service next time",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Great! Have a nice day! good bye.\n",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Hope you feel better, have a great day.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

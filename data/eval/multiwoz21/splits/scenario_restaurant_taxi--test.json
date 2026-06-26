@@ -1,0 +1,210 @@
+[
+  {
+    "dialogue_id": "multiwoz21-validation-643",
+    "original_id": "SNG01630.json",
+    "domains": [
+      "taxi",
+      "general",
+      "restaurant"
+    ],
+    "goal": {
+      "description": "You want to book a <span class='emphasis'>taxi</span>. The taxi should <span class='emphasis'>leave after 24:00</span> and should depart from <span class='emphasis'>trinity college</span>. The taxi should go to <span class='emphasis'>saffron brasserie</span>. Make sure you get <span class='emphasis'>car type</span> and <span class='emphasis'>contact number</span>",
+      "inform": {
+        "taxi": {
+          "leave at": "24:00",
+          "destination": "saffron brasserie",
+          "departure": "trinity college"
+        }
+      },
+      "request": {
+        "taxi": {
+          "type": "",
+          "phone": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I need a taxi to pick me up at Trinity college.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "departure",
+              "value": "Trinity college",
+              "start": 31,
+              "end": 46
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Sure thing, when you like to leave by?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "taxi",
+              "slot": "leave at"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I need to leave after 24:00.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "leave at",
+              "value": "24:00",
+              "start": 22,
+              "end": 27
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I can help you with that. where are you going?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "taxi",
+              "slot": "destination"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I'm headed to saffron brasserie.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "destination",
+              "value": "saffron brasserie",
+              "start": 14,
+              "end": 31
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I have your taxi booked.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Can I get the car type and contact number please?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "taxi",
+              "slot": "type"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Certainly. You'll be picked up by a red Audi and the driver's number is 07990384611. Do you need help with anything else? A restaurant reservation perhaps?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "phone",
+              "value": "07990384611",
+              "start": 72,
+              "end": 83
+            },
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "type",
+              "value": "red Audi",
+              "start": 36,
+              "end": 44
+            }
+          ],
+          "binary": [
+            {
+              "intent": "book",
+              "domain": "taxi",
+              "slot": ""
+            },
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "No thank you, we have a restaurant recommendation already for today.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Have a wonderful day.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

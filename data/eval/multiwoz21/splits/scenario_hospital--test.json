@@ -1,0 +1,277 @@
+[
+  {
+    "dialogue_id": "multiwoz21-train-832",
+    "original_id": "SNG02080.json",
+    "domains": [
+      "hospital",
+      "general"
+    ],
+    "goal": {
+      "description": "You are looking for the <span class='emphasis'>Addenbrookes Hospital</span>. The hospital should have the <span class='emphasis'>infectious diseases</span> department. Make sure you get <span class='emphasis'>postcode</span>, <span class='emphasis'>phone number</span>, and <span class='emphasis'>address</span>",
+      "inform": {
+        "hospital": {
+          "department": "infectious diseases"
+        }
+      },
+      "request": {
+        "hospital": {
+          "postcode": "",
+          "phone": "",
+          "address": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I am looking for the Addenbrookes Hospital. the hospital should have the infectious diseases department",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "department",
+              "value": "infectious diseases",
+              "start": 73,
+              "end": 92
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Addenbrookes Hospital is located in Hills Rd, Cambridge, postcode CB20QQ. They have an infectious diseases department and their number is 01223217314. Would you like to book an appointment with them?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "address",
+              "value": "Hills Rd, Cambridge",
+              "start": 36,
+              "end": 55
+            },
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "department",
+              "value": "infectious diseases",
+              "start": 87,
+              "end": 106
+            },
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "postcode",
+              "value": "CB20QQ",
+              "start": 66,
+              "end": 72
+            },
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "phone",
+              "value": "01223217314",
+              "start": 138,
+              "end": 149
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you very much. I will not need to book an appointment.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Do you need any further assistance?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you, that's all I need. Good bye.\n",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You are welcome. Good bye.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-5669",
+    "original_id": "SNG02119.json",
+    "domains": [
+      "hospital",
+      "general"
+    ],
+    "goal": {
+      "description": "You got injured and are looking for a <span class='emphasis'>hospital</span> nearby. The hospital should have the <span class='emphasis'>cardiology</span> department. Make sure you get <span class='emphasis'>phone number</span>",
+      "inform": {
+        "hospital": {
+          "department": "cardiology"
+        }
+      },
+      "request": {
+        "hospital": {
+          "phone": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I am injured and need a hospital with a cardiology department.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "department",
+              "value": "cardiology",
+              "start": 40,
+              "end": 50
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The Addenbrookes Hospital located at Hills Rd, Cambridge has a cardiology department. Would you need to book an appointment?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "address",
+              "value": "Hills Rd, Cambridge",
+              "start": 37,
+              "end": 56
+            },
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "department",
+              "value": "cardiology",
+              "start": 63,
+              "end": 73
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I would like to have the phone number.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "hospital",
+              "slot": "phone"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The phone number is 01223256233.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "phone",
+              "value": "01223256233",
+              "start": 20,
+              "end": 31
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you for your help",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You are more than welcome!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

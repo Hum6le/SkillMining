@@ -1,0 +1,174 @@
+[
+  {
+    "dialogue_id": "multiwoz21-train-2047",
+    "original_id": "SNG01498.json",
+    "domains": [
+      "hospital",
+      "taxi",
+      "general"
+    ],
+    "goal": {
+      "description": "You got injured and are looking for a <span class='emphasis'>hospital</span> nearby. The hospital should have the <span class='emphasis'>neurology</span> department. Make sure you get <span class='emphasis'>address</span> and <span class='emphasis'>postcode</span>",
+      "inform": {
+        "hospital": {
+          "department": "neurology"
+        }
+      },
+      "request": {
+        "hospital": {
+          "address": "",
+          "postcode": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I got injured and I am looking for a hospital nearby. the hospital should have a neurology department",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "department",
+              "value": "neurology",
+              "start": 81,
+              "end": 90
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Contact them at 01223274680",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "phone",
+              "value": "01223274680",
+              "start": 16,
+              "end": 27
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I need the address and postcode.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "hospital",
+              "slot": "address"
+            },
+            {
+              "intent": "request",
+              "domain": "hospital",
+              "slot": "postcode"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The address for Addenbrookes Hospital is Hills Rd, Cambridge and the postcode: CB20QQ.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "address",
+              "value": "Hills Rd, Cambridge",
+              "start": 41,
+              "end": 60
+            },
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "postcode",
+              "value": "CB20QQ",
+              "start": 79,
+              "end": 85
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Can you please call a taxi to take me to the hospital?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": ""
+            },
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Where would you be departing from?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "taxi",
+              "slot": "departure"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I actually don't need a taxi. I'm all set. Thanks, goodbye.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You're very welcome. Feel free to call us back when you need. Goodbye.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

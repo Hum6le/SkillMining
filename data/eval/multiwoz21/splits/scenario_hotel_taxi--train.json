@@ -1,0 +1,246 @@
+[
+  {
+    "dialogue_id": "multiwoz21-train-8057",
+    "original_id": "SNG02114.json",
+    "domains": [
+      "taxi",
+      "hotel",
+      "general"
+    ],
+    "goal": {
+      "description": "You want to book a <span class='emphasis'>taxi</span>. The taxi should <span class='emphasis'>arrive by 20:15</span> and should depart from <span class='emphasis'>huntingdon marriott hotel</span>. The taxi should go to <span class='emphasis'>saint barnabas press gallery</span>. Make sure you get <span class='emphasis'>contact number</span> and <span class='emphasis'>car type</span>",
+      "inform": {
+        "taxi": {
+          "destination": "saint barnabas press gallery",
+          "departure": "huntingdon marriott hotel",
+          "arrive by": "20:15"
+        }
+      },
+      "request": {
+        "taxi": {
+          "type": "",
+          "phone": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I need a taxi departing from huntingdon marriot hotel.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": ""
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "We can help with that. What time do you wish to leave/arrive at your destination?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "taxi",
+              "slot": "leave at"
+            },
+            {
+              "intent": "request",
+              "domain": "taxi",
+              "slot": "arrive by"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I need to arrive by 20:15.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "arrive by",
+              "value": "20:15",
+              "start": 20,
+              "end": 25
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Okay, and where will you be arriving to?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "taxi",
+              "slot": "destination"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "saint barnabas press gallery please",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "destination",
+              "value": "saint barnabas",
+              "start": 0,
+              "end": 14
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Ok I have a red ford and the contact number is 07619968321. Anything else I can do for you?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "type",
+              "value": "red ford",
+              "start": 12,
+              "end": 20
+            },
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "phone",
+              "value": "07619968321",
+              "start": 47,
+              "end": 58
+            }
+          ],
+          "binary": [
+            {
+              "intent": "book",
+              "domain": "taxi",
+              "slot": ""
+            },
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you. I will be looking for the taxi to arrive by 20:15.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "arrive by",
+              "value": "20:15",
+              "start": 55,
+              "end": 60
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I have confirmed that your taxi will arrive by 20:15. Is that all you need today?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "arrive by",
+              "value": "20:15",
+              "start": 47,
+              "end": 52
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes, that's everything. Thanks!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Booked car type red ford\nContact number 07619968321\n",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "type",
+              "value": "red ford",
+              "start": 16,
+              "end": 24
+            },
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "phone",
+              "value": "07619968321",
+              "start": 40,
+              "end": 51
+            }
+          ],
+          "binary": [
+            {
+              "intent": "book",
+              "domain": "taxi",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

@@ -1,0 +1,422 @@
+[
+  {
+    "dialogue_id": "multiwoz21-train-498",
+    "original_id": "PMUL1304.json",
+    "domains": [
+      "attraction",
+      "train",
+      "hotel",
+      "general"
+    ],
+    "goal": {
+      "description": "You are planning your trip in Cambridge. You are looking for a <span class='emphasis'>train</span>. The train should leave on <span class='emphasis'>sunday</span> and should depart from <span class='emphasis'>cambridge</span>. The train should go to <span class='emphasis'>stevenage</span> and should <span class='emphasis'>arrive by 18:45</span>. Once you find the train you want to make a booking for <span class='emphasis'>8 people</span>. Make sure you get the <span class='emphasis'>reference number</span>. You are also looking for <span class='emphasis'>places to go</span> in town. The attraction should be in the <span class='emphasis'>centre</span>. Make sure you get <span class='emphasis'>entrance fee</span>, <span class='emphasis'>attraction type</span>, and <span class='emphasis'>phone number</span>",
+      "inform": {
+        "attraction": {
+          "area": "centre"
+        },
+        "train": {
+          "destination": "stevenage",
+          "day": "sunday",
+          "arrive by": "18:45",
+          "departure": "cambridge",
+          "book people": "8"
+        }
+      },
+      "request": {
+        "attraction": {
+          "entrance fee": "",
+          "type": "",
+          "phone": ""
+        },
+        "train": {}
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "Yes, Hi! I am looking for a hotel in the tampa bay area. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You did not read the directions of this hit. There is no Tampa bay area. Please read the directions next time. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "nooffer",
+              "domain": "hotel",
+              "slot": ""
+            },
+            {
+              "intent": "greet",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "i'm sorry, dude. i'm from florida so i'm not very smart. i'm trying to get from cambridge to stevenage.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "destination",
+              "value": "stevenage",
+              "start": 93,
+              "end": 102
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "departure",
+              "value": "cambridge",
+              "start": 80,
+              "end": 89
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "If you would like to take a train from Cambridge to Stevenage there is one leaving Friday at 05:21 arriving by 06:10.  Does that work?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "day",
+              "value": "Friday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "arrive by",
+              "value": "06:10",
+              "start": 111,
+              "end": 116
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "choice",
+              "value": "one",
+              "start": 71,
+              "end": 74
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "05:21",
+              "start": 93,
+              "end": 98
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "departure",
+              "value": "Cambridge",
+              "start": 39,
+              "end": 48
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "destination",
+              "value": "Stevenage",
+              "start": 52,
+              "end": 61
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I would like to leave on Sunday and arrive by 18:45. I need tickets for 8 people. Could you make the reservation and provide a reference number?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "day",
+              "value": "sunday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "arrive by",
+              "value": "18:45",
+              "start": 46,
+              "end": 51
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "book people",
+              "value": "8",
+              "start": 72,
+              "end": 73
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "ref"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I can get you on TR0523 arriving at Stevenage by 14:10.  How many tickets will you need?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "train id",
+              "value": "TR0523",
+              "start": 17,
+              "end": 23
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "destination",
+              "value": "Stevenage",
+              "start": 36,
+              "end": 45
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "arrive by",
+              "value": "14:10",
+              "start": 49,
+              "end": 54
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "book people"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "8 tickets please, and I will need the reference number.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "book people",
+              "value": "8",
+              "start": 0,
+              "end": 1
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "ref"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Your booking was successful. The total fee is 81.92 GBP which can be paid at the station. The reference number is 1A9JYQS7. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "ref",
+              "value": "1A9JYQS7",
+              "start": 114,
+              "end": 122
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "price",
+              "value": "81.92 GBP",
+              "start": 46,
+              "end": 55
+            }
+          ],
+          "binary": [
+            {
+              "intent": "book",
+              "domain": "train",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I'd like somewhere to go in town. Something in the centre please. ",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "centre"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Is there anything in particular you're interested in doing/seeing?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "type"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Anything you recommend. I just need the entrance fee, attraction type and phone number.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "type"
+            },
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "entrance fee"
+            },
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "phone"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Little Saint Mary's Church  is an architecture attraction with no entrance fee. Their phone number is 01223366202.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "architecture"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "Little Saint Mary's Church",
+              "start": 0,
+              "end": 26
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "phone",
+              "value": "01223366202",
+              "start": 102,
+              "end": 113
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "entrance fee",
+              "value": "no",
+              "start": 63,
+              "end": 65
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you for all your help.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You are welcome. Thank you for calling.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            },
+            {
+              "intent": "welcome",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

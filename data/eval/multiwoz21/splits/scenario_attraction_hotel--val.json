@@ -1,0 +1,1902 @@
+[
+  {
+    "dialogue_id": "multiwoz21-train-270",
+    "original_id": "MUL1067.json",
+    "domains": [
+      "hotel",
+      "attraction",
+      "general"
+    ],
+    "goal": {
+      "description": "You are planning your trip in Cambridge. You are looking for a <span class='emphasis'>particular attraction</span>. Its name is called <span class='emphasis'>funky fun house</span>. Make sure you get <span class='emphasis'>area</span>, <span class='emphasis'>entrance fee</span>, and <span class='emphasis'>postcode</span>. You are also looking for a <span class='emphasis'>place to stay</span>. The hotel should be in the <span class='emphasis'>expensive</span> price range and should be in the type of <span class='emphasis'>hotel</span>. The hotel should <span class='emphasis'>include free parking</span>. Once you find the <span class='emphasis'>hotel</span> you want to book it for <span class='emphasis'>3 people</span> and <span class='emphasis'>3 nights</span> starting from <span class='emphasis'>sunday</span>. Make sure you get the <span class='emphasis'>reference number</span>",
+      "inform": {
+        "hotel": {
+          "type": "hotel",
+          "price range": "expensive",
+          "parking": "yes",
+          "book stay": "3",
+          "book day": "sunday",
+          "book people": "3"
+        },
+        "attraction": {
+          "name": "funky fun house"
+        }
+      },
+      "request": {
+        "hotel": {},
+        "attraction": {
+          "area": "",
+          "entrance fee": "",
+          "postcode": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I am looking for a particular attraction called the Funky Fun House. Can you get me directions?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "Funky Fun House",
+              "start": 52,
+              "end": 67
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Absolutely,   the address for the Funky Fun House is 8 Mercers Row located in the Mercers Row Industrial Estate.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "address",
+              "value": "8 Mercers Row located in the Mercers Row Industrial Estate",
+              "start": 53,
+              "end": 111
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "Funky Fun House",
+              "start": 34,
+              "end": 49
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "What area of town is that in?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "area"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The Funky Fun House is in the east past of town. Is there anything else I can help you with?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "east"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "Funky Fun House",
+              "start": 4,
+              "end": 19
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Can you tell me what the entrance fee is? May i also have their postcode please?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "entrance fee"
+            },
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "postcode"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I'm sorry, there's no entrance fee information listed for that attraction. The postcode is cb58hy. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "entrance fee",
+              "value": "no entrance fee information listed",
+              "start": 19,
+              "end": 53
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "postcode",
+              "value": "cb58hy",
+              "start": 91,
+              "end": 97
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Great, thank you. Can you also help me find a place to stay? I'd like an expensive hotel with free parking.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "parking",
+              "value": "yes"
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "price range",
+              "value": "expensive"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "type",
+              "value": "hotel",
+              "start": 83,
+              "end": 88
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Sure, there are 5 hotels.  How many stars should the hotel have?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "choice",
+              "value": "5",
+              "start": 16,
+              "end": 17
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "hotel",
+              "slot": "stars"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I would like a hotel in the expensive price range.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "price range",
+              "value": "expensive"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "type",
+              "value": "hotel",
+              "start": 15,
+              "end": 20
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Express by Holiday Inn Cambridge is an expensive hotel in the east end. Would you like me to book it for you?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "recommend",
+              "domain": "hotel",
+              "slot": "area",
+              "value": "east"
+            },
+            {
+              "intent": "recommend",
+              "domain": "hotel",
+              "slot": "price range",
+              "value": "expensive"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "recommend",
+              "domain": "hotel",
+              "slot": "name",
+              "value": "Express by Holiday Inn Cambridge",
+              "start": 0,
+              "end": 32
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Could you book it for 3 people and for 3 nights starting on sunday?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "book day",
+              "value": "sunday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "book stay",
+              "value": "3",
+              "start": 39,
+              "end": 40
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "book people",
+              "value": "3",
+              "start": 22,
+              "end": 23
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Okay, the booking was successful. Your reference number is : 3EJ2CUS3.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "ref",
+              "value": "3EJ2CUS3",
+              "start": 61,
+              "end": 69
+            }
+          ],
+          "binary": [
+            {
+              "intent": "book",
+              "domain": "hotel",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you! I'm all set. Goodbye!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You're welcome. Enjoy your visit!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "welcome",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-1371",
+    "original_id": "MUL1007.json",
+    "domains": [
+      "hotel",
+      "attraction",
+      "general"
+    ],
+    "goal": {
+      "description": "You are traveling to Cambridge and excited about seeing local tourist attractions. You are looking for <span class='emphasis'>places to go</span> in town. The attraction should be in the type of <span class='emphasis'>architecture</span> and should be in the <span class='emphasis'>centre</span>. Make sure you get <span class='emphasis'>entrance fee</span> and <span class='emphasis'>phone number</span>. You are also looking for a <span class='emphasis'>place to stay</span>. The hotel should be in the type of <span class='emphasis'>hotel</span> and should be in the <span class='emphasis'>north</span>. The hotel should be in the <span class='emphasis'>cheap</span> price range. If there is no such hotel, how about one that is in the <span class='emphasis'>moderate</span> price range. Once you find the <span class='emphasis'>hotel</span> you want to book it for <span class='emphasis'>4 people</span> and <span class='emphasis'>5 nights</span> starting from <span class='emphasis'>sunday</span>. If the booking fails how about <span class='emphasis'>2 nights</span>. Make sure you get the <span class='emphasis'>reference number</span>",
+      "inform": {
+        "hotel": {
+          "type": "hotel|guesthouse",
+          "price range": "cheap|moderate",
+          "area": "north|north",
+          "book stay": "5|2",
+          "book day": "sunday",
+          "book people": "4"
+        },
+        "attraction": {
+          "type": "architecture",
+          "area": "centre"
+        }
+      },
+      "request": {
+        "hotel": {},
+        "attraction": {
+          "entrance fee": "",
+          "phone": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I'm looking for places to go see good architecture in the centre of the city.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "centre"
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "architecture"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "There are 4 churches and a school with excellent architecture. Any preference?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Can you recommend one? I'd like the entrance fee and the phone number, please. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "entrance fee"
+            },
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "phone"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Old schools is nice. The phone number is 01223332320 and it's free to get it.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "recommend",
+              "domain": "attraction",
+              "slot": "entrance fee",
+              "value": "free",
+              "start": 62,
+              "end": 66
+            },
+            {
+              "intent": "recommend",
+              "domain": "attraction",
+              "slot": "phone",
+              "value": "01223332320",
+              "start": 41,
+              "end": 52
+            },
+            {
+              "intent": "recommend",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "Old schools",
+              "start": 0,
+              "end": 11
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I am also looking for a place to stay in the north? Can you tell me some hotels in the north?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "area",
+              "value": "north"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "type",
+              "value": "hotel",
+              "start": 73,
+              "end": 78
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "There are two hotels in the north end. Ashley Hotel and Lovell Lodge. ",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "select",
+              "domain": "hotel",
+              "slot": "area",
+              "value": "north"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "select",
+              "domain": "hotel",
+              "slot": "name",
+              "value": "Ashley Hotel and Lovell Lodge",
+              "start": 39,
+              "end": 68
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "What is the cost per night?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "They are both in the moderate price range.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "price range",
+              "value": "moderate"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "If there are not any cheap hotels in that location then one of the moderately priced hotels will be fine.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "price range",
+              "value": "moderate"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "There are two cheap guesthouses in the north, if you would prefer a guesthouse to a hotel. Otherwise, which of the two hotels would you like to reserve?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "price range",
+              "value": "cheap"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "select",
+              "domain": "hotel",
+              "slot": "choice",
+              "value": "two",
+              "start": 10,
+              "end": 13
+            },
+            {
+              "intent": "select",
+              "domain": "hotel",
+              "slot": "type",
+              "value": "hotels",
+              "start": 119,
+              "end": 125
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "choice",
+              "value": "two",
+              "start": 10,
+              "end": 13
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "type",
+              "value": "guesthouses",
+              "start": 20,
+              "end": 31
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "type",
+              "value": "guesthouse",
+              "start": 68,
+              "end": 78
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "type",
+              "value": "hotel",
+              "start": 84,
+              "end": 89
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I need a hotel, so I will go with Ashley Hotel if it is in the moderate price range. I need to book for 5 nights.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "price range",
+              "value": "moderate"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "type",
+              "value": "hotel",
+              "start": 9,
+              "end": 14
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "book stay",
+              "value": "5",
+              "start": 104,
+              "end": 105
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "name",
+              "value": "Ashley Hotel",
+              "start": 34,
+              "end": 46
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Okay, how many people will be in your group, and which day would you like to begin your stay? ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "hotel",
+              "slot": "book people"
+            },
+            {
+              "intent": "request",
+              "domain": "hotel",
+              "slot": "book day"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I will have 4 people. I want 5 nights starting from Sunday please. ",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "book day",
+              "value": "sunday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "book people",
+              "value": "4",
+              "start": 12,
+              "end": 13
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I'm sorry, those days are unavailable. Can you perhaps shorten your stay or change the day?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "hotel",
+              "slot": "book stay"
+            },
+            {
+              "intent": "request",
+              "domain": "hotel",
+              "slot": "book day"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "How about 2 nights instead?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "book stay",
+              "value": "2",
+              "start": 10,
+              "end": 11
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I've made a successful reservation for two nights at the Ashley Hotel. The reference number is GGM7TFLP. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "ref",
+              "value": "GGM7TFLP",
+              "start": 95,
+              "end": 103
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "book stay",
+              "value": "two",
+              "start": 39,
+              "end": 42
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "name",
+              "value": "Ashley Hotel",
+              "start": 57,
+              "end": 69
+            }
+          ],
+          "binary": [
+            {
+              "intent": "book",
+              "domain": "hotel",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Okay, I think that's all I need. Thanks for your help!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "We are happy to help. Thank you for using our service. Have we met all of your needs?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes indeed. Bye now.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Okay thank you for using our service.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-3471",
+    "original_id": "PMUL4149.json",
+    "domains": [
+      "hotel",
+      "attraction",
+      "general"
+    ],
+    "goal": {
+      "description": "You are traveling to Cambridge and excited about seeing local tourist attractions. You are looking for a <span class='emphasis'>place to stay</span>. The hotel should be in the <span class='emphasis'>moderate</span> price range and should <span class='emphasis'>include free parking</span>. The hotel should be in the <span class='emphasis'>east</span>. Once you find the <span class='emphasis'>hotel</span> you want to book it for <span class='emphasis'>7 people</span> and <span class='emphasis'>4 nights</span> starting from <span class='emphasis'>sunday</span>. Make sure you get the <span class='emphasis'>reference number</span>. You are also looking for <span class='emphasis'>places to go</span> in town. The attraction should be in the type of <span class='emphasis'>college</span> and should be <span class='emphasis'>in the same area as the hotel</span>. If there is no such attraction, how about one that is in <span class='emphasis'>the type of boat</span>. Make sure you get <span class='emphasis'>entrance fee</span> and <span class='emphasis'>address</span>",
+      "inform": {
+        "hotel": {
+          "parking": "yes",
+          "price range": "moderate",
+          "area": "east",
+          "book stay": "4",
+          "book day": "sunday",
+          "book people": "7"
+        },
+        "attraction": {
+          "type": "college|boat",
+          "area": "east|east"
+        }
+      },
+      "request": {
+        "hotel": {},
+        "attraction": {
+          "entrance fee": "",
+          "address": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "We are visiting cambridge for the first time and looking for a moderately priced place to stay for 5 nights that includes free parking. Any suggestions?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "parking",
+              "value": "yes"
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "price range",
+              "value": "moderate"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Most definitely! We have a wide-range of hotels that offer free wifi and parking. Do you prefer a particular a particular area in Cambridge?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "choice",
+              "value": "wide - range"
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "type",
+              "value": "hotels",
+              "start": 41,
+              "end": 47
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "hotel",
+              "slot": "area"
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "internet"
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "parking"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I think I want somewhere in the east",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "area",
+              "value": "east"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "We have two places to pick from, I recommend the warkworth house, shall I book you?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "recommend",
+              "domain": "hotel",
+              "slot": "name",
+              "value": "warkworth house",
+              "start": 49,
+              "end": 64
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "choice",
+              "value": "two",
+              "start": 8,
+              "end": 11
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Sure I need rooms for 7 people",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "What day will you be coming in and how long will you be staying?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "hotel",
+              "slot": "book stay"
+            },
+            {
+              "intent": "request",
+              "domain": "hotel",
+              "slot": "book day"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I want to start my stay on Sunday for 7 people, 4 nights. ",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "book day",
+              "value": "sunday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "book stay",
+              "value": "4",
+              "start": 48,
+              "end": 49
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "book people",
+              "value": "7",
+              "start": 38,
+              "end": 39
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Booking was successful.\nReference number is : 42Z3RMYG.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "ref",
+              "value": "42Z3RMYG",
+              "start": 46,
+              "end": 54
+            }
+          ],
+          "binary": [
+            {
+              "intent": "book",
+              "domain": "hotel",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Can you recommend a tour of the college near the hotel?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "college"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "There are no colleges in that area. Should I look in another area?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "nooffer",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "that area"
+            },
+            {
+              "intent": "nooffer",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "colleges"
+            }
+          ],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "area"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Why don't you search for a boat attraction instead please",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "boat"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Camboats is the one choice for boat attractions in the east. Can I do anything else today?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "east"
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "boat"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "choice",
+              "value": "one",
+              "start": 16,
+              "end": 19
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "Camboats",
+              "start": 0,
+              "end": 8
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Could you give me the address and entrance fee?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "entrance fee"
+            },
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "address"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Of course. My computer doesn't tell me what the entrance fee is. The address is The Plugh, Green End, Fen Ditton. Is there anything else I can assist you with?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "entrance fee",
+              "value": "doesn't tell me what the entrance fee",
+              "start": 23,
+              "end": 60
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "address",
+              "value": "The Plugh",
+              "start": 80,
+              "end": 89
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "address",
+              "value": "Green End",
+              "start": 91,
+              "end": 100
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "address",
+              "value": "Fen Ditton",
+              "start": 102,
+              "end": 112
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "That is it. Thank you so much for your help.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You are very welcome! Enjoy your visit!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            },
+            {
+              "intent": "welcome",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-7534",
+    "original_id": "PMUL2883.json",
+    "domains": [
+      "hotel",
+      "attraction",
+      "general"
+    ],
+    "goal": {
+      "description": "You are looking for information in Cambridge. You are looking for <span class='emphasis'>places to go</span> in town. The attraction should be in the <span class='emphasis'>centre</span>. Make sure you get <span class='emphasis'>entrance fee</span> and <span class='emphasis'>address</span>. You are also looking for a <span class='emphasis'>place to stay</span>. The hotel should be in the <span class='emphasis'>cheap</span> price range and should be in the type of <span class='emphasis'>guesthouse</span>. The hotel should be <span class='emphasis'>in the same area as the attraction</span> and should have <span class='emphasis'>a star of 0</span>. Once you find the <span class='emphasis'>hotel</span> you want to book it for <span class='emphasis'>6 people</span> and <span class='emphasis'>2 nights</span> starting from <span class='emphasis'>tuesday</span>. Make sure you get the <span class='emphasis'>reference number</span>",
+      "inform": {
+        "hotel": {
+          "price range": "cheap",
+          "type": "guesthouse",
+          "stars": "0",
+          "area": "centre",
+          "book people": "6",
+          "book day": "tuesday",
+          "book stay": "2"
+        },
+        "attraction": {
+          "area": "centre"
+        }
+      },
+      "request": {
+        "hotel": {},
+        "attraction": {
+          "entrance fee": "",
+          "address": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I am going to the centre and want to go somewhere fun. ",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "Cambridge"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "centre",
+              "start": 18,
+              "end": 24
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Are you interested in having dinner? Going to a bar? Going dancing?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "type"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I think I'd like to visit a museum perhaps.  Can you suggest one?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "museum"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I have the broughton house gallery in the centre the entrance fee is free. ",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "centre"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "the broughton house gallery",
+              "start": 7,
+              "end": 34
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "entrance fee",
+              "value": "free",
+              "start": 69,
+              "end": 73
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "That will be fine I need the address please.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "address"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The address is 98 king street.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "address",
+              "value": "98 king street",
+              "start": 15,
+              "end": 29
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I'm also looking for a place to stay.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Sure, would you like to stay in the same centre area?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "hotel",
+              "slot": "area"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes please and I'm looking for a 0 star rating.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "area",
+              "value": "centre"
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "stars",
+              "value": "0"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I have a cheap guesthouse and a moderate hotel in the center, both 0 stars. Do you have a preference?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "area",
+              "value": "center"
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "stars",
+              "value": "0"
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "price range",
+              "value": "cheap"
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "price range",
+              "value": "moderate"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "type",
+              "value": "guesthouse",
+              "start": 15,
+              "end": 25
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "type",
+              "value": "hotel",
+              "start": 41,
+              "end": 46
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I prefer the guesthouse, please. I'd like a reservation for 6 people, 2 nights. We'll be arriving on Tuesday.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "book day",
+              "value": "tuesday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "type",
+              "value": "guesthouse",
+              "start": 13,
+              "end": 23
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "book stay",
+              "value": "2",
+              "start": 70,
+              "end": 71
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "book people",
+              "value": "6",
+              "start": 60,
+              "end": 61
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Booking was successful.\nReference number is : 2H9TK6B3. anything else?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "ref",
+              "value": "2H9TK6B3",
+              "start": 46,
+              "end": 54
+            }
+          ],
+          "binary": [
+            {
+              "intent": "book",
+              "domain": "hotel",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you that is all I need.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Thank you and enjoy your stay. Goodbye.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            },
+            {
+              "intent": "welcome",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-validation-832",
+    "original_id": "PMUL3017.json",
+    "domains": [
+      "hotel",
+      "attraction",
+      "general"
+    ],
+    "goal": {
+      "description": "You are looking for information in Cambridge. You are looking for a <span class='emphasis'>place to stay</span>. The hotel should <span class='emphasis'>include free wifi</span> and should be in the <span class='emphasis'>south</span>. The hotel should be in the type of <span class='emphasis'>guesthouse</span> and <span class='emphasis'>doesn't need to have free parking</span>. If there is no such hotel, how about one that is in the <span class='emphasis'>east</span>. Once you find the <span class='emphasis'>hotel</span> you want to book it for <span class='emphasis'>7 people</span> and <span class='emphasis'>5 nights</span> starting from <span class='emphasis'>tuesday</span>. Make sure you get the <span class='emphasis'>reference number</span>. You are also looking for a <span class='emphasis'>particular attraction</span>. Its name is called <span class='emphasis'>the place</span>. Make sure you get <span class='emphasis'>area</span> and <span class='emphasis'>entrance fee</span>",
+      "inform": {
+        "hotel": {
+          "area": "south|east",
+          "internet": "yes|yes",
+          "type": "guesthouse|guesthouse",
+          "parking": "no|no",
+          "book people": "7",
+          "book day": "tuesday",
+          "book stay": "5"
+        },
+        "attraction": {
+          "name": "the place"
+        }
+      },
+      "request": {
+        "hotel": {},
+        "attraction": {
+          "area": "",
+          "entrance fee": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I'm going to be in Cambridge for 4 days and need a place to stay in the south with free wifi. I don't need parking.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "parking",
+              "value": "no"
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "internet",
+              "value": "yes"
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "area",
+              "value": "south"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "No I am so sorry I am not finding anything like that something else perhaps?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "nooffer",
+              "domain": "hotel",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "How about a guesthouse and it doesn't need to have free parking. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "type",
+              "value": "guesthouse",
+              "start": 12,
+              "end": 22
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I'm still not able to get any results. Can we try a new search?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "nooffer",
+              "domain": "hotel",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes let's try the east side of town.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "area",
+              "value": "east"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "how about a and b guest house? it's located in the east.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "area",
+              "value": "east"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "name",
+              "value": "a and b guest house",
+              "start": 10,
+              "end": 29
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Sure, could you book it for 7 people for 5 nights starting tuesday? Thanks so much. ",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "book day",
+              "value": "tuesday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "book stay",
+              "value": "5",
+              "start": 41,
+              "end": 42
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "book people",
+              "value": "7",
+              "start": 28,
+              "end": 29
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Your booking was successful. Your reference number is 79TPBIDU. Is there anything else I can do for you?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "ref",
+              "value": "79TPBIDU",
+              "start": 54,
+              "end": 62
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            },
+            {
+              "intent": "book",
+              "domain": "hotel",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "No, I think that's it!  Thanks for your helpful searches!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Of course, happy to help!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "welcome",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

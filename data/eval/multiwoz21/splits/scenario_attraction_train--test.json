@@ -1,0 +1,4058 @@
+[
+  {
+    "dialogue_id": "multiwoz21-train-637",
+    "original_id": "PMUL1031.json",
+    "domains": [
+      "attraction",
+      "train",
+      "general"
+    ],
+    "goal": {
+      "description": "You are planning your trip in Cambridge. You are looking for a <span class='emphasis'>train</span>. The train should depart from <span class='emphasis'>bishops stortford</span> and should <span class='emphasis'>leave after 09:00</span>. The train should go to <span class='emphasis'>cambridge</span> and should leave on <span class='emphasis'>sunday</span>. Make sure you get <span class='emphasis'>travel time</span>, <span class='emphasis'>train ID</span>, and <span class='emphasis'>arrival time</span>. You are also looking for <span class='emphasis'>places to go</span> in town. The attraction should be in the type of <span class='emphasis'>park</span>. Make sure you get <span class='emphasis'>area</span> and <span class='emphasis'>address</span>",
+      "inform": {
+        "attraction": {
+          "type": "swimmingpool|park"
+        },
+        "train": {
+          "leave at": "09:00",
+          "destination": "cambridge",
+          "day": "sunday",
+          "departure": "bishops stortford"
+        }
+      },
+      "request": {
+        "attraction": {
+          "area": "",
+          "address": ""
+        },
+        "train": {
+          "duration": "",
+          "train id": "",
+          "arrive by": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I need to take a train from bishops stortford to Cambridge.  Ill need to leave after 9:00",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "destination",
+              "value": "Cambridge",
+              "start": 49,
+              "end": 58
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "departure",
+              "value": "bishops stortford",
+              "start": 28,
+              "end": 45
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "There are 56 trains traveling from Bishops Stortford to Cambridge after 9:00 between Friday and Wednesday. What day to you want to travel?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "day",
+              "value": "between Friday and Wednesday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "choice",
+              "value": "56",
+              "start": 10,
+              "end": 12
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "departure",
+              "value": "Bishops Stortford",
+              "start": 35,
+              "end": 52
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "destination",
+              "value": "Cambridge",
+              "start": 56,
+              "end": 65
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "9:00",
+              "start": 72,
+              "end": 76
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "day"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I want to leave on Sunday.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "day",
+              "value": "sunday"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "How about TR4803 that leaves at 09:29?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "09:29",
+              "start": 32,
+              "end": 37
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "train id",
+              "value": "TR4803",
+              "start": 10,
+              "end": 16
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "That will work can you book that for me please?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Of course.  How many tickets do you need?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "book people"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Actually, I don't need a booking. I just need to know when it arrives, thanks.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "arrive by"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "It arrives at 10:07.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "arrive by",
+              "value": "10:07",
+              "start": 14,
+              "end": 19
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you. I am also looking for a park to go to. ",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "park"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I have 5 to choose from. Is there a certain area you were wanting the park to be in? ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "choice",
+              "value": "5",
+              "start": 7,
+              "end": 8
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "area"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "no specific area. just recommend one.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "area"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Milton Country Park is a great place to visit! It's in the North and free to enter. ",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "recommend",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "North"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "recommend",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "Milton Country Park",
+              "start": 0,
+              "end": 19
+            },
+            {
+              "intent": "recommend",
+              "domain": "attraction",
+              "slot": "entrance fee",
+              "value": "free",
+              "start": 69,
+              "end": 73
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Great! Please, give me the address of the park.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "address"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "milton country park, milton.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "address",
+              "value": "milton country park",
+              "start": 0,
+              "end": 19
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "address",
+              "value": "milton",
+              "start": 0,
+              "end": 6
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you so much for your time.  Have a nice day!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You too, enjoy your stay!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-1776",
+    "original_id": "MUL1774.json",
+    "domains": [
+      "attraction",
+      "train",
+      "general"
+    ],
+    "goal": {
+      "description": "You are planning your trip in Cambridge. You are looking for a <span class='emphasis'>train</span>. The train should leave on <span class='emphasis'>friday</span> and should depart from <span class='emphasis'>cambridge</span>. The train should <span class='emphasis'>leave after 19:30</span> and should go to <span class='emphasis'>ely</span>. Make sure you get <span class='emphasis'>travel time</span>. You are also looking for <span class='emphasis'>places to go</span> in town. The attraction should be in the <span class='emphasis'>centre</span>. Make sure you get <span class='emphasis'>attraction type</span>",
+      "inform": {
+        "attraction": {
+          "area": "centre|centre"
+        },
+        "train": {
+          "leave at": "19:30",
+          "destination": "ely",
+          "day": "friday",
+          "departure": "cambridge"
+        }
+      },
+      "request": {
+        "attraction": {
+          "type": ""
+        },
+        "train": {
+          "duration": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I need to find a train from Cambridge.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "departure",
+              "value": "Cambridge",
+              "start": 28,
+              "end": 37
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "There are trains leaving Cambridge every two hours.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "departure",
+              "value": "Cambridge",
+              "start": 25,
+              "end": 34
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "every two hours",
+              "start": 35,
+              "end": 50
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I need one on Friday heading to Ely. I need to leave after 19:30.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "day",
+              "value": "friday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "destination",
+              "value": "Ely",
+              "start": 32,
+              "end": 35
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "19:30",
+              "start": 59,
+              "end": 64
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The train closest to your desired time is TR6053 which departs Cambridge at 19:50 and arrives in Ely at 20:07. Would you like to book a ticket?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "arrive by",
+              "value": "20:07",
+              "start": 104,
+              "end": 109
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "19:50",
+              "start": 76,
+              "end": 81
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "departure",
+              "value": "Cambridge",
+              "start": 63,
+              "end": 72
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "destination",
+              "value": "Ely",
+              "start": 97,
+              "end": 100
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "train id",
+              "value": "TR6053",
+              "start": 42,
+              "end": 48
+            }
+          ],
+          "binary": [
+            {
+              "intent": "offerbook",
+              "domain": "train",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "What is the travel time on that train?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "duration"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Travel time is 17 minutes.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "duration",
+              "value": "17 minutes",
+              "start": 15,
+              "end": 25
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I am also looking for a place to go in the centre.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "centre"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "We have many diverse activities in the center of town, from architectural landmarks to parks and pools to nightclubs like the Soul Tree. What interests you today?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "architectural landmarks"
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "parks"
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "pools"
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "nightclubs"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "choice",
+              "value": "many diverse",
+              "start": 8,
+              "end": 20
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "type"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I'm not really picky, just something fun. What's your favorite?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I would recommend Soul Tree Nightclub.  It is in the centre area and the entrance fee is 4 pounds. ",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "recommend",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "centre"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "recommend",
+              "domain": "attraction",
+              "slot": "entrance fee",
+              "value": "4 pounds",
+              "start": 89,
+              "end": 97
+            },
+            {
+              "intent": "recommend",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "Soul Tree Nightclub",
+              "start": 18,
+              "end": 37
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "That is perfect.  Can I get the phone number and postal code please?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Yes, their phone number is 01223477900 and their address is 1-6 corn exchange street.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "address",
+              "value": "1 - 6 corn exchange street"
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "phone",
+              "value": "01223477900",
+              "start": 27,
+              "end": 38
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Okay, thank you. That's all I need. Bye!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Thank you for using our service. Goodbye.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-1903",
+    "original_id": "PMUL1456.json",
+    "domains": [
+      "attraction",
+      "train",
+      "general"
+    ],
+    "goal": {
+      "description": "You are looking for information in Cambridge. You are looking for a <span class='emphasis'>train</span>. The train should depart from <span class='emphasis'>cambridge</span> and should go to <span class='emphasis'>ely</span>. The train should <span class='emphasis'>leave after 16:45</span> and should leave on <span class='emphasis'>tuesday</span>. Once you find the train you want to make a booking for <span class='emphasis'>8 people</span>. Make sure you get the <span class='emphasis'>reference number</span>. You are also looking for <span class='emphasis'>places to go</span> in town. The attraction should be in the type of <span class='emphasis'>college</span>. Make sure you get <span class='emphasis'>postcode</span>, <span class='emphasis'>address</span>, and <span class='emphasis'>phone number</span>",
+      "inform": {
+        "attraction": {
+          "type": "college"
+        },
+        "train": {
+          "leave at": "16:45",
+          "destination": "ely",
+          "day": "tuesday",
+          "departure": "cambridge",
+          "book people": "8"
+        }
+      },
+      "request": {
+        "attraction": {
+          "postcode": "",
+          "address": "",
+          "phone": ""
+        },
+        "train": {}
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I need help booking a train from cambridge to ely.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "destination",
+              "value": "ely",
+              "start": 46,
+              "end": 49
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "departure",
+              "value": "cambridge",
+              "start": 33,
+              "end": 42
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Ok, what day are you traveling?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "day"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Tuesday and I need to leave after 16:45 please.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "day",
+              "value": "tuesday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "16:45",
+              "start": 34,
+              "end": 39
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Yesm there is a train available, the TR7733, and leaves at 17:50. Would you like me to book this?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "17:50",
+              "start": 59,
+              "end": 64
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "train id",
+              "value": "TR7733",
+              "start": 37,
+              "end": 43
+            }
+          ],
+          "binary": [
+            {
+              "intent": "offerbook",
+              "domain": "train",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes please book it for 8 people and provide the reference number. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "book people",
+              "value": "8",
+              "start": 23,
+              "end": 24
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "ref"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The train is booked for 8 people and the reference number is OPGQ4971. Do you need any other assistance?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "ref",
+              "value": "OPGQ4971",
+              "start": 61,
+              "end": 69
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "book people",
+              "value": "8",
+              "start": 24,
+              "end": 25
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            },
+            {
+              "intent": "book",
+              "domain": "train",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes, I'm looking for a college to visit in town. Can you give me some info on what's around? ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I would be happy to get that information for you. Can I help you find a restaurant or an attraction? Or would you like assistance with accommodations?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I am particularly interested in colleges if you would focus on that type of attraction. I would appreciate it.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "college"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "There are 18 colleges in town. Do you have an area preference?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "colleges"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "choice",
+              "value": "18",
+              "start": 10,
+              "end": 12
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "area"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Are there colleges in the centre of town?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "centre"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Yes, there are 13. I personally recommend corpus christi. Entrance costs 2 pounds. The address is king's parade, postcode is cb21rh, and phone number 01223338000. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "recommend",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "corpus christi",
+              "start": 42,
+              "end": 56
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "choice",
+              "value": "13",
+              "start": 15,
+              "end": 17
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "address",
+              "value": "king's parade",
+              "start": 98,
+              "end": 111
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "postcode",
+              "value": "cb21rh",
+              "start": 125,
+              "end": 131
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "phone",
+              "value": "01223338000",
+              "start": 150,
+              "end": 161
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Great, thank you so much! That will be all for today.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You are welcome. Please let us know if you need anything else. Have a great day!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            },
+            {
+              "intent": "welcome",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-2169",
+    "original_id": "PMUL1250.json",
+    "domains": [
+      "attraction",
+      "train",
+      "general"
+    ],
+    "goal": {
+      "description": "You are planning your trip in Cambridge. You are looking for a <span class='emphasis'>train</span>. The train should leave on <span class='emphasis'>tuesday</span> and should <span class='emphasis'>leave after 17:00</span>. The train should go to <span class='emphasis'>ely</span> and should depart from <span class='emphasis'>cambridge</span>. Make sure you get <span class='emphasis'>train ID</span>. You are also looking for <span class='emphasis'>places to go</span> in town. The attraction should be in the type of <span class='emphasis'>college</span>. Make sure you get <span class='emphasis'>phone number</span> and <span class='emphasis'>postcode</span>",
+      "inform": {
+        "attraction": {
+          "type": "museum|college"
+        },
+        "train": {
+          "leave at": "17:00",
+          "destination": "ely",
+          "day": "tuesday",
+          "departure": "cambridge"
+        }
+      },
+      "request": {
+        "attraction": {
+          "phone": "",
+          "postcode": ""
+        },
+        "train": {
+          "train id": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I need to catch a train this tuesday after 17:00 please.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "day",
+              "value": "tuesday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "17:00",
+              "start": 43,
+              "end": 48
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I can help with that! What is your departure site and destination please?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "departure"
+            },
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "destination"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I will be travelling from Cambridge to Ely.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "destination",
+              "value": "Ely",
+              "start": 39,
+              "end": 42
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "departure",
+              "value": "Cambridge",
+              "start": 26,
+              "end": 35
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "What time would you like to arrive by?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "arrive by"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Arrival time isn't important as long as I'm on my way sometime after 17:00 on Tuesday.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "i will recommend  TR3842. can we book for you?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "train id",
+              "value": "TR3842",
+              "start": 18,
+              "end": 24
+            }
+          ],
+          "binary": [
+            {
+              "intent": "offerbook",
+              "domain": "train",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "what time does it leave?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "That train leaves at 23:50",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "23:50",
+              "start": 21,
+              "end": 26
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "No but I need information on colleges in town. ",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "college"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Our colleges are located either in Centre or the West area of town. In which area would you like to concentrate? Or do you have a specific college already in mind?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "colleges"
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "Centre"
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "West"
+            }
+          ],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "name"
+            },
+            {
+              "intent": "select",
+              "domain": "attraction",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "no, just find me a college anywhere in town please and I'll need their phone number and post code when you find it please.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "postcode"
+            },
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "phone"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "corpus christi\t01223338000 and the postcode is\tcb21rh",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "postcode",
+              "value": "cb21rh",
+              "start": 47,
+              "end": 53
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "corpus christi",
+              "start": 0,
+              "end": 14
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "phone",
+              "value": "01223338000",
+              "start": 15,
+              "end": 26
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "That's all I need today.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Please contact us anytime. Thank you.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-3160",
+    "original_id": "MUL0545.json",
+    "domains": [
+      "attraction",
+      "train",
+      "general"
+    ],
+    "goal": {
+      "description": "You are looking for information in Cambridge. You are looking for a <span class='emphasis'>train</span>. The train should depart from <span class='emphasis'>cambridge</span> and should leave on <span class='emphasis'>saturday</span>. The train should go to <span class='emphasis'>london kings cross</span> and should <span class='emphasis'>arrive by 21:45</span>. Once you find the train you want to make a booking for <span class='emphasis'>4 people</span>. Make sure you get the <span class='emphasis'>reference number</span>. You are also looking for <span class='emphasis'>places to go</span> in town. The attraction should be in the <span class='emphasis'>centre</span> and should be in the type of <span class='emphasis'>mutliple sports</span>. If there is no such attraction, how about one that is in <span class='emphasis'>the type of architecture</span>. Make sure you get <span class='emphasis'>entrance fee</span> and <span class='emphasis'>postcode</span>",
+      "inform": {
+        "attraction": {
+          "type": "mutliple sports|architecture",
+          "area": "centre|centre"
+        },
+        "train": {
+          "destination": "london kings cross",
+          "day": "saturday",
+          "arrive by": "21:45",
+          "departure": "cambridge",
+          "book people": "4"
+        }
+      },
+      "request": {
+        "attraction": {
+          "entrance fee": "",
+          "postcode": ""
+        },
+        "train": {}
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I am looking to book a train that departs from cambridge on saturday",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "day",
+              "value": "saturday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "departure",
+              "value": "cambridge",
+              "start": 47,
+              "end": 56
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Great! I have those trains up.  May I now get where you are traveling to?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "destination"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I am goint to London Kings Cross and should arrive by 21:45.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "destination",
+              "value": "London Kings Cross",
+              "start": 14,
+              "end": 32
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "arrive by",
+              "value": "21:45",
+              "start": 54,
+              "end": 59
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Sure, I have a train arriving at 19:51 TR0427. Would you like to book it?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "arrive by",
+              "value": "19:51",
+              "start": 33,
+              "end": 38
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "train id",
+              "value": "TR0427",
+              "start": 39,
+              "end": 45
+            }
+          ],
+          "binary": [
+            {
+              "intent": "offerbook",
+              "domain": "train",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes, please. I need a booking for 4 people and will need the reference number.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "book people",
+              "value": "4",
+              "start": 34,
+              "end": 35
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "ref"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I have booked your tickets. Your reference number is GW9K5282. Can I help with anything else today?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "ref",
+              "value": "GW9K5282",
+              "start": 53,
+              "end": 61
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            },
+            {
+              "intent": "book",
+              "domain": "train",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes, I am looking for places to go in the centre area. ",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "centre"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "We have many fine attractions in the center of town. Is there a particular type you're looking for?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "center of town"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "choice",
+              "value": "many",
+              "start": 8,
+              "end": 12
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "type"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I would like a mutilple sports attraction please. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Would a swimming pool work in its place?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "select",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "swimming pool"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes our family likes to swim!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Great! There is just one swimming facility in the central zone: Parkside Pools. Would you like their contact information?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "central zone"
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "swimming facility"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "choice",
+              "value": "just one",
+              "start": 16,
+              "end": 24
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "Parkside Pools",
+              "start": 64,
+              "end": 78
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes, please get me their entrance fee and postcode.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "entrance fee"
+            },
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "postcode"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Their entrance fee is not in our system and they are in cb11ly",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "entrance fee",
+              "value": "not in our system",
+              "start": 22,
+              "end": 39
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "postcode",
+              "value": "cb11ly",
+              "start": 56,
+              "end": 62
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you. That's all I need for today.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Have a great day.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thanks, you, too.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You're welcome!  Bye!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            },
+            {
+              "intent": "welcome",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-3504",
+    "original_id": "MUL0548.json",
+    "domains": [
+      "attraction",
+      "train",
+      "general"
+    ],
+    "goal": {
+      "description": "You are looking for information in Cambridge. You are looking for <span class='emphasis'>places to go</span> in town. The attraction should be in the <span class='emphasis'>east</span>. Make sure you get <span class='emphasis'>attraction type</span>, <span class='emphasis'>entrance fee</span>, and <span class='emphasis'>postcode</span>. You are also looking for a <span class='emphasis'>train</span>. The train should <span class='emphasis'>leave after 12:15</span> and should go to <span class='emphasis'>kings lynn</span>. The train should leave on <span class='emphasis'>sunday</span> and should depart from <span class='emphasis'>cambridge</span>. Make sure you get <span class='emphasis'>price</span>",
+      "inform": {
+        "attraction": {
+          "area": "east"
+        },
+        "train": {
+          "leave at": "12:15",
+          "destination": "kings lynn",
+          "day": "sunday",
+          "departure": "cambridge"
+        }
+      },
+      "request": {
+        "attraction": {
+          "type": "",
+          "entrance fee": "",
+          "postcode": ""
+        },
+        "train": {
+          "price": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I'm looking for an attraction in the east.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "east"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "There are several attractions available in the east. Is there a type of attraction you are looking for?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "east"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "choice",
+              "value": "several",
+              "start": 10,
+              "end": 17
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "type"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Hook me up with the spot you like best, just be sure to tell me what it is, where it is, and what it will cost me, yo.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I like the Cambridge artworks- it's a museum at 5 greens road and it has free admission.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "recommend",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "museum"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "recommend",
+              "domain": "attraction",
+              "slot": "entrance fee",
+              "value": "free",
+              "start": 73,
+              "end": 77
+            },
+            {
+              "intent": "recommend",
+              "domain": "attraction",
+              "slot": "address",
+              "value": "5 greens road",
+              "start": 48,
+              "end": 61
+            },
+            {
+              "intent": "recommend",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "Cambridge artworks",
+              "start": 11,
+              "end": 29
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "That sounds, good, what is the postcode?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "postcode"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The postal code is cb13ef.  Would you like for me to get you tickets?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "postcode",
+              "value": "cb13ef",
+              "start": 19,
+              "end": 25
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "No that's all I needed with that. i also need a train leaving after 12:15 heading to kings lynn.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "destination",
+              "value": "kings lynn",
+              "start": 85,
+              "end": 95
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "12:15",
+              "start": 68,
+              "end": 73
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "There are 77 trains, where will you be departing from and what time?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "choice",
+              "value": "77",
+              "start": 10,
+              "end": 12
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "leave at"
+            },
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "departure"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I need to depart from Cambridge and I need to leave after 12:15 to go to King's Lynn",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "departure",
+              "value": "Cambridge",
+              "start": 22,
+              "end": 31
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "12:15",
+              "start": 58,
+              "end": 63
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Do you have a day in mind?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "day"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I would like to travel on Sunday. Can you tell me how much that will cost?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "day",
+              "value": "sunday"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The first train after 12:15 on Sunday leaves at 13:11, and then there are trains every hour. Does the first one work or would you like a later one? ",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "day",
+              "value": "Sunday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "13:11",
+              "start": 48,
+              "end": 53
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "every hour",
+              "start": 81,
+              "end": 91
+            }
+          ],
+          "binary": [
+            {
+              "intent": "select",
+              "domain": "train",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I'll take the first train at 13:11. Can I pay you over the phone with my debit card? ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "First I will need to know how many passengers will be traveling?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "book people"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Just myself. What is the cost?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The cost is 7.84 pounds.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "price",
+              "value": "7.84 pounds",
+              "start": 12,
+              "end": 23
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you, that's all. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Ok, get back in touch if you need a booking.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "welcome",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-3924",
+    "original_id": "PMUL1336.json",
+    "domains": [
+      "attraction",
+      "train",
+      "general"
+    ],
+    "goal": {
+      "description": "You are looking for information in Cambridge. You are looking for <span class='emphasis'>places to go</span> in town. The attraction should be in the type of <span class='emphasis'>concerthall</span> and should be in the <span class='emphasis'>centre</span>. Make sure you get <span class='emphasis'>address</span>. You are also looking for a <span class='emphasis'>train</span>. The train should leave on <span class='emphasis'>saturday</span> and should depart from <span class='emphasis'>broxbourne</span>. The train should <span class='emphasis'>leave after 08:15</span> and should go to <span class='emphasis'>cambridge</span>. Make sure you get <span class='emphasis'>train ID</span>, <span class='emphasis'>price</span>, and <span class='emphasis'>travel time</span>",
+      "inform": {
+        "attraction": {
+          "type": "concerthall",
+          "area": "centre"
+        },
+        "train": {
+          "leave at": "08:15",
+          "destination": "cambridge",
+          "day": "saturday",
+          "departure": "broxbourne"
+        }
+      },
+      "request": {
+        "attraction": {
+          "address": ""
+        },
+        "train": {
+          "train id": "",
+          "price": "",
+          "duration": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I'm looking for a concerthall in the centre.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "centre"
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "concerthall"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The place to go is the man on the moon.  Need a phone number?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "recommend",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "man on the moon",
+              "start": 23,
+              "end": 38
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "No thanks. I'm actually looking for an address please. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "address"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The address is 2 norfolk street. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "address",
+              "value": "2 norfolk street",
+              "start": 15,
+              "end": 31
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "i'm also trying to catch a train on saturday.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "day",
+              "value": "saturday"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Sure, I can help you with that.  What time were you wanting to leave around?  ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "offerbook",
+              "domain": "train",
+              "slot": ""
+            },
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "leave at"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I would like to leave after 8:15.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Which stations will you be using?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "destination"
+            },
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "departure"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Broxbourne and Cambridge.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Which will you be leaving from ?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "departure"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I will be departing from Broxbourne.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "One more question: What day will you be travelling?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "day"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "On Saturday, please.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "There are many trains getting to cambridge on saturday from broxbourne. Do you have a specific time you want to be there by?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "day",
+              "value": "saturday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "departure",
+              "value": "broxbourne",
+              "start": 60,
+              "end": 70
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "destination",
+              "value": "cambridge",
+              "start": 33,
+              "end": 42
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "choice",
+              "value": "many",
+              "start": 10,
+              "end": 14
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "arrive by"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "The train should leave after 08:15. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "08:15",
+              "start": 29,
+              "end": 34
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "We have trains running every hour from 08:32 to 23:32. I can get you on the TR2025\t that leaves at 10:32 if you'd like.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "every hour from 08:32 to 23:32",
+              "start": 23,
+              "end": 53
+            },
+            {
+              "intent": "offerbook",
+              "domain": "train",
+              "slot": "train id",
+              "value": "TR2025",
+              "start": 76,
+              "end": 82
+            },
+            {
+              "intent": "offerbook",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "10:32",
+              "start": 99,
+              "end": 104
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "What is the price for the TR2025? And how long is the trip?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "price"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Please Provide me with this information, as I cannot travel without it.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I am still waiting on that information. Can I get the cost of the ticket and the travel time please!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "duration"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Sorry about that, the TR2025 costs 14.32 pounds, and is a 60 minute trip. The TR9384 leaves earlier, at 8:32, and costs the same amount. Want me to book one?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "duration",
+              "value": "a 60 minute trip",
+              "start": 56,
+              "end": 72
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "8:32",
+              "start": 104,
+              "end": 108
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "train id",
+              "value": "TR2025",
+              "start": 22,
+              "end": 28
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "train id",
+              "value": "TR9384",
+              "start": 78,
+              "end": 84
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "price",
+              "value": "14.32 pounds",
+              "start": 35,
+              "end": 47
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "price",
+              "value": "the same amount",
+              "start": 120,
+              "end": 135
+            }
+          ],
+          "binary": [
+            {
+              "intent": "offerbook",
+              "domain": "train",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "No thank you! That will be all for today! ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Thank you for using this system goodbye",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-8395",
+    "original_id": "MUL1954.json",
+    "domains": [
+      "attraction",
+      "train",
+      "general"
+    ],
+    "goal": {
+      "description": "You are looking for information in Cambridge. You are looking for <span class='emphasis'>places to go</span> in town. The attraction should be in the type of <span class='emphasis'>museum</span> and should be in the <span class='emphasis'>west</span>. Make sure you get <span class='emphasis'>phone number</span> and <span class='emphasis'>postcode</span>. You are also looking for a <span class='emphasis'>train</span>. The train should <span class='emphasis'>leave after 19:30</span> and should go to <span class='emphasis'>cambridge</span>. The train should depart from <span class='emphasis'>kings lynn</span> and should leave on <span class='emphasis'>friday</span>. Make sure you get <span class='emphasis'>train ID</span> and <span class='emphasis'>arrival time</span>",
+      "inform": {
+        "attraction": {
+          "type": "museum",
+          "area": "west"
+        },
+        "train": {
+          "leave at": "19:30",
+          "destination": "cambridge",
+          "day": "friday",
+          "departure": "kings lynn"
+        }
+      },
+      "request": {
+        "attraction": {
+          "phone": "",
+          "postcode": ""
+        },
+        "train": {
+          "train id": "",
+          "arrive by": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "Hi! I'm looking to visit a museum. Are there any in the west part of town?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "west"
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "museum"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "museum",
+              "start": 27,
+              "end": 33
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "There are two different museum which are cambridge and county folk museum and museum of classical archaeology. Which one would you like information for?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "museum"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "cambridge and county folk museum",
+              "start": 41,
+              "end": 73
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "museum of classical archaeology",
+              "start": 78,
+              "end": 109
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "choice",
+              "value": "two",
+              "start": 10,
+              "end": 13
+            }
+          ],
+          "binary": [
+            {
+              "intent": "select",
+              "domain": "attraction",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Can I get information on the County Folk Museum? Specifically the phone number and postcode.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "postcode"
+            },
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "phone"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Phone number is 01223355159 and postcode is cb30aq.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "phone",
+              "value": "01223355159",
+              "start": 16,
+              "end": 27
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "postcode",
+              "value": "cb30aq",
+              "start": 44,
+              "end": 50
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you! Can you also find me a train going to Cambridge?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "destination",
+              "value": "Cambridge",
+              "start": 49,
+              "end": 58
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I can definitely help you with that!  Can you tell me where you will be departing from?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "greet",
+              "domain": "general",
+              "slot": ""
+            },
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "departure"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I'm departing from Kings Lynn sometime after 19:30. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "departure",
+              "value": "Kings Lynn",
+              "start": 19,
+              "end": 29
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "19:30",
+              "start": 45,
+              "end": 50
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Sure, there are 28 trains available, do you have a specific day in mind to leave?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "choice",
+              "value": "28",
+              "start": 16,
+              "end": 18
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "day"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes.  I'd like to travel on Friday.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "day",
+              "value": "friday"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The first train from Kings Lynn to Cambridge on Friday after 19:30 is the TR1082. It leaves Kings Lynn at 20:11. Would you like to book a ticket?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "day",
+              "value": "Friday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "choice",
+              "value": "The first",
+              "start": 0,
+              "end": 9
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "departure",
+              "value": "Kings Lynn",
+              "start": 21,
+              "end": 31
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "destination",
+              "value": "Cambridge",
+              "start": 35,
+              "end": 44
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "19:30",
+              "start": 61,
+              "end": 66
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "20:11",
+              "start": 106,
+              "end": 111
+            }
+          ],
+          "binary": [
+            {
+              "intent": "offerbook",
+              "domain": "train",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes, what time does it arrive in Cambridge?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "destination",
+              "value": "Cambridge",
+              "start": 33,
+              "end": 42
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "arrive by"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "It will arrive at 20:58",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "arrive by",
+              "value": "20:58",
+              "start": 18,
+              "end": 23
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "awesome! thank you so much!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Would you like me to book you a ticket on that train?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "offerbook",
+              "domain": "train",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Nah that won't be necessary.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Great, is there anything else I can help you with?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "That is all I needed today. Thank you so much.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You're welcome. Have a lovely day!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            },
+            {
+              "intent": "welcome",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-validation-347",
+    "original_id": "MUL1972.json",
+    "domains": [
+      "attraction",
+      "train",
+      "general"
+    ],
+    "goal": {
+      "description": "You are looking for information in Cambridge. You are looking for <span class='emphasis'>places to go</span> in town. The attraction should be in the <span class='emphasis'>north</span> and should be in the type of <span class='emphasis'>swimmingpool</span>. Make sure you get <span class='emphasis'>postcode</span>. You are also looking for a <span class='emphasis'>train</span>. The train should leave on <span class='emphasis'>friday</span> and should go to <span class='emphasis'>ely</span>. The train should <span class='emphasis'>leave after 13:15</span> and should depart from <span class='emphasis'>cambridge</span>. Once you find the train you want to make a booking for <span class='emphasis'>7 people</span>. Make sure you get the <span class='emphasis'>reference number</span>",
+      "inform": {
+        "attraction": {
+          "type": "swimmingpool",
+          "area": "north"
+        },
+        "train": {
+          "leave at": "13:15",
+          "destination": "ely",
+          "day": "friday",
+          "departure": "cambridge",
+          "book people": "7"
+        }
+      },
+      "request": {
+        "attraction": {
+          "postcode": ""
+        },
+        "train": {}
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I am looking for someplace to go in the North with a swimming pool",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "north"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "There is the jesus green outdoor pool and the kings hedges learner pool.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "jesus green outdoor pool",
+              "start": 13,
+              "end": 37
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "kings hedges learner pool",
+              "start": 46,
+              "end": 71
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "That sounds good, what is the postcode?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "postcode"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "It is cb43px. Is there anything else you need? ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "postcode",
+              "value": "cb43px",
+              "start": 6,
+              "end": 12
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I need a train to Ely as well. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "destination",
+              "value": "Ely",
+              "start": 18,
+              "end": 21
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Where will you be departing from? And when would you like to travel?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "departure"
+            },
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "leave at"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I'd like to go on Friday and leave after 13:15.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "day",
+              "value": "friday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "13:15",
+              "start": 41,
+              "end": 46
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Okay.  I just need to confirm that you are traveling from Cambridge?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "departure",
+              "value": "Cambridge",
+              "start": 58,
+              "end": 67
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes I am. For 7 people.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "book people",
+              "value": "7",
+              "start": 14,
+              "end": 15
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Booking was successful, the total fee is 30.8 GBP payable at the station .\nReference number is : 2VH8SLVO.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "ref",
+              "value": "2VH8SLVO",
+              "start": 97,
+              "end": 105
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "price",
+              "value": "30.8 GBP",
+              "start": 41,
+              "end": 49
+            }
+          ],
+          "binary": [
+            {
+              "intent": "book",
+              "domain": "train",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you so much.  You have been a great help.  Goodbye!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Goodbye! Please contact us again in the future if you need any additional assistance. Have a great day!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-validation-899",
+    "original_id": "PMUL1346.json",
+    "domains": [
+      "attraction",
+      "train",
+      "general"
+    ],
+    "goal": {
+      "description": "You are planning your trip in Cambridge. You are looking for a <span class='emphasis'>train</span>. The train should leave on <span class='emphasis'>saturday</span> and should <span class='emphasis'>leave after 19:00</span>. The train should depart from <span class='emphasis'>cambridge</span> and should go to <span class='emphasis'>leicester</span>. Once you find the train you want to make a booking for <span class='emphasis'>5 people</span>. Make sure you get the <span class='emphasis'>reference number</span>. You are also looking for a <span class='emphasis'>particular attraction</span>. Its name is called <span class='emphasis'>people's portraits exhibition at girton college</span>. Make sure you get <span class='emphasis'>postcode</span> and <span class='emphasis'>attraction type</span>",
+      "inform": {
+        "attraction": {
+          "name": "people's portraits exhibition at girton college"
+        },
+        "train": {
+          "leave at": "19:00",
+          "destination": "leicester",
+          "day": "saturday",
+          "departure": "cambridge",
+          "book people": "5"
+        }
+      },
+      "request": {
+        "attraction": {
+          "postcode": "",
+          "type": ""
+        },
+        "train": {}
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "Hello looking for a good train that leaves on saturday after 19:00.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "day",
+              "value": "saturday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "19:00",
+              "start": 61,
+              "end": 66
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Sure. Where will you be departing from?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "departure"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I'm departing from Cambridge.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "departure",
+              "value": "Cambridge",
+              "start": 19,
+              "end": 28
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Thank you.  What destination are you traveling to? ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "destination"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I am going to Leicester after 19:00 on saturday.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "destination",
+              "value": "Leicester",
+              "start": 14,
+              "end": 23
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Train 4708 leaves at 19:21 and arrives at 21:06.  Would that work for you?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "train id",
+              "value": "Train 4708",
+              "start": 0,
+              "end": 10
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "arrive by",
+              "value": "21:06",
+              "start": 42,
+              "end": 47
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "19:21",
+              "start": 21,
+              "end": 26
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes that works make a booking for 5 people.  Please provide a reference number.  I need information on people's portraits exhibition at girton college too.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "book people",
+              "value": "5",
+              "start": 34,
+              "end": 35
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "ref"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Your booking is complete.  Your reference number is TI6PZFH7.  What information can I provide you with about people's portraits exhibition at girton college?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "people's portraits exhibition at girton college",
+              "start": 109,
+              "end": 156
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "ref",
+              "value": "TI6PZFH7",
+              "start": 52,
+              "end": 60
+            }
+          ],
+          "binary": [
+            {
+              "intent": "book",
+              "domain": "train",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I need the postcode and attraction type?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "type"
+            },
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "postcode"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Its an exhibit and cb3ojg.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "exhibit"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "postcode",
+              "value": "cb3ojg",
+              "start": 19,
+              "end": 25
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thanks, that's all I need today!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Thank you for contacting us and have a nice day.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-test-667",
+    "original_id": "MUL0575.json",
+    "domains": [
+      "attraction",
+      "train",
+      "general"
+    ],
+    "goal": {
+      "description": "You are planning your trip in Cambridge. You are looking for a <span class='emphasis'>train</span>. The train should go to <span class='emphasis'>cambridge</span> and should depart from <span class='emphasis'>bishops stortford</span>. The train should <span class='emphasis'>leave after 16:30</span> and should leave on <span class='emphasis'>monday</span>. Once you find the train you want to make a booking for <span class='emphasis'>6 people</span>. Make sure you get the <span class='emphasis'>reference number</span>. You are also looking for a <span class='emphasis'>particular attraction</span>. Its name is called <span class='emphasis'>saint john's college</span>. Make sure you get <span class='emphasis'>area</span>",
+      "inform": {
+        "attraction": {
+          "name": "saint john's college"
+        },
+        "train": {
+          "leave at": "16:30",
+          "destination": "cambridge",
+          "day": "monday",
+          "departure": "bishops stortford",
+          "book people": "6"
+        }
+      },
+      "request": {
+        "attraction": {
+          "area": ""
+        },
+        "train": {}
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I will be traveling to Cambridge next month,  and I need to find a train running from bishop's Stortford heading to Cambridge, can you help me do this please? ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "destination",
+              "value": "Cambridge",
+              "start": 23,
+              "end": 32
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "There are 70 trains doing that trip, do you have a date and time you would like to go?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "choice",
+              "value": "70",
+              "start": 10,
+              "end": 12
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "leave at"
+            },
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "day"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes, that would be Monday after 16:30.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "day",
+              "value": "monday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "16:30",
+              "start": 32,
+              "end": 37
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The earliest departure after 16:30 on Monday is TR8925, which will be departing bishops stortford going to cambridge at 17:29. Would you like to book a ticket?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "day",
+              "value": "Monday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "17:29",
+              "start": 120,
+              "end": 125
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "departure",
+              "value": "bishops stortford",
+              "start": 80,
+              "end": 97
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "destination",
+              "value": "cambridge",
+              "start": 107,
+              "end": 116
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "train id",
+              "value": "TR8925",
+              "start": 48,
+              "end": 54
+            }
+          ],
+          "binary": [
+            {
+              "intent": "offerbook",
+              "domain": "train",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Great can I get tickets for 6 people and the reference number?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "book people",
+              "value": "6",
+              "start": 28,
+              "end": 29
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "ref"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Booking was successful, the total fee is 60.59 GBP payable at the station. Your reference number is PO9S5J0V. Can I help you with anything else?\n",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "ref",
+              "value": "PO9S5J0V",
+              "start": 100,
+              "end": 108
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "price",
+              "value": "60.59 GBP",
+              "start": 41,
+              "end": 50
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            },
+            {
+              "intent": "book",
+              "domain": "train",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you i also am looking for an attraction called saint john's college",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "saint john's college",
+              "start": 53,
+              "end": 73
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Saint john's college is in the centre of town, their address is saint john's street, do you need any other info on them?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "centre of town"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "address",
+              "value": "saint john's street",
+              "start": 64,
+              "end": 83
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "Saint john's college",
+              "start": 0,
+              "end": 20
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "No. You have been extremely helpful. Thank you!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You're welcome. Enjoy your trip.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "welcome",
+              "domain": "general",
+              "slot": ""
+            },
+            {
+              "intent": "greet",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

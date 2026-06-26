@@ -1,0 +1,294 @@
+[
+  {
+    "dialogue_id": "multiwoz21-train-4176",
+    "original_id": "SNG0604.json",
+    "domains": [
+      "restaurant",
+      "general",
+      "taxi"
+    ],
+    "goal": {
+      "description": "You are looking for a <span class='emphasis'>restaurant</span>. The restaurant should be in the <span class='emphasis'>moderate</span> price range and should serve <span class='emphasis'>indian</span> food. Once you find the <span class='emphasis'>restaurant</span> you want to book a table for <span class='emphasis'>4 people</span> at <span class='emphasis'>13:15</span> on <span class='emphasis'>friday</span>. If the booking fails how about <span class='emphasis'>12:15</span>. Make sure you get the <span class='emphasis'>reference number</span>",
+      "inform": {
+        "restaurant": {
+          "food": "indian",
+          "price range": "moderate",
+          "book time": "13:15|12:15",
+          "book day": "friday",
+          "book people": "4"
+        }
+      },
+      "request": {
+        "restaurant": {}
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I would like a moderately priced Indian food please.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "price range",
+              "value": "moderate"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Indian",
+              "start": 33,
+              "end": 39
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I have 4 different indian restaurants all over the city. Is there a certain area you prefer?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "all over the city"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "indian",
+              "start": 19,
+              "end": 25
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "choice",
+              "value": "4",
+              "start": 7,
+              "end": 8
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "area"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "How about the west? I will need a table for 4 on Friday at 13:15.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "west"
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "book day",
+              "value": "friday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "book time",
+              "value": "13:15",
+              "start": 59,
+              "end": 64
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "book people",
+              "value": "4",
+              "start": 44,
+              "end": 45
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The only moderate Indian restaurant in that area is Meghna, and they are not available for that time. Can I try something else? ",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "price range",
+              "value": "moderate"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "choice",
+              "value": "only",
+              "start": 4,
+              "end": 8
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "Meghna",
+              "start": 52,
+              "end": 58
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Indian",
+              "start": 18,
+              "end": 24
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Is there anything available for 12:15 on Friday? ",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "book day",
+              "value": "friday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "book time",
+              "value": "12:15",
+              "start": 32,
+              "end": 37
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Yes, that worked. You are set for 12:15 and the reference number is ABC08P2A.  Can I be of further assistance?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "ref",
+              "value": "ABC08P2A",
+              "start": 68,
+              "end": 76
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "book time",
+              "value": "12:15",
+              "start": 34,
+              "end": 39
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            },
+            {
+              "intent": "book",
+              "domain": "restaurant",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I will need a taxi to take me there.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Can you please tell me where you will be leaving from so I can book your taxi?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "taxi",
+              "slot": "departure"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Nevermind, I'm sorry. I think I'm all set.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Alrighty. Have a good day!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

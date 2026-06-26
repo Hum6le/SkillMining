@@ -1,0 +1,377 @@
+[
+  {
+    "dialogue_id": "multiwoz21-train-5269",
+    "original_id": "PMUL1286.json",
+    "domains": [
+      "attraction",
+      "train",
+      "general",
+      "police"
+    ],
+    "goal": {
+      "description": "You are looking for information in Cambridge. You are looking for <span class='emphasis'>places to go</span> in town. The attraction should be in the type of <span class='emphasis'>architecture</span>. Make sure you get <span class='emphasis'>area</span>, <span class='emphasis'>address</span>, and <span class='emphasis'>postcode</span>. You are also looking for a <span class='emphasis'>train</span>. The train should depart from <span class='emphasis'>london kings cross</span> and should <span class='emphasis'>leave after 15:15</span>. The train should go to <span class='emphasis'>cambridge</span> and should leave on <span class='emphasis'>friday</span>. Once you find the train you want to make a booking for <span class='emphasis'>7 people</span>. Make sure you get the <span class='emphasis'>reference number</span>",
+      "inform": {
+        "attraction": {
+          "type": "museum|architecture"
+        },
+        "train": {
+          "leave at": "15:15",
+          "destination": "cambridge",
+          "day": "friday",
+          "departure": "london kings cross",
+          "book people": "7"
+        }
+      },
+      "request": {
+        "attraction": {
+          "area": "",
+          "address": "",
+          "postcode": ""
+        },
+        "train": {}
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "Where can I find the best architecture?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "architecture"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You must see great saint mary's church!!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "recommend",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "saint mary's church",
+              "start": 19,
+              "end": 38
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Sounds great. Can I get the address and postcode for that?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "address"
+            },
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "postcode"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Certainly! It is located in Market Square, which is in the center of town, and the postcode is CB23PQ. Is there anything else I can help you with today?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "center of town"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "postcode",
+              "value": "CB23PQ",
+              "start": 95,
+              "end": 101
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "address",
+              "value": "Market Square",
+              "start": 28,
+              "end": 41
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Please book the ticket.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I'm sorry, I do not understand your request. Would you like help with anything else?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes, could you suggest some thai restaurants in the area?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "area"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You didn't select restaurant so I can not assist. Please fix. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I am looking for a train from London Kings Cross to Cambridge. I need to leave after 15:15 on Friday.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "day",
+              "value": "friday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "destination",
+              "value": "Cambridge",
+              "start": 52,
+              "end": 61
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "departure",
+              "value": "London Kings Cross",
+              "start": 30,
+              "end": 48
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "15:15",
+              "start": 85,
+              "end": 90
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "TR8842 will leave at 15:17 and arrive by 16:08. Would you like to make a reservation?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "arrive by",
+              "value": "16:08",
+              "start": 41,
+              "end": 46
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "train id",
+              "value": "TR8842",
+              "start": 0,
+              "end": 6
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "15:17",
+              "start": 21,
+              "end": 26
+            }
+          ],
+          "binary": [
+            {
+              "intent": "offerbook",
+              "domain": "train",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Sounds great I need reservations for 7. I also need the reference number.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "book people",
+              "value": "7",
+              "start": 37,
+              "end": 38
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "ref"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Great, you're booked. The reference number is : WEHJ6M9J. Anything else I can help you with today?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "ref",
+              "value": "WEHJ6M9J",
+              "start": 48,
+              "end": 56
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            },
+            {
+              "intent": "book",
+              "domain": "train",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Can you call the police because my purse was snatched as i sitting on this bench talking to you.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Absoluting I will get right on that.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "welcome",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Jaja.. You're funny. Thanks for all your help today. Have a great day! Goodbye",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "of course, enjoy your visit!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            },
+            {
+              "intent": "welcome",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

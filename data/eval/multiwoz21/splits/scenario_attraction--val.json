@@ -1,0 +1,159 @@
+[
+  {
+    "dialogue_id": "multiwoz21-test-772",
+    "original_id": "SNG1090.json",
+    "domains": [
+      "attraction",
+      "general"
+    ],
+    "goal": {
+      "description": "You are looking for <span class='emphasis'>places to go</span> in town. The attraction should be in the <span class='emphasis'>centre</span> and should be in the type of <span class='emphasis'>nightclub</span>. Make sure you get <span class='emphasis'>entrance fee</span>",
+      "inform": {
+        "attraction": {
+          "type": "nightclub",
+          "area": "centre"
+        }
+      },
+      "request": {
+        "attraction": {
+          "entrance fee": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I'm looking for a nightclub to go to. Are there any in the centre of town?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "centre"
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "nightclub"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "There are 5 nightclubs in the centre. Ballare is one of them. Would that work for you?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "the centre"
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "nightclubs"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "Ballare",
+              "start": 38,
+              "end": 45
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "choice",
+              "value": "5",
+              "start": 10,
+              "end": 11
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Is there an entrance fee for Ballare? ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "Ballare",
+              "start": 29,
+              "end": 36
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "entrance fee"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The fee is 5 pounds.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "entrance fee",
+              "value": "5 pounds",
+              "start": 11,
+              "end": 19
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you! That's all I needed.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Okay, Thank you for calling.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

@@ -1,0 +1,130 @@
+[
+  {
+    "dialogue_id": "multiwoz21-train-829",
+    "original_id": "SNG01964.json",
+    "domains": [
+      "police",
+      "restaurant",
+      "general"
+    ],
+    "goal": {
+      "description": "You are looking for the Parkside <span class='emphasis'>Police Station</span>. Make sure you get <span class='emphasis'>postcode</span>",
+      "inform": {
+        "police": {}
+      },
+      "request": {
+        "police": {
+          "postcode": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I would like to book a popular, cheap restaurant.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Do you have a specific area in mind?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "area"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I'm sorry I need to find the information for Parkside Police Station.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "name",
+              "value": "Parkside Police Station",
+              "start": 45,
+              "end": 68
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Sure, the telephone number is 01223358966, the address is Parkside, Cambridge and the postcode is CB11JG.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "phone",
+              "value": "01223358966",
+              "start": 30,
+              "end": 41
+            },
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "address",
+              "value": "Parkside, Cambridge",
+              "start": 58,
+              "end": 77
+            },
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "postcode",
+              "value": "CB11JG",
+              "start": 98,
+              "end": 104
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "That was all. Thanks",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Please let us know if we can help any further. Have a nice day!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      }
+    ]
+  }
+]

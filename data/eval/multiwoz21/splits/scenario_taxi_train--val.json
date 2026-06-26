@@ -1,0 +1,182 @@
+[
+  {
+    "dialogue_id": "multiwoz21-train-7885",
+    "original_id": "SNG1238.json",
+    "domains": [
+      "taxi",
+      "train",
+      "general"
+    ],
+    "goal": {
+      "description": "You want to book a <span class='emphasis'>taxi</span>. The taxi should depart from <span class='emphasis'>london kings cross train station</span> and should go to <span class='emphasis'>gonville hotel</span>. The taxi should <span class='emphasis'>arrive by 23:00</span>. Make sure you get <span class='emphasis'>contact number</span> and <span class='emphasis'>car type</span>",
+      "inform": {
+        "taxi": {
+          "destination": "gonville hotel",
+          "departure": "london kings cross train station",
+          "arrive by": "23:00"
+        }
+      },
+      "request": {
+        "taxi": {
+          "type": "",
+          "phone": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I need a taxi from london kings cross train station to the gonville hotel.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "destination",
+              "value": "gonville hotel",
+              "start": 59,
+              "end": 73
+            },
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "departure",
+              "value": "london kings cross train station",
+              "start": 19,
+              "end": 51
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Tell the customer what time the train departs from London kings cross train, and possible arrival time to gonville hotel.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "departure",
+              "value": "London kings cross",
+              "start": 51,
+              "end": 69
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "destination",
+              "value": "gonville hotel",
+              "start": 106,
+              "end": 120
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Um what? I need to arrive by 23:00. Can you help or not?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "arrive by",
+              "value": "23:00",
+              "start": 29,
+              "end": 34
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I'm sorry about that.  I have booked you a black audi arriving at the hotel by 23:00.  The contact number is 07582132009.\n",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "destination",
+              "value": "the hotel",
+              "start": 66,
+              "end": 75
+            },
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "type",
+              "value": "black audi",
+              "start": 43,
+              "end": 53
+            },
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "phone",
+              "value": "07582132009",
+              "start": 109,
+              "end": 120
+            },
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "arrive by",
+              "value": "23:00",
+              "start": 79,
+              "end": 84
+            }
+          ],
+          "binary": [
+            {
+              "intent": "book",
+              "domain": "taxi",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "That's okay, thanks so much for your help. Have a good day now, bye!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You are welcome.  Bye.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            },
+            {
+              "intent": "welcome",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

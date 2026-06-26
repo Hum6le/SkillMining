@@ -1,0 +1,372 @@
+[
+  {
+    "dialogue_id": "multiwoz21-train-6063",
+    "original_id": "MUL0529.json",
+    "domains": [
+      "attraction",
+      "train",
+      "taxi",
+      "general"
+    ],
+    "goal": {
+      "description": "You are looking for information in Cambridge. You are looking for a <span class='emphasis'>particular attraction</span>. Its name is called <span class='emphasis'>mumford theatre</span>. Make sure you get <span class='emphasis'>postcode</span>, <span class='emphasis'>address</span>, and <span class='emphasis'>area</span>. You are also looking for a <span class='emphasis'>train</span>. The train should depart from <span class='emphasis'>cambridge</span> and should <span class='emphasis'>arrive by 20:15</span>. The train should leave on <span class='emphasis'>monday</span> and should go to <span class='emphasis'>stansted airport</span>. Make sure you get <span class='emphasis'>train ID</span> and <span class='emphasis'>travel time</span>",
+      "inform": {
+        "attraction": {
+          "name": "mumford theatre"
+        },
+        "train": {
+          "destination": "stansted airport",
+          "day": "monday",
+          "arrive by": "20:15",
+          "departure": "cambridge"
+        }
+      },
+      "request": {
+        "attraction": {
+          "postcode": "",
+          "address": "",
+          "area": ""
+        },
+        "train": {
+          "train id": "",
+          "duration": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "Hi there, I'm looking for any information that you have on a place named Mumford Theatre.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "Mumford Theatre",
+              "start": 73,
+              "end": 88
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Mumford theatre is in the centre of town their number is 08451962320, their postcode is cb11pt, and their address is anglia ruskin enterprise, east road",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "centre of town"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "phone",
+              "value": "08451962320",
+              "start": 57,
+              "end": 68
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "Mumford theatre",
+              "start": 0,
+              "end": 15
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "postcode",
+              "value": "cb11pt",
+              "start": 88,
+              "end": 94
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "address",
+              "value": "anglia ruskin enterprise",
+              "start": 117,
+              "end": 141
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "address",
+              "value": "east road",
+              "start": 143,
+              "end": 152
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Do you need any more information on the theatre?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I'm sorry, I don't understand your request. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Never mind. Can you tell me if there are trains to there from cambridge arriving by 20:15?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "arrive by",
+              "value": "20:15",
+              "start": 84,
+              "end": 89
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "departure",
+              "value": "cambridge",
+              "start": 62,
+              "end": 71
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Are you wanting taxi service to the theater. I'n not sure I understand your request.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "taxi",
+              "slot": "destination"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "No. I need a train that goes to Stansted Airport please. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "destination",
+              "value": "Stansted Airport",
+              "start": 32,
+              "end": 48
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "There are many trains available. What day and time do you want to leave?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "choice",
+              "value": "many",
+              "start": 10,
+              "end": 14
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "day"
+            },
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "leave at"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I need to leave on Monday. I don't care about the departure time.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "day",
+              "value": "monday"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "There is a train from Cambridge to Stansted every hour on the :40 on Monday. The closest arrival to 20:15 is the 11:40, arriving at 12:08. ",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "day",
+              "value": "Monday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "arrive by",
+              "value": "12:08",
+              "start": 132,
+              "end": 137
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "destination",
+              "value": "Stansted",
+              "start": 35,
+              "end": 43
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "departure",
+              "value": "Cambridge",
+              "start": 22,
+              "end": 31
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "11:40",
+              "start": 113,
+              "end": 118
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you. Could I get the ID of the 11:40 train? Also, is the travel time 35 minutes?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "duration"
+            },
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "train id"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Sure. the train ID is TR1552 and the travel time is 28 minutes. Anything else I can help you with?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "duration",
+              "value": "28 minutes",
+              "start": 52,
+              "end": 62
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "train id",
+              "value": "TR1552",
+              "start": 22,
+              "end": 28
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "That will be all. Thank you.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You're welcome. Good-bye.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            },
+            {
+              "intent": "welcome",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

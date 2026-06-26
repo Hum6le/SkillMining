@@ -1,0 +1,256 @@
+[
+  {
+    "dialogue_id": "multiwoz21-train-5550",
+    "original_id": "PMUL3982.json",
+    "domains": [
+      "hotel",
+      "train",
+      "hospital",
+      "general"
+    ],
+    "goal": {
+      "description": "You are planning your trip in Cambridge. You are looking for a <span class='emphasis'>train</span>. The train should <span class='emphasis'>arrive by 11:45</span> and should go to <span class='emphasis'>cambridge</span>. The train should leave on <span class='emphasis'>sunday</span> and should depart from <span class='emphasis'>peterborough</span>. Once you find the train you want to make a booking for <span class='emphasis'>5 people</span>. Make sure you get the <span class='emphasis'>reference number</span>. You are also looking for a <span class='emphasis'>place to stay</span>. The hotel should <span class='emphasis'>include free parking</span> and should be in the type of <span class='emphasis'>guesthouse</span>. The hotel should <span class='emphasis'>include free wifi</span>. Make sure you get <span class='emphasis'>phone number</span>",
+      "inform": {
+        "hotel": {
+          "internet": "yes",
+          "type": "guesthouse",
+          "parking": "yes"
+        },
+        "train": {
+          "destination": "cambridge",
+          "day": "sunday",
+          "arrive by": "11:45",
+          "departure": "peterborough",
+          "book people": "5"
+        }
+      },
+      "request": {
+        "hotel": {
+          "phone": ""
+        },
+        "train": {}
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "Can you give me the address to the hospital in Cambridge?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The address is Hills Rd, Cambridge\nPostcode\t:\tCB20QQ\n",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "address",
+              "value": "Hills Rd, Cambridge",
+              "start": 15,
+              "end": 34
+            },
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "postcode",
+              "value": "CB20QQ",
+              "start": 46,
+              "end": 52
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I am actually looking for a train on sunday from peterborough.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "day",
+              "value": "sunday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "departure",
+              "value": "peterborough",
+              "start": 49,
+              "end": 61
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "What is your destination?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "destination"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Going to Cambridge. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "destination",
+              "value": "Cambridge",
+              "start": 9,
+              "end": 18
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "At what time do you want to travel?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "leave at"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I would like to arrive by 11:45. I will need to buy 5 tickets once we find a train. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "arrive by",
+              "value": "11:45",
+              "start": 26,
+              "end": 31
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "book people",
+              "value": "5",
+              "start": 52,
+              "end": 53
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I have train TR7721 arriving at 7:38 would you like that one?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "offerbook",
+              "domain": "train",
+              "slot": "arrive by",
+              "value": "7:38",
+              "start": 32,
+              "end": 36
+            },
+            {
+              "intent": "offerbook",
+              "domain": "train",
+              "slot": "train id",
+              "value": "TR7721",
+              "start": 13,
+              "end": 19
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes, five tickets, please. What is the reference number?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "book people",
+              "value": "five",
+              "start": 5,
+              "end": 9
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "ref"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Your reference number is CIGYXAW9. Do you need anything else?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "ref",
+              "value": "CIGYXAW9",
+              "start": 25,
+              "end": 33
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            },
+            {
+              "intent": "book",
+              "domain": "train",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

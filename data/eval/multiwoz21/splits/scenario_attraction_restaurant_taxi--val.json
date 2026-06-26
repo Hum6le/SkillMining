@@ -1,0 +1,2117 @@
+[
+  {
+    "dialogue_id": "multiwoz21-train-1150",
+    "original_id": "MUL0916.json",
+    "domains": [
+      "taxi",
+      "attraction",
+      "restaurant",
+      "general"
+    ],
+    "goal": {
+      "description": "You are traveling to Cambridge and looking forward to try local restaurants. You are looking for a <span class='emphasis'>particular restaurant</span>. Its name is called <span class='emphasis'>curry prince</span>. Make sure you get <span class='emphasis'>phone number</span>. You are also looking for <span class='emphasis'>places to go</span> in town. The attraction should be in the type of <span class='emphasis'>swimmingpool</span>. Make sure you get <span class='emphasis'>entrance fee</span> and <span class='emphasis'>address</span>. You also want to book a <span class='emphasis'>taxi</span> to commute between the two places. You want to leave the <span class='emphasis'>attraction</span> by <span class='emphasis'>20:45</span>. Make sure you get <span class='emphasis'>contact number</span> and <span class='emphasis'>car type</span>",
+      "inform": {
+        "taxi": {
+          "leave at": "20:45"
+        },
+        "attraction": {
+          "type": "swimmingpool"
+        },
+        "restaurant": {
+          "name": "curry prince"
+        }
+      },
+      "request": {
+        "taxi": {
+          "type": "",
+          "phone": ""
+        },
+        "attraction": {
+          "entrance fee": "",
+          "address": ""
+        },
+        "restaurant": {
+          "phone": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I hope so. My brother recommended an eatery called Curry Prince. Can you help me find it?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "Curry Prince",
+              "start": 51,
+              "end": 63
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Curry Prince is an Indian restaurant in the east part of town. It is moderately priced. The address is 451 Newmarket Road Fen Ditton. ",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "price range",
+              "value": "moderately priced"
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "east"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Indian",
+              "start": 19,
+              "end": 25
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "address",
+              "value": "451 Newmarket Road Fen Ditton",
+              "start": 103,
+              "end": 132
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "Curry Prince",
+              "start": 0,
+              "end": 12
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Could I have their phone number as well?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "phone"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Yes of course. the Curry Prince's phone number is 01223566388.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "the Curry Prince",
+              "start": 15,
+              "end": 31
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "phone",
+              "value": "01223566388",
+              "start": 50,
+              "end": 61
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you. I am also looking for places to go. Is there any swimming pool you can locate for me?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Sure. We have the Abbey Pool there in the same area as your restaurant. There are three others in other parts of town.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "choice",
+              "value": "three",
+              "start": 82,
+              "end": 87
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "the Abbey Pool",
+              "start": 14,
+              "end": 28
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "What is the entrance fee for Abbey Pool? Can I also get the address?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "entrance fee"
+            },
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "address"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I'm sorry, my system doesn't tell me the entrance fee. Address is Pool Way, Whitehill Road, Off Newmarket Road. Anything else you need?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "address",
+              "value": "Pool Way",
+              "start": 66,
+              "end": 74
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "address",
+              "value": "Whitehill Road",
+              "start": 76,
+              "end": 90
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "address",
+              "value": "Off Newmarket Road",
+              "start": 92,
+              "end": 110
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "entrance fee",
+              "value": "y system does n't tell me the entrance fee"
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I also need a taxi that will let me leave the pool at 20:45 to take me to the restaurant.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "leave at",
+              "value": "20:45",
+              "start": 54,
+              "end": 59
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I have booked you a Taxi that fits your needs. Would you like the Contact number or Car model?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Both, please! I can't wait to explore Cambridge.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "A blue skoda will be picking you up at 20:45. Their contact number is 07775057511. Do you need any further assistance?\n",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "leave at",
+              "value": "20:45",
+              "start": 39,
+              "end": 44
+            },
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "type",
+              "value": "blue skoda",
+              "start": 2,
+              "end": 12
+            },
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "phone",
+              "value": "07775057511",
+              "start": 70,
+              "end": 81
+            }
+          ],
+          "binary": [
+            {
+              "intent": "book",
+              "domain": "taxi",
+              "slot": ""
+            },
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "That will be all for today. Thank you for your help!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Have a great day!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-2826",
+    "original_id": "PMUL2152.json",
+    "domains": [
+      "taxi",
+      "attraction",
+      "restaurant",
+      "general"
+    ],
+    "goal": {
+      "description": "You are planning your trip in Cambridge. You are looking for a <span class='emphasis'>restaurant</span>. The restaurant should serve <span class='emphasis'>portuguese</span> food and should be in the <span class='emphasis'>cheap</span> price range. Once you find the <span class='emphasis'>restaurant</span> you want to book a table for <span class='emphasis'>5 people</span> at <span class='emphasis'>19:00</span> on <span class='emphasis'>thursday</span>. Make sure you get the <span class='emphasis'>reference number</span>. You are also looking for <span class='emphasis'>places to go</span> in town. The attraction should be in the type of <span class='emphasis'>museum</span>. Make sure you get <span class='emphasis'>phone number</span>, <span class='emphasis'>postcode</span>, and <span class='emphasis'>area</span>. You also want to book a <span class='emphasis'>taxi</span> to commute between the two places. You want to make sure it arrives the restaurant <span class='emphasis'>by the booked time</span>. Make sure you get <span class='emphasis'>contact number</span> and <span class='emphasis'>car type</span>",
+      "inform": {
+        "taxi": {
+          "arrive by": "19:00"
+        },
+        "attraction": {
+          "type": "museum"
+        },
+        "restaurant": {
+          "food": "portuguese",
+          "price range": "cheap",
+          "book people": "5",
+          "book day": "thursday",
+          "book time": "19:00"
+        }
+      },
+      "request": {
+        "taxi": {
+          "type": "",
+          "phone": ""
+        },
+        "attraction": {
+          "phone": "",
+          "postcode": "",
+          "area": ""
+        },
+        "restaurant": {}
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "Hello I am looking for a nice restaurant nearby that serve Portuguese , but I would also like the prices very affordable ",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "price range",
+              "value": "cheap"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Portuguese",
+              "start": 59,
+              "end": 69
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Nandos is in the south area and they have wonderful Portuguese food! Would you like me to book that?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "south"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Portuguese",
+              "start": 52,
+              "end": 62
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "Nandos",
+              "start": 0,
+              "end": 6
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Are they a cheap restaurant? I want to save money for all the other plans we have during our trip. ",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "price range",
+              "value": "cheap"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "yes. nandos city centre\tfits your wants.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "nandos city centre",
+              "start": 5,
+              "end": 23
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Great! Could you book a table there for 5 people on Thursday? We'd like to eat at 19:00.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "book day",
+              "value": "thursday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "book time",
+              "value": "19:00",
+              "start": 82,
+              "end": 87
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "book people",
+              "value": "5",
+              "start": 40,
+              "end": 41
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Your table has been reserved for 15 minutes and your reference number is M1K2Y25N on Thursday at 19:00 for 5 people.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you. I also want to go to a museum. ",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "museum"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "There are several museums available. What part of town would you prefer?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "museum"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "choice",
+              "value": "several",
+              "start": 10,
+              "end": 17
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "area"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "It can be in any area. Could you suggest one and give me some information about it, please?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "area"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The ruskin gallery is in the centre of town at anglia ruskin university, east road. The phone number and postcode are 01245493131 and cb11pt. Admission is free. Need anything else?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "centre of town"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "entrance fee",
+              "value": "free",
+              "start": 155,
+              "end": 159
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "phone",
+              "value": "01245493131",
+              "start": 118,
+              "end": 129
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "address",
+              "value": "anglia ruskin university",
+              "start": 47,
+              "end": 71
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "address",
+              "value": "east road",
+              "start": 73,
+              "end": 82
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "he ruskin gallery"
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "postcode",
+              "value": "cb11pt",
+              "start": 134,
+              "end": 140
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I also need a taxi between the two places. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Where would you like to depart from and what time would you like to leave and arrive by?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "taxi",
+              "slot": "departure"
+            },
+            {
+              "intent": "request",
+              "domain": "taxi",
+              "slot": "arrive by"
+            },
+            {
+              "intent": "request",
+              "domain": "taxi",
+              "slot": "leave at"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I need to arrive at the restaurant by the booking time.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "departure",
+              "value": "ruskin gallery"
+            },
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "arrive by",
+              "value": "19:00"
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Okay you got it. I've booked you a yellow ford. The contact number is 07887698411",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "phone",
+              "value": "07887698411",
+              "start": 70,
+              "end": 81
+            },
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "type",
+              "value": "yellow ford",
+              "start": 35,
+              "end": 46
+            }
+          ],
+          "binary": [
+            {
+              "intent": "book",
+              "domain": "taxi",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Great!  That is all I needed.  Thank you.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "No problem.  Enjoy your stay.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            },
+            {
+              "intent": "welcome",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-4558",
+    "original_id": "MUL2437.json",
+    "domains": [
+      "taxi",
+      "attraction",
+      "restaurant",
+      "general"
+    ],
+    "goal": {
+      "description": "You are planning your trip in Cambridge. You are looking for <span class='emphasis'>places to go</span> in town. The attraction should be in the type of <span class='emphasis'>museum</span>. Make sure you get <span class='emphasis'>postcode</span>, <span class='emphasis'>area</span>, and <span class='emphasis'>phone number</span>. You are also looking for a <span class='emphasis'>place to dine</span>. The restaurant should be in the <span class='emphasis'>centre</span> and should be in the <span class='emphasis'>cheap</span> price range. The restaurant should serve <span class='emphasis'>asian oriental</span> food. Once you find the <span class='emphasis'>restaurant</span> you want to book a table for <span class='emphasis'>6 people</span> at <span class='emphasis'>11:45</span> on <span class='emphasis'>wednesday</span>. Make sure you get the <span class='emphasis'>reference number</span>. You also want to book a <span class='emphasis'>taxi</span> to commute between the two places. You want to make sure it arrives the restaurant <span class='emphasis'>by the booked time</span>. Make sure you get <span class='emphasis'>contact number</span> and <span class='emphasis'>car type</span>",
+      "inform": {
+        "taxi": {
+          "arrive by": "11:45"
+        },
+        "attraction": {
+          "type": "museum"
+        },
+        "restaurant": {
+          "food": "asian oriental",
+          "price range": "cheap",
+          "area": "centre",
+          "book time": "11:45",
+          "book day": "wednesday",
+          "book people": "6"
+        }
+      },
+      "request": {
+        "taxi": {
+          "type": "",
+          "phone": ""
+        },
+        "attraction": {
+          "postcode": "",
+          "area": "",
+          "phone": ""
+        },
+        "restaurant": {}
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "Can you tell me the different museums please",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "museum"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Sure there are 23 museums. Are you interested in one with free entry?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "museums"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "choice",
+              "value": "23",
+              "start": 15,
+              "end": 17
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "entrance fee"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Entrance fee doesn't really matter to me.  Pick your favorite and let me know the postcard, area, and phone number please.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "area"
+            },
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "postcode"
+            },
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "phone"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I'd recommend the cafe jello gallery. It's on cafe jello gallery, 13 magdalene street, postcode cb30af. Their phone number is 01223312112.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "jello gallery",
+              "start": 23,
+              "end": 36
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "postcode",
+              "value": "cb30af",
+              "start": 96,
+              "end": 102
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "phone",
+              "value": "01223312112",
+              "start": 126,
+              "end": 137
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "address",
+              "value": "It's on cafe jello gallery",
+              "start": 38,
+              "end": 64
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "address",
+              "value": "13 magdalene street",
+              "start": 66,
+              "end": 85
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "What area can I find cafe jello gallery?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "cafe jello gallery",
+              "start": 21,
+              "end": 39
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "area"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Cafe Jello Gallery is in the west.  The address is 13 magdalene street.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "west"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "Cafe Jello Gallery",
+              "start": 0,
+              "end": 18
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "address",
+              "value": "13 magdalene street.",
+              "start": 51,
+              "end": 71
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Ok, just gathering information for now, thank you.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "My pleasure. Please call us back if you need anything else.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you, have a good one.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You as well. Have a great trip, and thanks for using Cambridge Towninfo centre.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "greet",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thanks again. Bye!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You are welcome. Goodbye.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "welcome",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-7900",
+    "original_id": "MUL2485.json",
+    "domains": [
+      "taxi",
+      "attraction",
+      "restaurant",
+      "general"
+    ],
+    "goal": {
+      "description": "You are planning your trip in Cambridge. You are looking for <span class='emphasis'>places to go</span> in town. The attraction should be in the type of <span class='emphasis'>theatre</span>. Make sure you get <span class='emphasis'>postcode</span>, <span class='emphasis'>entrance fee</span>, and <span class='emphasis'>phone number</span>. You are also looking for a <span class='emphasis'>restaurant</span>. The restaurant should be in the <span class='emphasis'>north</span> and should serve <span class='emphasis'>northern european</span> food. If there is no such restaurant, how about one that serves <span class='emphasis'>chinese</span> food. Once you find the <span class='emphasis'>restaurant</span> you want to book a table for <span class='emphasis'>3 people</span> at <span class='emphasis'>18:00</span> on <span class='emphasis'>thursday</span>. If the booking fails how about <span class='emphasis'>17:00</span>. Make sure you get the <span class='emphasis'>reference number</span>. You also want to book a <span class='emphasis'>taxi</span> to commute between the two places. You want to make sure it arrives the restaurant <span class='emphasis'>by the booked time</span>. Make sure you get <span class='emphasis'>contact number</span> and <span class='emphasis'>car type</span>",
+      "inform": {
+        "taxi": {
+          "arrive by": "17:00"
+        },
+        "attraction": {
+          "type": "theatre"
+        },
+        "restaurant": {
+          "food": "northern european|chinese",
+          "area": "north|north",
+          "book time": "18:00|17:00",
+          "book people": "3",
+          "book day": "thursday"
+        }
+      },
+      "request": {
+        "taxi": {
+          "type": "",
+          "phone": ""
+        },
+        "attraction": {
+          "postcode": "",
+          "entrance fee": "",
+          "phone": ""
+        },
+        "restaurant": {}
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I'd like to go to the theatre, can you tell me about what's available in Cambridge, please?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "theatre"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "There are 5 theaters in the whole of Cambridge, do you have a specific area in mind?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "whole of Cambridge"
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "theaters"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "choice",
+              "value": "5",
+              "start": 10,
+              "end": 11
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "area"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I prefer the center of town",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "centre"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "There are four theaters showing up in the centre part of town.  It looks like one of them is a arts theater.  Do you want info? ",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "arts theater"
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "centre"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "choice",
+              "value": "four",
+              "start": 10,
+              "end": 14
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes please! What's the postcode, fee, and number?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "postcode"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The Cambridge Arts Theatre is located in 6 Saint Edward's Passage Postcode cb23pj, phone 01223503333. There isn't information about entrance fee.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "The Cambridge Arts Theatre",
+              "start": 0,
+              "end": 26
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "address",
+              "value": "6 Saint Edward's Passage",
+              "start": 41,
+              "end": 65
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "phone",
+              "value": "01223503333",
+              "start": 89,
+              "end": 100
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "postcode",
+              "value": "cb23pj",
+              "start": 75,
+              "end": 81
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I would also like a restaurant that is in the North area that serve Northern European food.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "north"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Northern European",
+              "start": 68,
+              "end": 85
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Unfortunately, we don't seem to have any listings that match your criteria. Would you like to look for a different type of cuisine or a different area of the city?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "food"
+            },
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "area"
+            },
+            {
+              "intent": "nooffer",
+              "domain": "restaurant",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "How about a Chinese food restaurant?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Chinese",
+              "start": 12,
+              "end": 19
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I would recommend Hakka.  It is in the north area and I've heard it's great. ",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "recommend",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "north area"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "recommend",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "Hakka",
+              "start": 18,
+              "end": 23
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "OK go ahead and book a table for 3 people at 18:00 on thursday. ",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "book day",
+              "value": "thursday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "book time",
+              "value": "18:00",
+              "start": 45,
+              "end": 50
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "book people",
+              "value": "3",
+              "start": 33,
+              "end": 34
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I do apologize, but they're all booked up. Would you like to try another day or time slot?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "book day"
+            },
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "book time"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes, can we try 17:00?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "book time",
+              "value": "17:00",
+              "start": 16,
+              "end": 21
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "That time was successful. Your table will be reserved for 15 minutes. The reference number is: L85JERQH. Anything else today?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "ref",
+              "value": "L85JERQH",
+              "start": 95,
+              "end": 103
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            },
+            {
+              "intent": "book",
+              "domain": "restaurant",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes, please.  I'd like a taxi between the two places to arrive by 17:00.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "arrive by",
+              "value": "17:00",
+              "start": 66,
+              "end": 71
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Booking completed!\nBooked car type\t:\tgrey bmw\nContact number\t:\t07714877467\nis there anything else i can help you with? ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "phone",
+              "value": "07714877467",
+              "start": 63,
+              "end": 74
+            },
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "type",
+              "value": "grey bmw",
+              "start": 37,
+              "end": 45
+            }
+          ],
+          "binary": [
+            {
+              "intent": "book",
+              "domain": "taxi",
+              "slot": ""
+            },
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-test-147",
+    "original_id": "MUL0912.json",
+    "domains": [
+      "taxi",
+      "attraction",
+      "restaurant",
+      "general"
+    ],
+    "goal": {
+      "description": "You are traveling to Cambridge and looking forward to try local restaurants. You are looking for <span class='emphasis'>places to go</span> in town. The attraction should be in the <span class='emphasis'>south</span> and should be in the type of <span class='emphasis'>swimmingpool</span>. If there is no such attraction, how about one that is in <span class='emphasis'>the type of entertainment</span>. Make sure you get <span class='emphasis'>entrance fee</span> and <span class='emphasis'>phone number</span>. You are also looking for a <span class='emphasis'>restaurant</span>. The restaurant should serve <span class='emphasis'>indian</span> food and should be in the <span class='emphasis'>expensive</span> price range. The restaurant should be <span class='emphasis'>in the same area as the attraction</span>. Once you find the <span class='emphasis'>restaurant</span> you want to book a table for <span class='emphasis'>3 people</span> at <span class='emphasis'>14:30</span> on <span class='emphasis'>saturday</span>. Make sure you get the <span class='emphasis'>reference number</span>. You also want to book a <span class='emphasis'>taxi</span> to commute between the two places. You want to make sure it arrives the restaurant <span class='emphasis'>by the booked time</span>. Make sure you get <span class='emphasis'>contact number</span> and <span class='emphasis'>car type</span>",
+      "inform": {
+        "taxi": {
+          "arrive by": "14:30"
+        },
+        "attraction": {
+          "type": "swimmingpool|entertainment",
+          "area": "south|south"
+        },
+        "restaurant": {
+          "food": "indian",
+          "price range": "expensive",
+          "area": "south",
+          "book time": "14:30",
+          "book day": "saturday",
+          "book people": "3"
+        }
+      },
+      "request": {
+        "taxi": {
+          "type": "",
+          "phone": ""
+        },
+        "attraction": {
+          "entrance fee": "",
+          "phone": ""
+        },
+        "restaurant": {}
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I am looking forward to trying local restaurants but would like help finding a place to go in town. I would like it to be in the south and a swimmingpool",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "south"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I'm sorry, I'm experiencing a system error. Could you please restate your request? ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I want a place to go in the south, a swimmingpool. Or another type of entertainment, if there is no pool?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "area",
+              "value": "south"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I'm sorry, but there are not any swimming pools in the south area.There are 2 parks and a cinema. Are you interested in one of these? Or something else?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes, are there any entertainment attractions then?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "type",
+              "value": "entertainment"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "There are two attractions listed, Nusha and Tenpin. Would you like more information about them?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "choice",
+              "value": "two",
+              "start": 10,
+              "end": 13
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "Nusha",
+              "start": 34,
+              "end": 39
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "Tenpin",
+              "start": 44,
+              "end": 50
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Can I have the entrance fee for the Nusha, as well as the phone number?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "Nusha",
+              "start": 36,
+              "end": 41
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "entrance fee"
+            },
+            {
+              "intent": "request",
+              "domain": "attraction",
+              "slot": "phone"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The entrance fee isn't shown. The phone number for Nusha is 01223902158. Is there anything else I can do for you?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "phone",
+              "value": "01223902158",
+              "start": 60,
+              "end": 71
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "name",
+              "value": "Nusha",
+              "start": 51,
+              "end": 56
+            },
+            {
+              "intent": "inform",
+              "domain": "attraction",
+              "slot": "entrance fee",
+              "value": "isn't shown",
+              "start": 17,
+              "end": 28
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes, can you please find me a good Indian restaurant in the same area as the attraction? Money is no object.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "south"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Indian",
+              "start": 35,
+              "end": 41
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Yes, the Taj Tandoori is a great Indian place in the south area of the city. It's expensive, but definitely worth it. Would you like a reservation there?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "recommend",
+              "domain": "restaurant",
+              "slot": "price range",
+              "value": "expensive"
+            },
+            {
+              "intent": "recommend",
+              "domain": "restaurant",
+              "slot": "area",
+              "value": "the south area of the city"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "recommend",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "the Taj Tandoori",
+              "start": 5,
+              "end": 21
+            },
+            {
+              "intent": "recommend",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Indian",
+              "start": 33,
+              "end": 39
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Sure. Book it for 14:30 on saturday for 3 people.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "book day",
+              "value": "saturday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "book time",
+              "value": "14:30",
+              "start": 18,
+              "end": 23
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "book people",
+              "value": "3",
+              "start": 40,
+              "end": 41
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Alright, you're all set. Your reference number is 4FLWS8V8.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "ref",
+              "value": "4FLWS8V8",
+              "start": 50,
+              "end": 58
+            }
+          ],
+          "binary": [
+            {
+              "intent": "book",
+              "domain": "restaurant",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I would also like to book a taxi please. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "From Nusha to Taj Tandoori?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "taxi",
+              "slot": "departure"
+            },
+            {
+              "intent": "request",
+              "domain": "taxi",
+              "slot": "destination"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes, to commute between both places.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Ok, will do.  Is there anything else I can do?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes, the taxi needs to arrive at Taj Tandoori by 14:30. Can you let me know what type of car will be coming and give me the contact number, please?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "destination",
+              "value": "Taj Tandoori",
+              "start": 33,
+              "end": 45
+            },
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "arrive by",
+              "value": "14:30",
+              "start": 49,
+              "end": 54
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I'm having trouble setting up the taxi.  Are you leaving from Nusha?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "taxi",
+              "slot": "departure"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes, I'll be leaving from Nusha.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "departure",
+              "value": "Nusha",
+              "start": 26,
+              "end": 31
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "What time would you like to leave? ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "taxi",
+              "slot": "leave at"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I need to leave early enough to arrive at the restaurant by 14:30.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "book time",
+              "value": "14:30",
+              "start": 60,
+              "end": 65
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Great, be on the lookout for a yellow audi. The contact number is 07395163696. May I help with anything else?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "phone",
+              "value": "07395163696",
+              "start": 66,
+              "end": 77
+            },
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "type",
+              "value": "yellow audi",
+              "start": 31,
+              "end": 42
+            }
+          ],
+          "binary": [
+            {
+              "intent": "book",
+              "domain": "taxi",
+              "slot": ""
+            },
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Okay great that is all I needed.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Glad to have been of assistance.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "welcome",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

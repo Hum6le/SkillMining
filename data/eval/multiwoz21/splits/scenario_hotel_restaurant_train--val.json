@@ -1,0 +1,240 @@
+[
+  {
+    "dialogue_id": "multiwoz21-train-2295",
+    "original_id": "PMUL3067.json",
+    "domains": [
+      "train",
+      "restaurant",
+      "hotel",
+      "general"
+    ],
+    "goal": {
+      "description": "You are traveling to Cambridge and looking forward to try local restaurants. You are looking for a <span class='emphasis'>train</span>. The train should depart from <span class='emphasis'>cambridge</span> and should leave on <span class='emphasis'>saturday</span>. The train should go to <span class='emphasis'>norwich</span> and should <span class='emphasis'>leave after 16:30</span>. Make sure you get <span class='emphasis'>train ID</span>. You are also looking for a <span class='emphasis'>particular restaurant</span>. Its name is called <span class='emphasis'>shiraz restaurant</span>. Once you find the <span class='emphasis'>restaurant</span> you want to book a table for <span class='emphasis'>7 people</span> at <span class='emphasis'>10:00</span> on <span class='emphasis'>the same day</span>. Make sure you get the <span class='emphasis'>reference number</span>",
+      "inform": {
+        "train": {
+          "leave at": "16:30",
+          "destination": "norwich",
+          "day": "saturday",
+          "departure": "cambridge"
+        },
+        "restaurant": {
+          "name": "restaurant alimentum|shiraz restaurant",
+          "book people": "7",
+          "book day": "saturday",
+          "book time": "10:00"
+        }
+      },
+      "request": {
+        "train": {
+          "train id": ""
+        },
+        "restaurant": {}
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "food type, book a hotel, buy a train ticket ...",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": ""
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "i'm sorry could you clarify what it is you're looking for?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I need a train. The train should depart from cambridge and should leave on saturday.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "day",
+              "value": "saturday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "departure",
+              "value": "cambridge",
+              "start": 45,
+              "end": 54
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I need to know where you are going and when.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "destination"
+            },
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "leave at"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Norwich and i need to leave after 16:30",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "destination",
+              "value": "Norwich",
+              "start": 0,
+              "end": 7
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "16:30",
+              "start": 34,
+              "end": 39
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "TR6880 would fit your needs weel",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "train id",
+              "value": "TR6880",
+              "start": 0,
+              "end": 6
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thanks. I can look for that one later when I book. I'm also looking for a restaurant called the Shiraz. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Great, I found the Mediterranean restaurant called Shiraz. Their telephone number is 01223307581.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "phone",
+              "value": "01223307581",
+              "start": 85,
+              "end": 96
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "Shiraz",
+              "start": 51,
+              "end": 57
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "food",
+              "value": "Mediterranean",
+              "start": 19,
+              "end": 32
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you that is all I need for now.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Thank you for using our system today",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

@@ -1,0 +1,408 @@
+[
+  {
+    "dialogue_id": "multiwoz21-train-946",
+    "original_id": "PMUL1785.json",
+    "domains": [
+      "hotel",
+      "train",
+      "general",
+      "taxi"
+    ],
+    "goal": {
+      "description": "You are planning your trip in Cambridge. You are looking for a <span class='emphasis'>place to stay</span>. The hotel should be in the <span class='emphasis'>north</span> and should <span class='emphasis'>include free wifi</span>. The hotel should have <span class='emphasis'>a star of 4</span> and should be in the type of <span class='emphasis'>guesthouse</span>. Make sure you get <span class='emphasis'>whether they have free parking</span>, <span class='emphasis'>phone number</span>, and <span class='emphasis'>price range</span>. You are also looking for a <span class='emphasis'>train</span>. The train should go to <span class='emphasis'>cambridge</span> and should leave on <span class='emphasis'>wednesday</span>. The train should <span class='emphasis'>arrive by 21:15</span> and should depart from <span class='emphasis'>norwich</span>. Once you find the train you want to make a booking for <span class='emphasis'>2 people</span>. Make sure you get the <span class='emphasis'>reference number</span>",
+      "inform": {
+        "hotel": {
+          "area": "north",
+          "type": "guesthouse",
+          "stars": "4",
+          "internet": "yes"
+        },
+        "train": {
+          "destination": "cambridge",
+          "day": "wednesday",
+          "arrive by": "21:15",
+          "departure": "norwich",
+          "book people": "2"
+        }
+      },
+      "request": {
+        "hotel": {
+          "parking": "",
+          "phone": "",
+          "price range": ""
+        },
+        "train": {}
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "Is there a place to stay in the north area of town? Can it have free wifi access too?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "internet",
+              "value": "yes"
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "area",
+              "value": "north"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "There are 10 guesthouses and 2 hotels that meet your criteria. Are you interested in any particular price range?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "choice",
+              "value": "10",
+              "start": 10,
+              "end": 12
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "choice",
+              "value": "2",
+              "start": 29,
+              "end": 30
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "type",
+              "value": "guesthouses",
+              "start": 13,
+              "end": 24
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "type",
+              "value": "hotels",
+              "start": 31,
+              "end": 37
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "hotel",
+              "slot": "price range"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I'd like a guesthouse, please. a 4 star rating is a must. ",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "stars",
+              "value": "4"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "type",
+              "value": "guesthouse",
+              "start": 11,
+              "end": 21
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "They archway house may be a good option.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "recommend",
+              "domain": "hotel",
+              "slot": "name",
+              "value": "They archway house",
+              "start": 0,
+              "end": 18
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Do they have free parking?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "hotel",
+              "slot": "parking"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Yes they have free parking.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "parking"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Can I have the phone number and what is the price range?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "hotel",
+              "slot": "price range"
+            },
+            {
+              "intent": "request",
+              "domain": "hotel",
+              "slot": "phone"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The price range of Archway House is moderate and their phone number is 01223575314. Would you like any more information? I can book you a room if you would like.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "price range",
+              "value": "moderate"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "phone",
+              "value": "01223575314",
+              "start": 71,
+              "end": 82
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "name",
+              "value": "Archway House",
+              "start": 19,
+              "end": 32
+            }
+          ],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "No thanks. But can you help me find a train into Cambridge for Wednesday please? ",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "day",
+              "value": "wednesday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "destination",
+              "value": "Cambridge",
+              "start": 49,
+              "end": 58
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Where will you leave from?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "taxi",
+              "slot": "departure"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Ely is where I will be leaving from.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "departure",
+              "value": "Ely",
+              "start": 0,
+              "end": 3
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "What time would you like to leave and arrive?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "leave at"
+            },
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "arrive by"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I'm sorry, I will actually be leaving Norwich. I need to arrive by 21:15.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "arrive by",
+              "value": "21:15",
+              "start": 67,
+              "end": 72
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "departure",
+              "value": "Norwich",
+              "start": 38,
+              "end": 45
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "i have train tr8658 that will arrive at 20:35. did you need any tickets?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "train id",
+              "value": "tr8658",
+              "start": 13,
+              "end": 19
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "arrive by",
+              "value": "20:35",
+              "start": 40,
+              "end": 45
+            }
+          ],
+          "binary": [
+            {
+              "intent": "offerbook",
+              "domain": "train",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "No thank you that will be all",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Okay, have a great day!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "greet",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

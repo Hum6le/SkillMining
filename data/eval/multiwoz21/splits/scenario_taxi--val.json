@@ -1,0 +1,664 @@
+[
+  {
+    "dialogue_id": "multiwoz21-train-549",
+    "original_id": "SNG02120.json",
+    "domains": [
+      "taxi"
+    ],
+    "goal": {
+      "description": "You want to book a <span class='emphasis'>taxi</span>. The taxi should go to <span class='emphasis'>maharajah tandoori restaurant</span> and should depart from <span class='emphasis'>royal standard</span>. The taxi should <span class='emphasis'>leave after 14:30</span>. Make sure you get <span class='emphasis'>contact number</span> and <span class='emphasis'>car type</span>",
+      "inform": {
+        "taxi": {
+          "leave at": "14:30",
+          "destination": "maharajah tandoori restaurant",
+          "departure": "royal standard"
+        }
+      },
+      "request": {
+        "taxi": {
+          "type": "",
+          "phone": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I need a taxi to come to royal standard and take me to maharajah tandoori restaurant.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "destination",
+              "value": "maharajah tandoori restaurant",
+              "start": 55,
+              "end": 84
+            },
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "departure",
+              "value": "royal standard",
+              "start": 25,
+              "end": 39
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I would be happy to help with your request, but first I will need to know, what time you would like to leave/arrive?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "taxi",
+              "slot": "leave at"
+            },
+            {
+              "intent": "request",
+              "domain": "taxi",
+              "slot": "arrive by"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I need to leave after 14:30.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "leave at",
+              "value": "14:30",
+              "start": 22,
+              "end": 27
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Booking completed!\nBooked car type\t:\tblack volkswagen\nContact number\t:\t07248386378",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "type",
+              "value": "black volkswagen",
+              "start": 37,
+              "end": 53
+            },
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "phone",
+              "value": "07248386378",
+              "start": 71,
+              "end": 82
+            }
+          ],
+          "binary": [
+            {
+              "intent": "book",
+              "domain": "taxi",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-2518",
+    "original_id": "SNG1370.json",
+    "domains": [
+      "taxi",
+      "general"
+    ],
+    "goal": {
+      "description": "You want to book a <span class='emphasis'>taxi</span>. The taxi should <span class='emphasis'>leave after 21:15</span> and should depart from <span class='emphasis'>backstreet bistro</span>. The taxi should go to <span class='emphasis'>the cambridge punter</span>. Make sure you get <span class='emphasis'>car type</span> and <span class='emphasis'>contact number</span>",
+      "inform": {
+        "taxi": {
+          "leave at": "21:15",
+          "destination": "the cambridge punter",
+          "departure": "backstreet bistro"
+        }
+      },
+      "request": {
+        "taxi": {
+          "type": "",
+          "phone": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": " i want to book a taxi. The taxi should leave after 21:15 and should depart from backstreet bistro.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "leave at",
+              "value": "21:15",
+              "start": 52,
+              "end": 57
+            },
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "departure",
+              "value": "backstreet bistro",
+              "start": 81,
+              "end": 98
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Where is the destination?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "taxi",
+              "slot": "destination"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I want to go to the cambridge punter.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "destination",
+              "value": "the cambridge punter",
+              "start": 16,
+              "end": 36
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Your booking is completed. A yellow Toyota will pick you up at 21:15. The contact number is 07441929231. Can I help you with anything else today?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "type",
+              "value": "yellow Toyota",
+              "start": 29,
+              "end": 42
+            },
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "phone",
+              "value": "07441929231",
+              "start": 92,
+              "end": 103
+            },
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "leave at",
+              "value": "21:15",
+              "start": 63,
+              "end": 68
+            }
+          ],
+          "binary": [
+            {
+              "intent": "book",
+              "domain": "taxi",
+              "slot": ""
+            },
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "that's is it for today, thanks",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "It was a pleasure to assist, goodbye",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-6167",
+    "original_id": "SNG02307.json",
+    "domains": [
+      "taxi",
+      "general"
+    ],
+    "goal": {
+      "description": "You want to book a <span class='emphasis'>taxi</span>. The taxi should go to <span class='emphasis'>limehouse</span> and should <span class='emphasis'>arrive by 07:15</span>. The taxi should depart from <span class='emphasis'>nusha</span>. Make sure you get <span class='emphasis'>car type</span> and <span class='emphasis'>contact number</span>",
+      "inform": {
+        "taxi": {
+          "destination": "limehouse",
+          "departure": "nusha",
+          "arrive by": "07:15"
+        }
+      },
+      "request": {
+        "taxi": {
+          "type": "",
+          "phone": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I would like a taxi to limehouse. I need to arrive by 7:15.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "destination",
+              "value": "limehouse",
+              "start": 23,
+              "end": 32
+            },
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "arrive by",
+              "value": "7:15",
+              "start": 54,
+              "end": 58
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I'd be happy to book that for you, where are you departing from?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "taxi",
+              "slot": "departure"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I am leaving from nusha.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "departure",
+              "value": "nusha",
+              "start": 18,
+              "end": 23
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You are booked for a black skoda. Is there anything else?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "type",
+              "value": "black skoda",
+              "start": 21,
+              "end": 32
+            }
+          ],
+          "binary": [
+            {
+              "intent": "book",
+              "domain": "taxi",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Could you give me the contact number for the skoda, please.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Booked car type\t:\tblack skoda\nContact number\t:\t07129813049",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "type",
+              "value": "black skoda",
+              "start": 18,
+              "end": 29
+            },
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "phone",
+              "value": "07129813049",
+              "start": 47,
+              "end": 58
+            }
+          ],
+          "binary": [
+            {
+              "intent": "book",
+              "domain": "taxi",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you for your help",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You're very welcome. Do you need any further assistance?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "No, that is it. Goodbye.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Thanks for using our services.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-test-384",
+    "original_id": "SNG02342.json",
+    "domains": [
+      "taxi",
+      "general"
+    ],
+    "goal": {
+      "description": "You want to book a <span class='emphasis'>taxi</span>. The taxi should go to <span class='emphasis'>huntingdon marriott hotel</span> and should depart from <span class='emphasis'>funky fun house</span>. The taxi should <span class='emphasis'>leave after 09:15</span>. Make sure you get <span class='emphasis'>car type</span> and <span class='emphasis'>contact number</span>",
+      "inform": {
+        "taxi": {
+          "leave at": "09:15",
+          "destination": "huntingdon marriott hotel",
+          "departure": "funky fun house"
+        }
+      },
+      "request": {
+        "taxi": {
+          "type": "",
+          "phone": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I need to book a taxi to pick me up at Funky Fun House to go to Huntingdon Marriott Hotel. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "destination",
+              "value": "Huntingdon Marriott Hotel",
+              "start": 64,
+              "end": 89
+            },
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "departure",
+              "value": "Funky Fun House",
+              "start": 39,
+              "end": 54
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "What time would you like to leave?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "taxi",
+              "slot": "leave at"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I prefer to leave after 09:15",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "leave at",
+              "value": "09:15",
+              "start": 24,
+              "end": 29
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Booking is complete, a black ford will be picking you up.  The contact number is 07635853272. Thank You!\n.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "type",
+              "value": "black ford",
+              "start": 23,
+              "end": 33
+            },
+            {
+              "intent": "inform",
+              "domain": "taxi",
+              "slot": "phone",
+              "value": "07635853272",
+              "start": 81,
+              "end": 92
+            }
+          ],
+          "binary": [
+            {
+              "intent": "book",
+              "domain": "taxi",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Great, thanks for your help!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I can also recommend restaurants and book trains. Are you interested?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Not at this time. Thanks, though. Good bye.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "It was a pleasure to help you. Don't hesitate to contact the TownInfo centre again.  Goodbye.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

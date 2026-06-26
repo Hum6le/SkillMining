@@ -1,0 +1,2195 @@
+[
+  {
+    "dialogue_id": "multiwoz21-train-313",
+    "original_id": "SNG02073.json",
+    "domains": [
+      "police",
+      "general"
+    ],
+    "goal": {
+      "description": "You were in a <span class='emphasis'>car accident dispute</span> and are looking for help. Make sure you get <span class='emphasis'>postcode</span>",
+      "inform": {
+        "police": {}
+      },
+      "request": {
+        "police": {
+          "postcode": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I was just in a car accident and need help figuring out what to do next.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Sorry to hear that. If you need to reach the police in Parkside, Cambridge CB11JG, their number is 01223358966? Let me know if there is anything else I can do.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "phone",
+              "value": "01223358966",
+              "start": 99,
+              "end": 110
+            },
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "address",
+              "value": "Parkside, Cambridge",
+              "start": 55,
+              "end": 74
+            },
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "postcode",
+              "value": "CB11JG",
+              "start": 75,
+              "end": 81
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I am calling the police and if I need anything else will contact you later. Goodbye.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Ok, please reply if you need any further assistance. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-347",
+    "original_id": "SNG0133.json",
+    "domains": [
+      "police",
+      "general"
+    ],
+    "goal": {
+      "description": "You were <span class='emphasis'>robbed</span> and are looking for help. Make sure you get <span class='emphasis'>phone number</span> and <span class='emphasis'>address</span>",
+      "inform": {
+        "police": {}
+      },
+      "request": {
+        "police": {
+          "phone": "",
+          "address": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "Help I was just robbed! Could you please help me contact the police?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Parkside police phone number is: 01223358966.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "phone",
+              "value": "01223358966",
+              "start": 33,
+              "end": 44
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Could I also get the address of the police station?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "police",
+              "slot": "address"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The address for the police station is Parkside, Cabridge and the postcode is CB11JG.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "postcode",
+              "value": "CB11JG",
+              "start": 77,
+              "end": 83
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you for your help.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You are welcome! Is there anything else I can do for you?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "no that is all good day.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Best of luck to you.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-403",
+    "original_id": "SNG01389.json",
+    "domains": [
+      "police",
+      "general"
+    ],
+    "goal": {
+      "description": "You are looking for the Parkside <span class='emphasis'>Police Station</span>. Make sure you get <span class='emphasis'>address</span>",
+      "inform": {
+        "police": {}
+      },
+      "request": {
+        "police": {
+          "address": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I'm looking for a police station. It has something to do with parkside, although I don't know if that's a name or a location.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The Parkside Police Station is in Parkside, Cambridge.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "name",
+              "value": "Parkside Police Station",
+              "start": 4,
+              "end": 27
+            },
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "address",
+              "value": "Parkside, Cambridge",
+              "start": 34,
+              "end": 53
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you, that's all I need.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You are most welcome! have a great day!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            },
+            {
+              "intent": "welcome",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-710",
+    "original_id": "SNG01528.json",
+    "domains": [
+      "police",
+      "general"
+    ],
+    "goal": {
+      "description": "You are looking for the Parkside <span class='emphasis'>Police Station</span>. Make sure you get <span class='emphasis'>postcode</span> and <span class='emphasis'>phone number</span>",
+      "inform": {
+        "police": {}
+      },
+      "request": {
+        "police": {
+          "postcode": "",
+          "phone": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "Can you give me the address to the Parkside Police Station?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "name",
+              "value": "Parkside Police Station",
+              "start": 35,
+              "end": 58
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "the address is \tParkside, Cambridge, with postal code CB11JG",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "address",
+              "value": "Parkside, Cambridge",
+              "start": 16,
+              "end": 35
+            },
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "postcode",
+              "value": "CB11JG",
+              "start": 54,
+              "end": 60
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "What is the police phone number, please?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "police",
+              "slot": "phone"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The police phone number is 01223358966.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "phone",
+              "value": "01223358966",
+              "start": 27,
+              "end": 38
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you, may I also please have the postcode?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "police",
+              "slot": "postcode"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The postcode is CB11JG. Is there anything else I can assist you with today?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "postcode",
+              "value": "CB11JG",
+              "start": 16,
+              "end": 22
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "No, that is all. Thank you! good bye.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Have a good day!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-758",
+    "original_id": "SNG01952.json",
+    "domains": [
+      "police",
+      "general"
+    ],
+    "goal": {
+      "description": "You were in a <span class='emphasis'>car accident dispute</span> and are looking for help. Make sure you get <span class='emphasis'>postcode</span>",
+      "inform": {
+        "police": {}
+      },
+      "request": {
+        "police": {
+          "postcode": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I was involved in a car accident and need help sorting it out.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Where did the accident occur? Are there any injuries?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I am not familiar with the area, but I am more concerned about the current car accident dispute.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Have you contacted the police?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Not yet. Can you help me with locating the postcode?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "police",
+              "slot": "postcode"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The postcode for Parkside Police is CB11JG. Do you need further assistance?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "postcode",
+              "value": "CB11JG",
+              "start": 36,
+              "end": 42
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "No, that is all I need. Thank you.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I hope everything turns out alright for you. Please contact us again if we can provide any more information.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            },
+            {
+              "intent": "greet",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-943",
+    "original_id": "SNG01991.json",
+    "domains": [
+      "police",
+      "general"
+    ],
+    "goal": {
+      "description": "You were <span class='emphasis'>robbed</span> and are looking for help. Make sure you get <span class='emphasis'>phone number</span>",
+      "inform": {
+        "police": {}
+      },
+      "request": {
+        "police": {
+          "phone": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I was robbed and I am looking for help",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You need to go to the police station at Parkside, Cambridge, CB11JG",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "address",
+              "value": "Parkside, Cambridge",
+              "start": 40,
+              "end": 59
+            },
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "postcode",
+              "value": "CB11JG",
+              "start": 61,
+              "end": 67
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Can you give me the phone number please?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "police",
+              "slot": "phone"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The phone number is 01223358966. Can I do anything else for you?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "phone",
+              "value": "01223358966",
+              "start": 20,
+              "end": 31
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "No that is all. Thank you for all your help.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "welcome. at your service next time",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "greet",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you. Goodbye.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "most welcome, have a good day",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-1047",
+    "original_id": "SNG02004.json",
+    "domains": [
+      "police",
+      "general"
+    ],
+    "goal": {
+      "description": "You were <span class='emphasis'>robbed</span> and are looking for help. Make sure you get <span class='emphasis'>phone number</span>",
+      "inform": {
+        "police": {}
+      },
+      "request": {
+        "police": {
+          "phone": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "Oh my God, I've just been robbed! I need the police please! Help!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The Police are located in Parkside Cambridge and the telephone number is 01223358966.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "phone",
+              "value": "01223358966",
+              "start": 73,
+              "end": 84
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Is this the emergency number to call?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Yes, it is the direct number to the police for help. Do you want me to transfer you to the police?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "No, that's ok. Thank you!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Do you need any further assistance?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "That is all, thank you.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You are very welcome, I hope your day gets better.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-1161",
+    "original_id": "SNG02113.json",
+    "domains": [
+      "police",
+      "general"
+    ],
+    "goal": {
+      "description": "You are looking for the Parkside <span class='emphasis'>Police Station</span>. Make sure you get <span class='emphasis'>phone number</span> and <span class='emphasis'>postcode</span>",
+      "inform": {
+        "police": {}
+      },
+      "request": {
+        "police": {
+          "phone": "",
+          "postcode": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "Please connect me to the Parkside Police Station.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "name",
+              "value": "Parkside Police Station",
+              "start": 25,
+              "end": 48
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The number to the local police station is 01223358966.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "phone",
+              "value": "01223358966",
+              "start": 42,
+              "end": 53
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you for the information.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Happy to be of help.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-2370",
+    "original_id": "SNG0103.json",
+    "domains": [
+      "police",
+      "general"
+    ],
+    "goal": {
+      "description": "You were <span class='emphasis'>robbed</span> and are looking for help. Make sure you get <span class='emphasis'>postcode</span>",
+      "inform": {
+        "police": {}
+      },
+      "request": {
+        "police": {
+          "postcode": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "Hi I was just robbed... Can I get some help?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "greet",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "the nearest police stations number is 01223358966",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "phone",
+              "value": "01223358966",
+              "start": 38,
+              "end": 49
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you, could you also give me the postcode?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "police",
+              "slot": "postcode"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The post code is CB11JG. Is there anything else I can help you with today?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "postcode",
+              "value": "CB11JG",
+              "start": 17,
+              "end": 23
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "No, that's it, thanks.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Okay. Hope things get better. Goodbye.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-2393",
+    "original_id": "SNG01215.json",
+    "domains": [
+      "police",
+      "general"
+    ],
+    "goal": {
+      "description": "You were in a <span class='emphasis'>car accident dispute</span> and are looking for help. Make sure you get <span class='emphasis'>address</span>",
+      "inform": {
+        "police": {}
+      },
+      "request": {
+        "police": {
+          "address": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I was in a car accident. I need to contact the police, please.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The Parkside Police Station is in Parkside, Cambridge. Is this close to your location?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "name",
+              "value": "Parkside Police Station",
+              "start": 4,
+              "end": 27
+            },
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "address",
+              "value": "Parkside, Cambridge",
+              "start": 34,
+              "end": 53
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Yes I'll need their address please.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "police",
+              "slot": "address"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "They are located at Parkside, Cambridge CB11JG.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "address",
+              "value": "Parkside, Cambridge",
+              "start": 20,
+              "end": 39
+            },
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "postcode",
+              "value": "CB11JG",
+              "start": 40,
+              "end": 46
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you. That's all I need to know for now.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Do you need anything else?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "That is all now, thank you. Good bye. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Hope you feel better.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-2471",
+    "original_id": "SNG0115.json",
+    "domains": [
+      "police",
+      "general"
+    ],
+    "goal": {
+      "description": "You were in a <span class='emphasis'>car accident dispute</span> and are looking for help. Make sure you get <span class='emphasis'>phone number</span>",
+      "inform": {
+        "police": {}
+      },
+      "request": {
+        "police": {
+          "phone": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I was in a car accident dispute and I need some help.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The Parkside Police Station can help out with your dispute. Their telephone is 01223358966 with a postcode of CB11JG Parkside, Cambridge. Is there anything else I can help you with?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "name",
+              "value": "Parkside Police Station",
+              "start": 4,
+              "end": 27
+            },
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "phone",
+              "value": "01223358966",
+              "start": 79,
+              "end": 90
+            },
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "address",
+              "value": "Parkside, Cambridge",
+              "start": 117,
+              "end": 136
+            },
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "postcode",
+              "value": "CB11JG",
+              "start": 110,
+              "end": 116
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "That was very thorough, I really appreciate the help.  It's been a nightmare of a day. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "i can imagine, sorry for your trouble!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Have a great day.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You, too. Let me know if I can be of any more assistance.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-2619",
+    "original_id": "SNG02161.json",
+    "domains": [
+      "police",
+      "general"
+    ],
+    "goal": {
+      "description": "You were in a <span class='emphasis'>car accident dispute</span> and are looking for help. Make sure you get <span class='emphasis'>address</span> and <span class='emphasis'>postcode</span>",
+      "inform": {
+        "police": {}
+      },
+      "request": {
+        "police": {
+          "address": "",
+          "postcode": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I got into a fender-bender with my rental car, and now I need help resolving the dispute with the owner of the other car.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Cambridge, parkside police telephone number 01223358966.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "phone",
+              "value": "01223358966",
+              "start": 44,
+              "end": 55
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Can I get the full mailing address for that location?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "police",
+              "slot": "address"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The address is Parkside, Cambridge and the postcode is CB11JG.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "address",
+              "value": "Parkside, Cambridge",
+              "start": 15,
+              "end": 34
+            },
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "postcode",
+              "value": "CB11JG",
+              "start": 55,
+              "end": 61
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you for your help. That is all I need right now.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You are most welcome!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "greet",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-2836",
+    "original_id": "SNG01470.json",
+    "domains": [
+      "police",
+      "general"
+    ],
+    "goal": {
+      "description": "You were <span class='emphasis'>robbed</span> and are looking for help. Make sure you get <span class='emphasis'>postcode</span>",
+      "inform": {
+        "police": {}
+      },
+      "request": {
+        "police": {
+          "postcode": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I was robbed and I need to know what to do next",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I'm sorry to hear this I would suggest you call the police department. Here is their information. \nTelephone\t:\t01223358966\nAddress\t:\tParkside, Cambridge\nPostcode\t:\tCB11JG",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "phone",
+              "value": "01223358966",
+              "start": 111,
+              "end": 122
+            },
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "address",
+              "value": "Parkside, Cambridge",
+              "start": 133,
+              "end": 152
+            },
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "postcode",
+              "value": "CB11JG",
+              "start": 164,
+              "end": 170
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you, that is all I need. Good bye.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You are more than welcome!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-4333",
+    "original_id": "SNG0127.json",
+    "domains": [
+      "police",
+      "general"
+    ],
+    "goal": {
+      "description": "You were in a <span class='emphasis'>car accident dispute</span> and are looking for help. Make sure you get <span class='emphasis'>address</span>",
+      "inform": {
+        "police": {}
+      },
+      "request": {
+        "police": {
+          "address": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I am looking for help with a car accident dispute.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The number for the local police station is 01223358966.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "phone",
+              "value": "01223358966",
+              "start": 43,
+              "end": 54
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Great can I also have the address?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "police",
+              "slot": "address"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Certainly. The address is Parkside, Cambridge postcode CB11JG. Is there anything else I can do for you today?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "address",
+              "value": "Parkside, Cambridge",
+              "start": 26,
+              "end": 45
+            },
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "postcode",
+              "value": "CB11JG",
+              "start": 55,
+              "end": 61
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "No thanks. I have everything I need.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Ok. Good luck with your dispute! Goodbye.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-5928",
+    "original_id": "SNG02146.json",
+    "domains": [
+      "police",
+      "general"
+    ],
+    "goal": {
+      "description": "You were in a <span class='emphasis'>car accident dispute</span> and are looking for help. Make sure you get <span class='emphasis'>postcode</span>",
+      "inform": {
+        "police": {}
+      },
+      "request": {
+        "police": {
+          "postcode": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "Hi, I just had a fight with someone regarding an automobile accident we had and I need to contact the police!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I have the parkside cambridge police telephone 01223358966.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "phone",
+              "value": "01223358966",
+              "start": 47,
+              "end": 58
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Can I get the zip code or postal code for the area I'm in right now?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "police",
+              "slot": "postcode"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I'm not sure where you are, but the police postcode is CB11JG.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "postcode",
+              "value": "CB11JG",
+              "start": 55,
+              "end": 61
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you, Goodbye",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "always welcome. at your service",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "greet",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-6657",
+    "original_id": "SNG0114.json",
+    "domains": [
+      "police",
+      "general"
+    ],
+    "goal": {
+      "description": "You were <span class='emphasis'>robbed</span> and are looking for help. Make sure you get <span class='emphasis'>postcode</span>",
+      "inform": {
+        "police": {}
+      },
+      "request": {
+        "police": {
+          "postcode": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I have been robbed and am looking for help.  Can you help me?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "the nearest police station is located at Parkside, Cambridge and the phone number is 01223358966",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "phone",
+              "value": "01223358966",
+              "start": 85,
+              "end": 96
+            },
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "address",
+              "value": "Parkside, Cambridge",
+              "start": 41,
+              "end": 60
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "thank you very much for your help.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I hope you get your belongings back.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "welcome",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Actually, I can't find it on my phone. Can you give me the postcode of the station?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "police",
+              "slot": "postcode"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Absolutely! The postcode is CB11JG!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "postcode",
+              "value": "CB11JG",
+              "start": 28,
+              "end": 34
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "great, have a good day",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "glad i could help bye",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-7260",
+    "original_id": "SNG02178.json",
+    "domains": [
+      "police"
+    ],
+    "goal": {
+      "description": "You were <span class='emphasis'>robbed</span> and are looking for help. Make sure you get <span class='emphasis'>phone number</span>, <span class='emphasis'>address</span>, and <span class='emphasis'>postcode</span>",
+      "inform": {
+        "police": {}
+      },
+      "request": {
+        "police": {
+          "phone": "",
+          "address": "",
+          "postcode": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "Am robbed and looking for help",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You need to go to the police station at Parkside, Cambridge, CB11JG",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "address",
+              "value": "Parkside, Cambridge",
+              "start": 40,
+              "end": 59
+            },
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "postcode",
+              "value": "CB11JG",
+              "start": 61,
+              "end": 67
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thanks, I need the phone number too please.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "police",
+              "slot": "phone"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The phone number is 01223358966.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "phone",
+              "value": "01223358966",
+              "start": 20,
+              "end": 31
+            }
+          ],
+          "binary": []
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-7633",
+    "original_id": "SNG0134.json",
+    "domains": [
+      "police",
+      "general"
+    ],
+    "goal": {
+      "description": "You are looking for the Parkside <span class='emphasis'>Police Station</span>. Make sure you get <span class='emphasis'>phone number</span> and <span class='emphasis'>postcode</span>",
+      "inform": {
+        "police": {}
+      },
+      "request": {
+        "police": {
+          "phone": "",
+          "postcode": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "Hello! I'm looking for the Parkside Police Station. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "name",
+              "value": "Parkside Police Station",
+              "start": 27,
+              "end": 50
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The number for them is 01223358966.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "phone",
+              "value": "01223358966",
+              "start": 23,
+              "end": 34
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Could I also have the postcode please?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "police",
+              "slot": "postcode"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The postcode is CB11JG.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "postcode",
+              "value": "CB11JG",
+              "start": 16,
+              "end": 22
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you, that is the information I needed",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Thank you very much. Goodbye.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

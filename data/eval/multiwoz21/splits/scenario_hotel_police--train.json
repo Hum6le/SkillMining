@@ -1,0 +1,156 @@
+[
+  {
+    "dialogue_id": "multiwoz21-train-7657",
+    "original_id": "SNG01240.json",
+    "domains": [
+      "police",
+      "hotel",
+      "general"
+    ],
+    "goal": {
+      "description": "You are looking for the Parkside <span class='emphasis'>Police Station</span>. Make sure you get <span class='emphasis'>phone number</span>, <span class='emphasis'>postcode</span>, and <span class='emphasis'>address</span>",
+      "inform": {
+        "police": {}
+      },
+      "request": {
+        "police": {
+          "phone": "",
+          "postcode": "",
+          "address": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "Please give me directions to the Parkside Police Station.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "name",
+              "value": "Parkside Police Station",
+              "start": 33,
+              "end": 56
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Here is the Address: Parkside, Cambridge CB11JG. Anything else?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "address",
+              "value": "Parkside, Cambridge",
+              "start": 21,
+              "end": 40
+            },
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "postcode",
+              "value": "CB11JG",
+              "start": 41,
+              "end": 47
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Can I get the address and phone number too?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "police",
+              "slot": "address"
+            },
+            {
+              "intent": "request",
+              "domain": "police",
+              "slot": "phone"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The phone number is 01223358966 and the postcode is CB11JG",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "phone",
+              "value": "01223358966",
+              "start": 20,
+              "end": 31
+            },
+            {
+              "intent": "inform",
+              "domain": "hotel",
+              "slot": "postcode",
+              "value": "CB11JG",
+              "start": 52,
+              "end": 58
+            },
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "phone",
+              "value": "01223358966",
+              "start": 20,
+              "end": 31
+            },
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "postcode",
+              "value": "CB11JG",
+              "start": 52,
+              "end": 58
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Okay, great. that's all I needed",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You are more than welcome!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "welcome",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

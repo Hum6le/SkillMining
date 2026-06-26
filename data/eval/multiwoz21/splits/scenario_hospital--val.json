@@ -1,0 +1,304 @@
+[
+  {
+    "dialogue_id": "multiwoz21-train-927",
+    "original_id": "SNG01765.json",
+    "domains": [
+      "hospital",
+      "general"
+    ],
+    "goal": {
+      "description": "You want to find a <span class='emphasis'>hospital</span> in town. The hospital should have the <span class='emphasis'>infusion services</span> department. Make sure you get <span class='emphasis'>address</span>",
+      "inform": {
+        "hospital": {
+          "department": "infusion services"
+        }
+      },
+      "request": {
+        "hospital": {
+          "address": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I need to find a hospital please with a infusion service department.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "department",
+              "value": "infusion services"
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The telephone number is 01223586967",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "phone",
+              "value": "01223586967",
+              "start": 24,
+              "end": 35
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Can I get the address please?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "hospital",
+              "slot": "address"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The address is Hills Rd, Cambridge, CB20QQ. Is there anything else you need?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "address",
+              "value": "Hills Rd, Cambridge",
+              "start": 15,
+              "end": 34
+            },
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "postcode",
+              "value": "CB20QQ",
+              "start": 36,
+              "end": 42
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "No, that's all. Good bye.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Goodbye and thank you for using our service",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-5677",
+    "original_id": "SNG01329.json",
+    "domains": [
+      "hospital",
+      "general"
+    ],
+    "goal": {
+      "description": "You got injured and are looking for a <span class='emphasis'>hospital</span> nearby. The hospital should have the <span class='emphasis'>neurosciences critical care unit</span> department. Make sure you get <span class='emphasis'>address</span>, <span class='emphasis'>postcode</span>, and <span class='emphasis'>phone number</span>",
+      "inform": {
+        "hospital": {
+          "department": "neurosciences critical care unit"
+        }
+      },
+      "request": {
+        "hospital": {
+          "address": "",
+          "postcode": "",
+          "phone": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "i am looking for a nearby hospital with  the neurosciences critical care unit department",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "department",
+              "value": "neurosciences critical care unit",
+              "start": 45,
+              "end": 77
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "phone them through 01223216297\t",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "phone",
+              "value": "01223216297",
+              "start": 19,
+              "end": 30
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thanks, I also need the address and phone number.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "hospital",
+              "slot": "address"
+            },
+            {
+              "intent": "request",
+              "domain": "hospital",
+              "slot": "phone"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Addenbrookes Hospital is at Hills Rd, Cambridge in postcode CB20QQ. Their general phone number is 01223245151 and the Neurosciences Critical Care Unit's number is 01223216297. Can I help with anything else?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "address",
+              "value": "Hills Rd, Cambridge",
+              "start": 28,
+              "end": 47
+            },
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "department",
+              "value": "Neurosciences",
+              "start": 118,
+              "end": 131
+            },
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "phone",
+              "value": "01223245151",
+              "start": 98,
+              "end": 109
+            },
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "postcode",
+              "value": "CB20QQ",
+              "start": 60,
+              "end": 66
+            },
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "phone",
+              "value": "01223216297",
+              "start": 163,
+              "end": 174
+            },
+            {
+              "intent": "inform",
+              "domain": "hospital",
+              "slot": "department",
+              "value": "Neurosciences Critical Care Unit",
+              "start": 118,
+              "end": 150
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I know where to get care for my injury. Thank you for helping me. Goodbye.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Alright, goodbye now! Good luck!",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            },
+            {
+              "intent": "welcome",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

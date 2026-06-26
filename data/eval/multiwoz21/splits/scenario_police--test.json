@@ -1,0 +1,231 @@
+[
+  {
+    "dialogue_id": "multiwoz21-train-1626",
+    "original_id": "SNG02303.json",
+    "domains": [
+      "police"
+    ],
+    "goal": {
+      "description": "You were in a <span class='emphasis'>car accident dispute</span> and are looking for help. Make sure you get <span class='emphasis'>address</span> and <span class='emphasis'>postcode</span>",
+      "inform": {
+        "police": {}
+      },
+      "request": {
+        "police": {
+          "address": "",
+          "postcode": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I have just been in a car accident dispute and i am looking for help.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "You may contact the Parkside Police Station at 01223358966. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "name",
+              "value": "Parkside Police Station",
+              "start": 20,
+              "end": 43
+            },
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "phone",
+              "value": "01223358966",
+              "start": 47,
+              "end": 58
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "What is the address and postcode?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "police",
+              "slot": "address"
+            },
+            {
+              "intent": "request",
+              "domain": "police",
+              "slot": "postcode"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I do not have their full address information available, the postcode is CB11JG. Please call them to get the address.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "postcode",
+              "value": "CB11JG",
+              "start": 72,
+              "end": 78
+            }
+          ],
+          "binary": []
+        }
+      }
+    ]
+  },
+  {
+    "dialogue_id": "multiwoz21-train-6283",
+    "original_id": "SNG01604.json",
+    "domains": [
+      "police",
+      "general"
+    ],
+    "goal": {
+      "description": "You are looking for the Parkside <span class='emphasis'>Police Station</span>. Make sure you get <span class='emphasis'>postcode</span>, <span class='emphasis'>phone number</span>, and <span class='emphasis'>address</span>",
+      "inform": {
+        "police": {}
+      },
+      "request": {
+        "police": {
+          "postcode": "",
+          "phone": "",
+          "address": ""
+        }
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I'm looking for a the Parkside police station.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "name",
+              "value": "Parkside police station",
+              "start": 22,
+              "end": 45
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The telephone number for the Parkside Police is 01223358966. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "phone",
+              "value": "01223358966",
+              "start": 48,
+              "end": 59
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "What is the address and postcode?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "police",
+              "slot": "address"
+            },
+            {
+              "intent": "request",
+              "domain": "police",
+              "slot": "postcode"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "The address is Parkside, Cambridge and the postcode is CB11JG.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "address",
+              "value": "Parkside, Cambridge",
+              "start": 15,
+              "end": 34
+            },
+            {
+              "intent": "inform",
+              "domain": "police",
+              "slot": "postcode",
+              "value": "CB11JG",
+              "start": 55,
+              "end": 61
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "That's all I need. Thanks, good bye.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Glad I could be of service.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "welcome",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

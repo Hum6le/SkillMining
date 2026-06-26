@@ -1,0 +1,352 @@
+[
+  {
+    "dialogue_id": "multiwoz21-test-958",
+    "original_id": "MUL0379.json",
+    "domains": [
+      "train",
+      "restaurant",
+      "taxi",
+      "general"
+    ],
+    "goal": {
+      "description": "You are looking for information in Cambridge. You are looking for a <span class='emphasis'>particular restaurant</span>. Its name is called <span class='emphasis'>rajmahal</span>. Once you find the <span class='emphasis'>restaurant</span> you want to book a table for <span class='emphasis'>2 people</span> at <span class='emphasis'>19:45</span> on <span class='emphasis'>tuesday</span>. Make sure you get the <span class='emphasis'>reference number</span>. You are also looking for a <span class='emphasis'>train</span>. The train should depart from <span class='emphasis'>london kings cross</span> and should be on <span class='emphasis'>the same day as the restaurant booking</span>. The train should go to <span class='emphasis'>cambridge</span> and should <span class='emphasis'>arrive by 09:15</span>. Make sure you get <span class='emphasis'>travel time</span>",
+      "inform": {
+        "train": {
+          "destination": "cambridge",
+          "day": "tuesday",
+          "arrive by": "09:15",
+          "departure": "london kings cross"
+        },
+        "restaurant": {
+          "name": "rajmahal",
+          "book people": "2",
+          "book day": "tuesday",
+          "book time": "19:45"
+        }
+      },
+      "request": {
+        "train": {
+          "duration": ""
+        },
+        "restaurant": {}
+      }
+    },
+    "turns": [
+      {
+        "speaker": "user",
+        "utterance": "I am looking to get to the Rajmahal restaurant please, how do I get there? ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "name",
+              "value": "Rajmahal",
+              "start": 27,
+              "end": 35
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Would you like for me to book you a taxi to the restaurant?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "taxi",
+              "slot": "destination"
+            },
+            {
+              "intent": "reqmore",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I need you to book the restaurant for me if that's okay. For 2 people at 19:45 on tuesday is what I request. Can I get the reference number too?",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "book day",
+              "value": "tuesday"
+            }
+          ],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "book time",
+              "value": "19:45",
+              "start": 73,
+              "end": 78
+            },
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "book people",
+              "value": "2",
+              "start": 61,
+              "end": 62
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "restaurant",
+              "slot": "ref"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Okay I booked it and your reference number is 8D21ZMGT. Have a great day.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "restaurant",
+              "slot": "ref",
+              "value": "8D21ZMGT",
+              "start": 46,
+              "end": 54
+            }
+          ],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            },
+            {
+              "intent": "book",
+              "domain": "restaurant",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Actually, I'm also looking for a train. I need to go to London Kings Cross on the same day as the restaurant booking.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "departure",
+              "value": "London Kings Cross",
+              "start": 56,
+              "end": 74
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "No problem. Would you like to specify where you're departing from and what time you'd like?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "leave at"
+            },
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "departure"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I am departing from London Kings Cross and need to go to Cambridge. I want to arrive by 09:15.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "destination",
+              "value": "Cambridge",
+              "start": 57,
+              "end": 66
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "arrive by",
+              "value": "09:15",
+              "start": 88,
+              "end": 93
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "departure",
+              "value": "London Kings Cross",
+              "start": 20,
+              "end": 38
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "I have several options to get you where you are going that arrive before 9:15. Which day would you be traveling?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "choice",
+              "value": "several",
+              "start": 7,
+              "end": 14
+            },
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "arrive by",
+              "value": "9:15",
+              "start": 73,
+              "end": 77
+            }
+          ],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "day"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "I will be traveling on Tuesday.",
+        "dialogue_acts": {
+          "categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "day",
+              "value": "tuesday"
+            }
+          ],
+          "non-categorical": [],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "There are two trains for that search. Would you look me to book you the one that leaves at 05:17?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "choice",
+              "value": "two",
+              "start": 10,
+              "end": 13
+            },
+            {
+              "intent": "offerbook",
+              "domain": "train",
+              "slot": "leave at",
+              "value": "05:17",
+              "start": 91,
+              "end": 96
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "What are the travel times for those trains?",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "request",
+              "domain": "train",
+              "slot": "duration"
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "They are both 51 minutes. ",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [
+            {
+              "intent": "inform",
+              "domain": "train",
+              "slot": "duration",
+              "value": "51 minutes",
+              "start": 14,
+              "end": 24
+            }
+          ],
+          "binary": []
+        }
+      },
+      {
+        "speaker": "user",
+        "utterance": "Thank you, that should be all for today.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "thank",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      },
+      {
+        "speaker": "system",
+        "utterance": "Excellent! Have a wonderful day, and thank you for using our service.",
+        "dialogue_acts": {
+          "categorical": [],
+          "non-categorical": [],
+          "binary": [
+            {
+              "intent": "bye",
+              "domain": "general",
+              "slot": ""
+            }
+          ]
+        }
+      }
+    ]
+  }
+]
