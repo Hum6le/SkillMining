@@ -118,24 +118,23 @@ def _sanitize_tag(tag: str) -> str:
 def _serialize_response(response: Any) -> dict:
     """Convert an openai response object (or dict) to a JSON-safe dict."""
     if isinstance(response, dict):
-        return dict(response)
+        return _make_json_safe(response)
 
-    record: dict = {}
-
-    # Try openai SDK response object
+    # Try openai SDK response object (v1+)
     if hasattr(response, "model_dump"):
         try:
-            return response.model_dump()
+            return _make_json_safe(response.model_dump())
         except Exception:
             pass
     if hasattr(response, "dict"):
         try:
-            return response.dict()
+            return _make_json_safe(response.dict())
         except Exception:
             pass
 
     # Manual extraction for common openai response shape
     try:
+        record: dict = {}
         record["id"] = getattr(response, "id", "")
         record["model"] = getattr(response, "model", "")
         record["created"] = getattr(response, "created", None)
@@ -165,7 +164,24 @@ def _serialize_response(response: Any) -> dict:
                 "completion_tokens": getattr(usage, "completion_tokens", None),
                 "total_tokens": getattr(usage, "total_tokens", None),
             }
+        return _make_json_safe(record)
     except Exception:
-        record["raw"] = str(response)[:1000]
+        pass
 
-    return record
+    # Ultimate fallback
+    return {"raw": str(response)[:5000]}
+
+
+def _make_json_safe(obj: Any) -> Any:
+    """Recursively convert an object to JSON-safe types."""
+    if obj is None or isinstance(obj, (bool, int, float, str)):
+        return obj
+    if isinstance(obj, dict):
+        return {str(k): _make_json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_make_json_safe(v) for v in obj]
+    # Pydantic / attrs / arbitrary objects → string fallback
+    try:
+        return str(obj)[:1000]
+    except Exception:
+        return "<unserializable>"

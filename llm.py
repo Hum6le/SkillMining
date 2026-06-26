@@ -134,8 +134,8 @@ def chat(
         if response_logger is not None:
             try:
                 response_logger.log(messages=clean, response=resp, call_tag="chat")
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning(f"Response logger failed: {e}")
 
         return resp.choices[0].message.content or ""
     except Exception as exc:
