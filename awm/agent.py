@@ -14,9 +14,8 @@ import os
 import sys
 from pathlib import Path
 
-# Ensure project root importable
-_TRACE2SKILL = Path(__file__).resolve().parent.parent.parent / "Trace2Skill"
-_PROJECT_ROOT = _TRACE2SKILL.parent
+# awm/ is at project root; Trace2Skill/ is a sibling
+_PROJECT_ROOT = Path(__file__).resolve().parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 

@@ -34,6 +34,5 @@ Thumbs.db
 # Claude Code settings
 .claude/
 
-# External repos (AWM/ExpeL not in git — clone/configure manually per README)
-/AWM/
+# External repos (clone/configure manually per README)
 /ExpeL/
