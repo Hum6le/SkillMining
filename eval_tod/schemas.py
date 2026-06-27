@@ -56,6 +56,9 @@ class Prediction:
     booking: Dict[str, Dict[str, str]] = field(default_factory=dict)
     # domain -> {"reference": "ABC123", "book_day": "...", ...}
 
+    response_text: str = ""
+    # natural language response to the user
+
 
 @dataclass
 class DialogueMetrics:

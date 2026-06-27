@@ -224,6 +224,7 @@ def evaluate(
                 inform_slots=raw.get("inform_slots", {}),
                 request_slots=raw.get("request_slots", {}),
                 booking=raw.get("booking", {}),
+                response_text=raw.get("response_text", ""),
             ))
 
     if missing_count > 0:
@@ -296,6 +297,7 @@ def _prediction_to_dict(pred: Prediction) -> Dict[str, Any]:
         "inform_slots": pred.inform_slots,
         "request_slots": pred.request_slots,
         "booking": pred.booking,
+        "response_text": pred.response_text,
     }
 
 

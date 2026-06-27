@@ -62,33 +62,35 @@ The tool response will be appended as an Observation."""
 
 # ── system prompt ───────────────────────────────────────────────
 
-_SYSTEM_PROMPT = """You are a task-oriented dialogue (ToD) agent. You help users find and book services.
+_SYSTEM_PROMPT = """You are a task-oriented dialogue (ToD) agent. You help users find and book services by having a natural conversation while also tracking structured information.
 
 ## How You Work
 1. Read the user's goal carefully — identify what they want (inform constraints) and what they need to know (request slots).
 2. Use the `query_db` tool to search for matching entities. You may call it multiple times for different domains or different constraint combinations.
-3. When you have enough information, output your final predictions.
+3. When you have enough information, output your FINAL response.
 
 ## Using query_db
 - Call it with the exact slot names from the ontology.
 - If you're unsure about a constraint, try a broader search first, then refine.
-- For booking tasks (hotel, restaurant, train), you don't need to actually book — just find matching entities and predict what would be informed.
 
 ## When to Finish
-When you have found relevant entities and determined what should be informed to the user, output:
+When you have found relevant entities, output BOTH a natural language response AND structured slot predictions:
 ACTION: FINAL
+RESPONSE: <natural language reply to the user, polite and helpful>
 ARGUMENTS: {"inform_slots": {...}, "request_slots": {...}, "booking": {...}}
 
-The FINAL output format:
+The RESPONSE should be a natural, helpful reply that informs the user about what you found. For example: "I found the Ashley Hotel in the city centre. It's a cheap guesthouse with free parking and wifi. Would you like me to book it for you?"
+
+The ARGUMENTS contain the structured slot values:
 {
   "inform_slots": {
-    "hotel": {"name": "Ashley Hotel", "price range": "cheap", "area": "centre"}
+    "hotel": {"name": "Ashley Hotel", "price range": "cheap", "area": "centre", "parking": "yes", ...}
   },
   "request_slots": {
     "hotel": ["address", "phone"]
   },
   "booking": {
-    "hotel": {"reference": "PLACEHOLDER"}
+    "hotel": {"reference": "PLACEHOLDER", "book day": "tuesday", "book stay": "3", "book people": "6"}
   }
 }
 
@@ -97,7 +99,8 @@ The FINAL output format:
 - For categorical slots, normalise values to match the ontology's allowed values.
 - Only inform what the KB actually contains. Do not hallucinate.
 - For booking: include a "reference" key with value "PLACEHOLDER" (we don't need real booking codes for evaluation).
-- If multiple entities match, pick the first/best one to inform."""
+- If multiple entities match, pick the first/best one.
+- The RESPONSE and ARGUMENTS must agree — every slot value in ARGUMENTS should be reflected in RESPONSE."""
 
 
 def _build_task_prompt(
@@ -144,13 +147,20 @@ def _build_task_prompt(
 
 _ACTION_RE = re.compile(r"ACTION:\s*(query_db|FINAL)", re.IGNORECASE)
 _ARGS_RE = re.compile(r"ARGUMENTS:\s*(\{.*\})", re.DOTALL)
+_RESP_RE = re.compile(r"RESPONSE:\s*(.+?)(?=\nARGUMENTS:|\n\Z)", re.DOTALL)
 
 
-def _parse_action(response: str) -> tuple[str | None, dict | None]:
-    """Extract action type and arguments from LLM response."""
+def _parse_action(response: str) -> tuple[str | None, dict | None, str]:
+    """Extract action type, arguments, and natural language response from LLM output.
+
+    Returns:
+        (action_type, args_dict, response_text).
+        response_text is the natural language RESPONSE, or empty string.
+    """
     action_match = _ACTION_RE.search(response)
     if not action_match:
-        return None, None
+        return None, None, ""
+
     action_type = action_match.group(1).lower()
 
     args_match = _ARGS_RE.search(response)
@@ -161,7 +171,13 @@ def _parse_action(response: str) -> tuple[str | None, dict | None]:
         except json.JSONDecodeError:
             pass
 
-    return action_type, args
+    # Extract natural language RESPONSE
+    resp_text = ""
+    resp_match = _RESP_RE.search(response)
+    if resp_match:
+        resp_text = resp_match.group(1).strip()
+
+    return action_type, args, resp_text
 
 
 # ── KB tool execution ──────────────────────────────────────────
@@ -274,7 +290,7 @@ class ToolBasedTodAgent:
                 print(f"    LLM error turn {turn}: {exc}")
                 break
 
-            action_type, args = _parse_action(raw_response)
+            action_type, args, resp_text = _parse_action(raw_response)
 
             # Log this turn
             trajectory_lines.append(f"## Turn {turn}")
@@ -291,12 +307,17 @@ class ToolBasedTodAgent:
                 trajectory_lines.append("```json")
                 trajectory_lines.append(json.dumps(args, indent=2))
                 trajectory_lines.append("```")
+                if resp_text:
+                    trajectory_lines.append(f"")
+                    trajectory_lines.append(f"### Natural Language Response")
+                    trajectory_lines.append(resp_text[:2000])
                 self._save_trajectory(dialogue.dialogue_id, trajectory_lines)
                 return Prediction(
                     dialogue_id=dialogue.dialogue_id,
                     inform_slots=args.get("inform_slots", {}),
                     request_slots=args.get("request_slots", {}),
                     booking=args.get("booking", {}),
+                    response_text=resp_text,
                 )
 
             elif action_type == "query_db":
@@ -316,7 +337,8 @@ class ToolBasedTodAgent:
                     "I couldn't parse your action. Please output either:\n"
                     'ACTION: query_db\nARGUMENTS: {"domain": "...", "constraints": {...}}\n\n'
                     "or:\n"
-                    'ACTION: FINAL\nARGUMENTS: {"inform_slots": {...}, "request_slots": {...}, "booking": {...}}'
+                    'ACTION: FINAL\nRESPONSE: <natural language reply>\n'
+                    'ARGUMENTS: {"inform_slots": {...}, "request_slots": {...}, "booking": {...}}'
                 )})
 
         # Max turns exceeded
@@ -382,7 +404,8 @@ class ToolBasedTodAgent:
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
         pred_dicts = [
             {"dialogue_id": p.dialogue_id, "inform_slots": p.inform_slots,
-             "request_slots": p.request_slots, "booking": p.booking}
+             "request_slots": p.request_slots, "booking": p.booking,
+             "response_text": p.response_text}
             for p in preds
         ]
         with open(output_path, "w", encoding="utf-8") as f:
