@@ -62,16 +62,25 @@ The tool response will be appended as an Observation."""
 
 # ── system prompt ───────────────────────────────────────────────
 
-_SYSTEM_PROMPT = """You are a task-oriented dialogue (ToD) agent. You help users find and book services by having a natural conversation while also tracking structured information.
+_SYSTEM_PROMPT = """You are a task-oriented dialogue (ToD) agent. You help users find and book services based on their natural language requests.
 
-## How You Work
-1. Read the user's goal carefully — identify what they want (inform constraints) and what they need to know (request slots).
+## Available Domains
+You have access to KBs for: **hotel, restaurant, train, taxi, attraction, hospital, police**.
+Each KB contains entities with domain-specific slots (see ontology below).
+
+## How You Work (End-to-End)
+1. Read the user's natural language goal carefully. YOU must figure out:
+   - Which domains are involved (hotel? train? restaurant? ...)
+   - What constraints the user wants (area, price range, stars, food type, ...)
+   - What information the user wants to know (address? phone? price? ...)
+   - Whether booking is needed and with what details (day, people, stay, time)
 2. Use the `query_db` tool to search for matching entities. You may call it multiple times for different domains or different constraint combinations.
 3. When you have enough information, output your FINAL response.
 
 ## Using query_db
 - Call it with the exact slot names from the ontology.
-- If you're unsure about a constraint, try a broader search first, then refine.
+- If you're unsure about a constraint, start broad then refine based on results.
+- You won't see pre-parsed constraints — extract them yourself from the goal text.
 
 ## When to Finish
 When you have found relevant entities, output BOTH a natural language response AND structured slot predictions:
@@ -105,41 +114,30 @@ The ARGUMENTS contain the structured slot values:
 
 def _build_task_prompt(
     goal_description: str,
-    goal_inform: dict,
-    goal_request: dict,
     ontology_text: str,
 ) -> str:
-    """Build the initial user message with the goal and ontology."""
+    """Build the initial user message — end-to-end: only the natural language goal.
+
+    The agent must infer domains, constraints, requests, and booking needs
+    from the raw goal text (no pre-parsed slot structure).
+    """
     parts = [
         "## User Goal",
         goal_description,
         "",
-        "### Goal Constraints (what the user wants — use these to query KB)",
+        "## Slot Ontology (use these EXACT slot names when querying)",
+        ontology_text,
+        "",
+        TOOL_DEFINITION,
+        "",
+        "Read the goal above and figure out:",
+        "- Which domains are involved?",
+        "- What constraints should you query the KB with?",
+        "- What information does the user want to know?",
+        "- Is booking needed? With what details?",
+        "",
+        "Then query the KB and output your FINAL predictions.",
     ]
-    for domain, slots in goal_inform.items():
-        non_book = {k: v for k, v in slots.items() if not k.startswith("book ")}
-        book = {k: v for k, v in slots.items() if k.startswith("book ")}
-        if non_book:
-            parts.append(f"  [{domain}] inform: {json.dumps(non_book)}")
-        if book:
-            parts.append(f"  [{domain}] booking needs: {json.dumps(book)}")
-    parts.append("")
-    parts.append("### Goal Requests (what the user wants to know — infer from goal)")
-    for domain, slots in goal_request.items():
-        if slots:
-            parts.append(f"  [{domain}] request: {list(slots.keys())}")
-        else:
-            parts.append(f"  [{domain}] request: (any available info)")
-    parts.append("")
-    parts.append("## Slot Ontology")
-    parts.append(ontology_text)
-    parts.append("")
-    parts.append(TOOL_DEFINITION)
-    parts.append("")
-    parts.append(
-        "Begin by querying the KB for each domain in the goal. "
-        "Then output your FINAL predictions."
-    )
     return "\n".join(parts)
 
 
@@ -248,8 +246,6 @@ class ToolBasedTodAgent:
         clean_goal = re.sub(r"<span[^>]*>|</span>", "", dialogue.goal.description)
         task_prompt = _build_task_prompt(
             goal_description=clean_goal,
-            goal_inform=dialogue.goal.inform,
-            goal_request=dialogue.goal.request,
             ontology_text=self._ontology_text,
         )
 

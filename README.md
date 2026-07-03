@@ -69,6 +69,51 @@ dialogue to exactly one scenario (domain combination), then splits within
 each scenario at 80/10/10. The output includes per-scenario files and
 deduplicated `all_*.json` union files.
 
+#### ABCD Dataset
+
+Download the Action-Based Conversations Dataset (Chen et al., NAACL 2021):
+
+```bash
+# Clone the ABCD repository
+git clone https://github.com/asappresearch/abcd.git /tmp/abcd_repo
+
+# Copy the data files
+mkdir -p data/eval/abcd/data
+cp /tmp/abcd_repo/data/abcd_v1.1.json.gz data/eval/abcd/data/
+cp /tmp/abcd_repo/data/guidelines.json data/eval/abcd/data/
+cp /tmp/abcd_repo/data/ontology.json data/eval/abcd/data/
+cp /tmp/abcd_repo/data/utterances.json data/eval/abcd/data/
+cp /tmp/abcd_repo/data/kb.json data/eval/abcd/data/
+
+# Unzip the main dataset
+python -c "
+import gzip, shutil
+with gzip.open('data/eval/abcd/data/abcd_v1.1.json.gz', 'rb') as f_in:
+    with open('data/eval/abcd/data/abcd_v1.1.json', 'wb') as f_out:
+        shutil.copyfileobj(f_in, f_out)
+"
+
+# Clean up
+rm /tmp/abcd_repo -rf
+rm data/eval/abcd/data/abcd_v1.1.json.gz  # optional
+```
+
+Expected structure:
+
+```
+data/eval/abcd/data/
+  abcd_v1.1.json       # ~116 MB, 10,042 dialogues (train/dev/test)
+  guidelines.json       # Agent action flow definitions (10 flows, 55 subflows)
+  ontology.json         # Intent/action/slot vocabulary
+  utterances.json       # ~95K standard agent utterances pool
+  kb.json               # Knowledge base tables
+  images/               # Screenshots (optional)
+  abcd_sample.json      # 10 sample dialogues (included in repo)
+```
+
+The dataset is pre-split into `train` (8,034), `dev` (1,004), and `test` (1,004)
+— no additional splitting needed.
+
 ### 3. Configure API key
 
 ```bash

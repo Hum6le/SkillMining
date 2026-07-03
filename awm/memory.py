@@ -97,10 +97,10 @@ class MemoryStore:
 class WorkflowStore:
     """Workflow text accumulator — mirrors AWM's workflow_path .txt file.
 
-    The workflow file is a plain text file that gets overwritten/updated
-    after each induction call.  At inference time, the full text is
-    injected into the agent prompt (mirrors the ``workflow_text`` in
-    ``get_exemplars()``).
+    The workflow file accumulates patterns across induction calls.  Each
+    new induction appends to the existing text (with a separator) rather
+    than overwriting.  At inference time, the full text is injected into
+    the agent prompt (mirrors the ``workflow_text`` in ``get_exemplars()``).
     """
 
     def __init__(self, path: str | None = None):
@@ -113,8 +113,19 @@ class WorkflowStore:
         return self._text.strip()
 
     def update(self, new_workflow: str):
-        """Replace workflow with newly induced text (mirrors online_induction.py output)."""
-        self._text = new_workflow.strip()
+        """Append newly induced workflow patterns to existing text.
+
+        New patterns are separated from existing ones by a divider so the
+        agent can see the history of induced knowledge while still accessing
+        the latest additions.
+        """
+        new = new_workflow.strip()
+        if not new:
+            return
+        if self._text.strip():
+            self._text = self._text.strip() + "\n\n---\n\n" + new
+        else:
+            self._text = new
 
     def format_prompt(self) -> str:
         """Format workflow for prompt injection — mirrors the user message in get_exemplars."""

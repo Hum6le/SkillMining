@@ -30,6 +30,7 @@ CHECKPOINT_EVERY = 10    # save workflow/memory checkpoint every N batches
 MAX_TURNS = 6            # ReAct loop turns
 MODEL = "deepseek-chat"
 SEED = 42
+EVAL_MODE = "both"        # "slot" | "text" | "both"
 
 # ── Setup ─────────────────────────────────────────────────────
 _TIMESTAMP = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -46,6 +47,52 @@ logging.basicConfig(
     ],
 )
 log = logging.getLogger(__name__)
+
+
+# ── Text evaluation helper ────────────────────────────────────
+
+def _extract_text_refs_preds(dialogues, predictions):
+    """Extract (references, predictions) for text-based evaluation.
+
+    For MultiWOZ: references = system turn utterances,
+    predictions = response_text from agent output.
+    Aligns by turn index within each dialogue.
+    """
+    refs: list[str] = []
+    preds: list[str] = []
+    for dialogue, pred in zip(dialogues, predictions):
+        # Collect system utterances as references
+        sys_utts = [t.utterance for t in dialogue.turns if t.speaker == "system"]
+        # Use the generated response_text for each system turn
+        resp = pred.response_text if pred.response_text else ""
+        if resp and sys_utts:
+            refs.append(sys_utts[-1])  # last system turn = most relevant
+            preds.append(resp)
+        for i, utt in enumerate(sys_utts[:-1]):
+            refs.append(utt)
+            preds.append("")  # no prediction for earlier turns
+    return refs, preds
+
+
+def _run_text_eval(dialogues, predictions, label: str = ""):
+    """Run BERTScore / BLEU / ROUGE evaluation and log + return result."""
+    from eval_tod.text_eval import evaluate_responses
+
+    refs, preds = _extract_text_refs_preds(dialogues, predictions)
+    # Only evaluate turns that have a non-empty prediction
+    valid = [(r, p) for r, p in zip(refs, preds) if p]
+    if not valid:
+        log.info(f"  [text-eval] {label}: no valid (ref, pred) pairs — skipping")
+        return None
+    vrefs, vpreds = zip(*valid)
+    result = evaluate_responses(list(vpreds), list(vrefs))
+    log.info(
+        f"  [text-eval] {label}: BERT-F1={result.bert_f1:.4f}  "
+        f"BLEU-1={result.bleu_1:.1f}  BLEU-4={result.bleu_4:.1f}  "
+        f"ROUGE-1={result.rouge_1:.4f}  ROUGE-L={result.rouge_l:.4f}  "
+        f"(N={result.num_samples})"
+    )
+    return result
 
 
 def main():
@@ -91,6 +138,8 @@ def main():
     seed_val = evaluate_predictions(val_dialogues, seed_preds)
     log.info(f"Seed val: IR={seed_val['aggregate']['info_rate']:.4f}  "
              f"SR={seed_val['aggregate']['success_rate']:.4f}")
+    if EVAL_MODE in ("text", "both"):
+        _run_text_eval(val_dialogues, seed_preds, label="seed")
 
     # ── Batch training loop ───────────────────────────────────
     batch_metrics = []
@@ -109,6 +158,8 @@ def main():
         batch_metrics.append({"batch": batch_idx, **agg})
         log.info(f"  IR={agg['info_rate']:.4f}  SR={agg['success_rate']:.4f}  "
                  f"success={agg['num_success']}/{agg['num_success']+agg['num_fail']}")
+        if EVAL_MODE in ("text", "both"):
+            _run_text_eval(batch, preds, label=f"batch_{batch_idx}")
 
         # 3. Induce workflow from this batch
         agent.induce(batch, preds, result["per_dialogue"],
@@ -140,6 +191,8 @@ def main():
             delta_sr = val_agg["success_rate"] - seed_val["aggregate"]["success_rate"]
             log.info(f"  Val: IR={val_agg['info_rate']:.4f} (Δ{delta_ir:+.4f})  "
                      f"SR={val_agg['success_rate']:.4f} (Δ{delta_sr:+.4f})")
+            if EVAL_MODE in ("text", "both"):
+                _run_text_eval(val_dialogues, val_preds, label=f"val_batch_{batch_idx}")
 
     # ── Final test evaluation ──────────────────────────────────
     log.info("=" * 50)
@@ -153,6 +206,8 @@ def main():
     test_result = evaluate_predictions(test_dialogues, test_preds)
     test_agg = test_result["aggregate"]
     log.info(f"Final test: IR={test_agg['info_rate']:.4f}  SR={test_agg['success_rate']:.4f}")
+    if EVAL_MODE in ("text", "both"):
+        _run_text_eval(test_dialogues, test_preds, label="final_test")
 
     # ── Save everything ───────────────────────────────────────
     agent.save_workflow(str(OUT_DIR / "awm_workflow.txt"))
@@ -163,6 +218,7 @@ def main():
             "batch_size": BATCH_SIZE, "max_batches": MAX_BATCHES,
             "val_every": VAL_EVERY, "checkpoint_every": CHECKPOINT_EVERY,
             "max_turns": MAX_TURNS, "model": MODEL, "seed": SEED,
+            "eval_mode": EVAL_MODE,
         },
         "data": {
             "train": len(train_dialogues), "val": len(val_dialogues),
