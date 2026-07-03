@@ -245,26 +245,28 @@ def evaluate_all(
             except Exception as e:
                 result["text"] = {"error": str(e)}
 
-    # ── AST / CDS (ABCD) ───────────────────────────────────────
+    # ── AST / CDS (ABCD) — only if predictions are ABCDPrediction ──
     if dataset_name == "abcd":
-        try:
-            from .abcd.data import extract_ground_truth
-            from .abcd.metrics import evaluate_abcd
+        from .abcd.schemas import ABCDPrediction
+        if predictions and isinstance(predictions[0], ABCDPrediction):
+            try:
+                from .abcd.data import extract_ground_truth
+                from .abcd.metrics import evaluate_abcd
 
-            all_gt = []
-            for conv in dialogues:
-                all_gt.append(extract_ground_truth(conv))
+                all_gt = []
+                for conv in dialogues:
+                    all_gt.append(extract_ground_truth(conv))
 
-            abcd_result = evaluate_abcd(all_gt, predictions)
-            result["ast_cds"] = {
-                "ast_joint": abcd_result.ast.joint_accuracy,
-                "ast_action_name": abcd_result.ast.action_name_accuracy,
-                "ast_slot_value": abcd_result.ast.slot_value_accuracy,
-                "cds_overall": abcd_result.cds.overall_cds,
-                "num_action_turns": abcd_result.ast.total_action_turns,
-            }
-        except Exception as e:
-            result["ast_cds"] = {"error": str(e)}
+                abcd_result = evaluate_abcd(all_gt, predictions)
+                result["ast_cds"] = {
+                    "ast_joint": abcd_result.ast.joint_accuracy,
+                    "ast_action_name": abcd_result.ast.action_name_accuracy,
+                    "ast_slot_value": abcd_result.ast.slot_value_accuracy,
+                    "cds_overall": abcd_result.cds.overall_cds,
+                    "num_action_turns": abcd_result.ast.total_action_turns,
+                }
+            except Exception as e:
+                result["ast_cds"] = {"error": str(e)}
 
     # ── Summary line ───────────────────────────────────────────
     parts = [f"eval({dataset_name}, N={len(dialogues)})"]
@@ -317,14 +319,19 @@ def _extract_references(dialogues, dataset_name: str) -> list[str]:
         from .abcd.data import get_utterance_text
         refs = []
         for conv in dialogues:
+            # Collect agent utterances from this conversation
+            agent_utts = []
             for turn in conv.get("delexed", []):
                 if turn.get("speaker") == "agent":
                     targets = turn.get("targets", [])
                     utt_id = targets[4] if len(targets) > 4 else -1
-                    refs.append(
+                    agent_utts.append(
                         get_utterance_text(utt_id) if utt_id >= 0
                         else turn.get("text", "")
                     )
+            # For generative mode (1 pred per dialogue), use the last agent utterance
+            if agent_utts:
+                refs.append(agent_utts[-1])
         return refs
     return []
 

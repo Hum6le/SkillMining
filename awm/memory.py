@@ -35,7 +35,7 @@ class MemoryStore:
     # ── Storage ──────────────────────────────────────────────
 
     def add(self, dialogue, prediction, trajectory: str = ""):
-        """Store one successful dialogue as an exemplar."""
+        """Store one successful dialogue as an exemplar (MultiWOZ)."""
         self.exemplars.append({
             "dialogue_id": dialogue.dialogue_id,
             "domains": list(dialogue.domains),
@@ -45,6 +45,24 @@ class MemoryStore:
             "request_slots": prediction.request_slots,
             "booking": prediction.booking,
         })
+
+    def add_dict(self, exemplar: dict):
+        """Store a pre-built exemplar dict (dataset-agnostic).
+
+        Expected keys: dialogue_id, domains, goal, trajectory.
+        Optional: inform_slots, request_slots, booking.
+        """
+        defaults = {
+            "inform_slots": {},
+            "request_slots": {},
+            "booking": {},
+            "trajectory": "",
+        }
+        for k, v in defaults.items():
+            exemplar.setdefault(k, v)
+        exemplar["goal"] = exemplar.get("goal", "")[:500]
+        exemplar["trajectory"] = exemplar.get("trajectory", "")[:2000]
+        self.exemplars.append(exemplar)
 
     # ── Retrieval (mirrors get_exemplars filtering logic) ─────
 
