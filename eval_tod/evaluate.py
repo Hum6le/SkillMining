@@ -158,6 +158,178 @@ def evaluate_predictions(
 
 
 # ══════════════════════════════════════════════════════════════════
+# Unified evaluation — auto-detect dataset and run all metrics
+# ══════════════════════════════════════════════════════════════════
+
+def evaluate_all(
+    dialogues,
+    predictions,
+    *,
+    dataset_name: str = "multiwoz",
+    llm_judge: bool = False,
+    llm_model: str = "deepseek-chat",
+    llm_api_key: Optional[str] = None,
+    llm_base_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Run ALL applicable metrics on a set of dialogues + predictions.
+
+    Auto-detects available data and runs every metric that applies:
+
+    - **Slot metrics** (IR / Success Rate): run if dialogues have
+      ``goal.inform`` / ``goal.request`` (MultiWOZ).
+    - **Text metrics** (BERTScore / BLEU / ROUGE): run if any prediction
+      has a non-empty ``response_text``.
+    - **AST / CDS** (Action State Tracking / Cascading Dialogue Success):
+      run if ``dataset_name == "abcd"`` and ground-truth action annotations
+      are available.
+    - **LLM Judge**: run if ``llm_judge=True``.
+
+    Args:
+        dialogues: Ground-truth dialogues (MultiWOZ ``Dialogue`` or ABCD
+            conversation dicts).
+        predictions: Agent predictions (``Prediction`` for MultiWOZ,
+            ``ABCDPrediction`` for ABCD, or plain dicts with
+            ``response_text``).
+        dataset_name: ``"multiwoz"`` or ``"abcd"``.
+        llm_judge: If True, run multi-agent LLM judge.
+        llm_model / llm_api_key / llm_base_url: LLM config for judge.
+
+    Returns:
+        Dict with keys ``slot``, ``text``, ``ast_cds``, ``llm_judge``
+        (only the ones that were actually run), plus a ``summary`` string.
+    """
+    result: Dict[str, Any] = {}
+
+    # ── Slot metrics (MultiWOZ) ────────────────────────────────
+    if dataset_name == "multiwoz" and hasattr(dialogues[0], "goal"):
+        try:
+            slot_result = evaluate_predictions(
+                dialogues, predictions,
+                llm_judge=llm_judge,
+                llm_model=llm_model,
+                llm_api_key=llm_api_key,
+                llm_base_url=llm_base_url,
+            )
+            result["slot"] = {
+                "info_rate": slot_result["aggregate"]["info_rate"],
+                "success_rate": slot_result["aggregate"]["success_rate"],
+                "num_success": slot_result["aggregate"]["num_success"],
+                "num_fail": slot_result["aggregate"]["num_fail"],
+            }
+            # Pass through per_dialogue for callers that need it (e.g. induction)
+            result["per_dialogue"] = slot_result.get("per_dialogue", [])
+            if llm_judge:
+                result["llm_judge"] = slot_result.get("llm_judge", {})
+        except Exception as e:
+            result["slot"] = {"error": str(e)}
+
+    # ── Text metrics (any dataset with response_text) ──────────
+    resp_texts = _extract_response_texts(predictions)
+    if any(resp_texts):
+        refs = _extract_references(dialogues, dataset_name)
+        if refs and len(refs) == len(resp_texts):
+            from .text_eval import evaluate_responses
+            try:
+                text_result = evaluate_responses(resp_texts, refs)
+                result["text"] = {
+                    "bert_f1": text_result.bert_f1,
+                    "bert_precision": text_result.bert_precision,
+                    "bert_recall": text_result.bert_recall,
+                    "bleu_1": text_result.bleu_1,
+                    "bleu_4": text_result.bleu_4,
+                    "rouge_1": text_result.rouge_1,
+                    "rouge_2": text_result.rouge_2,
+                    "rouge_l": text_result.rouge_l,
+                    "num_samples": text_result.num_samples,
+                }
+            except Exception as e:
+                result["text"] = {"error": str(e)}
+
+    # ── AST / CDS (ABCD) ───────────────────────────────────────
+    if dataset_name == "abcd":
+        try:
+            from .abcd.data import extract_ground_truth
+            from .abcd.metrics import evaluate_abcd
+
+            all_gt = []
+            for conv in dialogues:
+                all_gt.append(extract_ground_truth(conv))
+
+            abcd_result = evaluate_abcd(all_gt, predictions)
+            result["ast_cds"] = {
+                "ast_joint": abcd_result.ast.joint_accuracy,
+                "ast_action_name": abcd_result.ast.action_name_accuracy,
+                "ast_slot_value": abcd_result.ast.slot_value_accuracy,
+                "cds_overall": abcd_result.cds.overall_cds,
+                "num_action_turns": abcd_result.ast.total_action_turns,
+            }
+        except Exception as e:
+            result["ast_cds"] = {"error": str(e)}
+
+    # ── Summary line ───────────────────────────────────────────
+    parts = [f"eval({dataset_name}, N={len(dialogues)})"]
+    if "slot" in result and "error" not in result["slot"]:
+        parts.append(
+            f"IR={result['slot']['info_rate']:.4f} "
+            f"SR={result['slot']['success_rate']:.4f}"
+        )
+    if "text" in result and "error" not in result["text"]:
+        parts.append(
+            f"BERT-F1={result['text']['bert_f1']:.4f} "
+            f"BLEU-4={result['text']['bleu_4']:.1f} "
+            f"ROUGE-L={result['text']['rouge_l']:.4f}"
+        )
+    if "ast_cds" in result and "error" not in result["ast_cds"]:
+        parts.append(
+            f"AST={result['ast_cds']['ast_joint']:.4f} "
+            f"CDS={result['ast_cds']['cds_overall']:.4f}"
+        )
+    result["summary"] = "  ".join(parts)
+
+    return result
+
+
+def _extract_response_texts(predictions) -> list[str]:
+    """Extract response_text from any prediction type."""
+    texts = []
+    for p in predictions:
+        if hasattr(p, "response_text"):
+            texts.append(p.response_text or "")
+        elif isinstance(p, dict):
+            texts.append(p.get("response_text", ""))
+        else:
+            texts.append("")
+    return texts
+
+
+def _extract_references(dialogues, dataset_name: str) -> list[str]:
+    """Extract ground-truth reference utterances from dialogues."""
+    if dataset_name == "multiwoz":
+        refs = []
+        for d in dialogues:
+            if hasattr(d, "turns"):
+                sys_utts = [t.utterance for t in d.turns if getattr(t, "speaker", "") == "system"]
+                refs.append(sys_utts[-1] if sys_utts else "")
+            else:
+                refs.append("")
+        return refs
+    if dataset_name == "abcd":
+        from .abcd.data import get_utterance_text
+        refs = []
+        for conv in dialogues:
+            for turn in conv.get("delexed", []):
+                if turn.get("speaker") == "agent":
+                    targets = turn.get("targets", [])
+                    utt_id = targets[4] if len(targets) > 4 else -1
+                    refs.append(
+                        get_utterance_text(utt_id) if utt_id >= 0
+                        else turn.get("text", "")
+                    )
+        return refs
+    return []
+
+
+# ══════════════════════════════════════════════════════════════════
 # File-based convenience wrapper
 # ══════════════════════════════════════════════════════════════════
 

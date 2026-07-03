@@ -66,7 +66,7 @@ def main():
     # ── Imports ────────────────────────────────────────────────
     from eval_tod.data import load_multiwoz21
     from eval_tod.kb import MultiWOZKB
-    from eval_tod import evaluate_predictions, print_summary
+    from eval_tod import evaluate_all, print_summary
     from eval_tod.response_logger import ResponseLogger
     from awm import AWMAgent, MemoryStore, WorkflowStore
 
@@ -116,37 +116,14 @@ def main():
     preds = agent.predict_and_save(dialogues, str(out_dir / "predictions.json"))
 
     # ── Evaluate ──────────────────────────────────────────────
-    eval_mode = args.eval_mode
-    text_result = None
-
-    if eval_mode in ("slot", "both"):
-        result = evaluate_predictions(dialogues, preds)
-        agg = result["aggregate"]
-        print_summary(result)
-    else:
-        result = {}
-        agg = {}
-
-    if eval_mode in ("text", "both"):
-        from eval_tod.text_eval import evaluate_responses
-        refs: list[str] = []
-        ptexts: list[str] = []
-        for dialogue, pred in zip(dialogues, preds):
-            sys_utts = [t.utterance for t in dialogue.turns if t.speaker == "system"]
-            resp = pred.response_text if pred.response_text else ""
-            if resp and sys_utts:
-                refs.append(sys_utts[-1])
-                ptexts.append(resp)
-        if ptexts:
-            text_result = evaluate_responses(ptexts, refs)
-            log.info(f"Text eval: BERT-F1={text_result.bert_f1:.4f}  "
-                     f"BLEU-1={text_result.bleu_1:.1f}  BLEU-4={text_result.bleu_4:.1f}  "
-                     f"ROUGE-1={text_result.rouge_1:.4f}  ROUGE-L={text_result.rouge_l:.4f}")
+    result = evaluate_all(dialogues, preds, dataset_name="multiwoz")
+    log.info(f"Eval: {result['summary']}")
+    print_summary(result.get("slot", {}))
 
     # ── Save summary ──────────────────────────────────────────
     summary = {
         "config": {
-            "eval_mode": eval_mode,
+            "eval_mode": args.eval_mode,
             "split": args.split,
             "model": args.model,
             "max_turns": args.max_turns,
@@ -156,27 +133,16 @@ def main():
             "memory_exemplars": len(memory),
         },
         "data": {"num_dialogues": len(dialogues)},
-        "aggregate": agg,
-        "per_dialogue": result.get("per_dialogue", []),
+        "result": result,
         "llm_calls_logged": logger.count,
     }
-    if text_result is not None:
-        summary["text_eval"] = {
-            "bert_f1": text_result.bert_f1,
-            "bleu_1": text_result.bleu_1, "bleu_4": text_result.bleu_4,
-            "rouge_1": text_result.rouge_1, "rouge_l": text_result.rouge_l,
-            "num_samples": text_result.num_samples,
-        }
     with open(out_dir / "summary.json", "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
 
     log.info(f"{'='*50}")
     log.info(f"DONE. Output: {out_dir}")
     log.info(f"Split: {args.split}  Dialogues: {len(dialogues)}")
-    if agg:
-        log.info(f"IR={agg.get('info_rate', 0):.4f}  SR={agg.get('success_rate', 0):.4f}")
-    if text_result is not None:
-        log.info(f"Text: BERT-F1={text_result.bert_f1:.4f}  BLEU-4={text_result.bleu_4:.1f}  ROUGE-L={text_result.rouge_l:.4f}")
+    log.info(result.get("summary", ""))
     log.info(f"LLM calls logged: {logger.count}")
     return summary
 

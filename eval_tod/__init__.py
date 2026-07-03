@@ -45,6 +45,7 @@ from .data import (
 from .evaluate import (
     AbstractTodAgent,
     evaluate,
+    evaluate_all,
     evaluate_predictions,
     print_summary,
 )
@@ -71,6 +72,7 @@ from .kb import MultiWOZKB
 
 __all__ = [
     # ── Core evaluation ──
+    "evaluate_all",               # unified: auto-detect dataset, all metrics
     "evaluate_predictions",       # generic: (dialogues, preds) -> results
     "evaluate",                   # convenience: loads from files
     "print_summary",

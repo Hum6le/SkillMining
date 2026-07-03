@@ -34,5 +34,12 @@ Thumbs.db
 # Claude Code settings
 .claude/
 
+# Temporary debug / util scripts
+_download_hf.py
+_find_datasets.py
+_debug*.py
+parse_failures/
+.cache/
+
 # External repos (clone/configure manually per README)
 /ExpeL/

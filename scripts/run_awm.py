@@ -30,7 +30,6 @@ CHECKPOINT_EVERY = 10    # save workflow/memory checkpoint every N batches
 MAX_TURNS = 6            # ReAct loop turns
 MODEL = "deepseek-chat"
 SEED = 42
-EVAL_MODE = "both"        # "slot" | "text" | "both"
 
 # ── Setup ─────────────────────────────────────────────────────
 _TIMESTAMP = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -49,56 +48,10 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
-# ── Text evaluation helper ────────────────────────────────────
-
-def _extract_text_refs_preds(dialogues, predictions):
-    """Extract (references, predictions) for text-based evaluation.
-
-    For MultiWOZ: references = system turn utterances,
-    predictions = response_text from agent output.
-    Aligns by turn index within each dialogue.
-    """
-    refs: list[str] = []
-    preds: list[str] = []
-    for dialogue, pred in zip(dialogues, predictions):
-        # Collect system utterances as references
-        sys_utts = [t.utterance for t in dialogue.turns if t.speaker == "system"]
-        # Use the generated response_text for each system turn
-        resp = pred.response_text if pred.response_text else ""
-        if resp and sys_utts:
-            refs.append(sys_utts[-1])  # last system turn = most relevant
-            preds.append(resp)
-        for i, utt in enumerate(sys_utts[:-1]):
-            refs.append(utt)
-            preds.append("")  # no prediction for earlier turns
-    return refs, preds
-
-
-def _run_text_eval(dialogues, predictions, label: str = ""):
-    """Run BERTScore / BLEU / ROUGE evaluation and log + return result."""
-    from eval_tod.text_eval import evaluate_responses
-
-    refs, preds = _extract_text_refs_preds(dialogues, predictions)
-    # Only evaluate turns that have a non-empty prediction
-    valid = [(r, p) for r, p in zip(refs, preds) if p]
-    if not valid:
-        log.info(f"  [text-eval] {label}: no valid (ref, pred) pairs — skipping")
-        return None
-    vrefs, vpreds = zip(*valid)
-    result = evaluate_responses(list(vpreds), list(vrefs))
-    log.info(
-        f"  [text-eval] {label}: BERT-F1={result.bert_f1:.4f}  "
-        f"BLEU-1={result.bleu_1:.1f}  BLEU-4={result.bleu_4:.1f}  "
-        f"ROUGE-1={result.rouge_1:.4f}  ROUGE-L={result.rouge_l:.4f}  "
-        f"(N={result.num_samples})"
-    )
-    return result
-
-
 def main():
     from eval_tod.data import load_multiwoz21, build_batches
     from eval_tod.kb import MultiWOZKB
-    from eval_tod import evaluate_predictions
+    from eval_tod import evaluate_all
     from eval_tod.response_logger import ResponseLogger
     from awm import AWMAgent, MemoryStore, WorkflowStore
 
@@ -135,15 +88,12 @@ def main():
         response_logger=logger, log_dir=str(OUT_DIR / "trajectories_seed"),
     )
     seed_preds = seed_agent.generate_predictions(val_dialogues)
-    seed_val = evaluate_predictions(val_dialogues, seed_preds)
-    log.info(f"Seed val: IR={seed_val['aggregate']['info_rate']:.4f}  "
-             f"SR={seed_val['aggregate']['success_rate']:.4f}")
-    if EVAL_MODE in ("text", "both"):
-        _run_text_eval(val_dialogues, seed_preds, label="seed")
+    seed_val = evaluate_all(val_dialogues, seed_preds, dataset_name="multiwoz")
+    log.info(f"Seed val: {seed_val['summary']}")
 
     # ── Batch training loop ───────────────────────────────────
     batch_metrics = []
-    val_history = [{"label": "seed", **seed_val["aggregate"]}]
+    val_history = [{"label": "seed", **(seed_val.get("slot") or {})}]
 
     for batch_idx, batch in enumerate(batches, start=1):
         log.info(f"{'─'*40}")
@@ -153,20 +103,17 @@ def main():
         preds = agent.generate_predictions(batch)
 
         # 2. Evaluate
-        result = evaluate_predictions(batch, preds)
-        agg = result["aggregate"]
-        batch_metrics.append({"batch": batch_idx, **agg})
-        log.info(f"  IR={agg['info_rate']:.4f}  SR={agg['success_rate']:.4f}  "
-                 f"success={agg['num_success']}/{agg['num_success']+agg['num_fail']}")
-        if EVAL_MODE in ("text", "both"):
-            _run_text_eval(batch, preds, label=f"batch_{batch_idx}")
+        result = evaluate_all(batch, preds, dataset_name="multiwoz")
+        slot = result.get("slot") or {}
+        batch_metrics.append({"batch": batch_idx, **slot})
+        log.info(f"  {result['summary']}")
 
         # 3. Induce workflow from this batch
-        agent.induce(batch, preds, result["per_dialogue"],
+        agent.induce(batch, preds, result.get("per_dialogue", []),
                      trajectory_dir=str(OUT_DIR / "trajectories"))
 
         # 4. Update memory with successes
-        agent.update_memory(batch, preds, result["per_dialogue"])
+        agent.update_memory(batch, preds, result.get("per_dialogue", []))
 
         # 5. Checkpoint
         if batch_idx % CHECKPOINT_EVERY == 0:
@@ -184,15 +131,10 @@ def main():
                 response_logger=logger, log_dir=str(OUT_DIR / f"trajectories_val_{batch_idx:04d}"),
             )
             val_preds = val_agent.generate_predictions(val_dialogues)
-            val_result = evaluate_predictions(val_dialogues, val_preds)
-            val_agg = val_result["aggregate"]
-            val_history.append({"label": f"batch_{batch_idx}", **val_agg})
-            delta_ir = val_agg["info_rate"] - seed_val["aggregate"]["info_rate"]
-            delta_sr = val_agg["success_rate"] - seed_val["aggregate"]["success_rate"]
-            log.info(f"  Val: IR={val_agg['info_rate']:.4f} (Δ{delta_ir:+.4f})  "
-                     f"SR={val_agg['success_rate']:.4f} (Δ{delta_sr:+.4f})")
-            if EVAL_MODE in ("text", "both"):
-                _run_text_eval(val_dialogues, val_preds, label=f"val_batch_{batch_idx}")
+            val_result = evaluate_all(val_dialogues, val_preds, dataset_name="multiwoz")
+            val_slot = val_result.get("slot") or {}
+            val_history.append({"label": f"batch_{batch_idx}", **val_slot})
+            log.info(f"  Val: {val_result['summary']}")
 
     # ── Final test evaluation ──────────────────────────────────
     log.info("=" * 50)
@@ -203,11 +145,8 @@ def main():
         response_logger=logger, log_dir=str(OUT_DIR / "trajectories_test_final"),
     )
     test_preds = test_agent.predict_and_save(test_dialogues, str(OUT_DIR / "test_final_preds.json"))
-    test_result = evaluate_predictions(test_dialogues, test_preds)
-    test_agg = test_result["aggregate"]
-    log.info(f"Final test: IR={test_agg['info_rate']:.4f}  SR={test_agg['success_rate']:.4f}")
-    if EVAL_MODE in ("text", "both"):
-        _run_text_eval(test_dialogues, test_preds, label="final_test")
+    test_result = evaluate_all(test_dialogues, test_preds, dataset_name="multiwoz")
+    log.info(f"Final test: {test_result['summary']}")
 
     # ── Save everything ───────────────────────────────────────
     agent.save_workflow(str(OUT_DIR / "awm_workflow.txt"))
@@ -218,14 +157,14 @@ def main():
             "batch_size": BATCH_SIZE, "max_batches": MAX_BATCHES,
             "val_every": VAL_EVERY, "checkpoint_every": CHECKPOINT_EVERY,
             "max_turns": MAX_TURNS, "model": MODEL, "seed": SEED,
-            "eval_mode": EVAL_MODE,
+            "eval_mode": "all",
         },
         "data": {
             "train": len(train_dialogues), "val": len(val_dialogues),
             "test": len(test_dialogues), "batches": len(batches),
         },
-        "seed_val": seed_val["aggregate"],
-        "final_test": test_agg,
+        "seed_val": seed_val.get("slot", {}),
+        "final_test": test_result.get("slot", {}),
         "batch_metrics": batch_metrics,
         "val_history": val_history,
         "workflow_lines": len(workflow),
@@ -237,10 +176,8 @@ def main():
 
     log.info("=" * 50)
     log.info(f"DONE. Output: {OUT_DIR}")
-    log.info(f"Seed val:   IR={seed_val['aggregate']['info_rate']:.4f}  "
-             f"SR={seed_val['aggregate']['success_rate']:.4f}")
-    log.info(f"Final test: IR={test_agg['info_rate']:.4f}  "
-             f"SR={test_agg['success_rate']:.4f}")
+    log.info(f"Seed val:   {seed_val.get('summary', '')}")
+    log.info(f"Final test: {test_result.get('summary', '')}")
     log.info(f"LLM calls logged: {logger.count}")
     return summary
 
