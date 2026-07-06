@@ -15,10 +15,11 @@ import time
 from pathlib import Path
 from typing import Any
 
-# Ensure project root on path
+# Ensure project root is FIRST on path (before any conflicting parent dirs)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
+if str(_PROJECT_ROOT) in sys.path:
+    sys.path.remove(str(_PROJECT_ROOT))
+sys.path.insert(0, str(_PROJECT_ROOT))
 
 from eval_tod.evaluate import AbstractTodAgent
 from eval_tod.schemas import Prediction

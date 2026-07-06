@@ -1,0 +1,120 @@
+{
+  "promo_code_invalid": {
+    "selected_vertices": [
+      "promo_code_invalid:ask-the-oracle",
+      "promo_code_invalid:promo-code",
+      "promo_code_invalid:pull-up-account:alessandro phoenix",
+      "promo_code_invalid:pull-up-account:david williams",
+      "promo_code_invalid:pull-up-account:rodriguez domingo"
+    ],
+    "num_selected": 5,
+    "num_sessions": 3,
+    "coverage": 3,
+    "total_hyperedges": 3,
+    "coverage_pct": 100.0
+  },
+  "recover_password": {
+    "selected_vertices": [
+      "recover_password:enter-details:aphoenix1",
+      "recover_password:enter-details:cm374950",
+      "recover_password:make-password",
+      "recover_password:pull-up-account:alessandro phoenix",
+      "recover_password:pull-up-account:crystal minh",
+      "recover_password:verify-identity:alessandro phoenix,57820,(499) 412-7409"
+    ],
+    "num_selected": 6,
+    "num_sessions": 3,
+    "coverage": 3,
+    "total_hyperedges": 3,
+    "coverage_pct": 100.0
+  },
+  "return_size": {
+    "selected_vertices": [
+      "return_size:enter-details:0069 kennedy st newa",
+      "return_size:enter-details:2164 lincoln ave new",
+      "return_size:enter-details:drop off center",
+      "return_size:membership:gold",
+      "return_size:membership:silver",
+      "return_size:pull-up-account:albert sanders",
+      "return_size:pull-up-account:alessandro phoenix",
+      "return_size:update-order:by mail",
+      "return_size:validate-purchase:asanders869,asanders869@email.co,4800317848",
+      "return_size:validate-purchase:nb244266,nb244266@email.com,7214916269"
+    ],
+    "num_selected": 10,
+    "num_sessions": 3,
+    "coverage": 3,
+    "total_hyperedges": 3,
+    "coverage_pct": 100.0
+  },
+  "search_results": {
+    "selected_vertices": [
+      "search_results:instructions",
+      "search_results:log-out-in",
+      "search_results:search-faq",
+      "search_results:try-again"
+    ],
+    "num_selected": 4,
+    "num_sessions": 3,
+    "coverage": 3,
+    "total_hyperedges": 3,
+    "coverage_pct": 100.0
+  },
+  "status": {
+    "selected_vertices": [
+      "status:ask-the-oracle",
+      "status:pull-up-account:chloe zhang",
+      "status:pull-up-account:joseph banter",
+      "status:validate-purchase:cz565425,cz565425@email.com,5098745716",
+      "status:validate-purchase:josephb3,josephb3@email.com,9503594314",
+      "status:verify-identity:chloe zhang,efmsbyorkr,5098745716",
+      "status:verify-identity:joseph banter,zpssknguqr,9503594314"
+    ],
+    "num_selected": 7,
+    "num_sessions": 2,
+    "coverage": 2,
+    "total_hyperedges": 2,
+    "coverage_pct": 100.0
+  },
+  "status_due_amount": {
+    "selected_vertices": [
+      "status_due_amount:pull-up-account:crystal minh",
+      "status_due_amount:pull-up-account:norman bouchard",
+      "status_due_amount:send-link",
+      "status_due_amount:subscription-status",
+      "status_due_amount:verify-identity:norman bouchard,8966457472,iey3db2ewk"
+    ],
+    "num_selected": 5,
+    "num_sessions": 2,
+    "coverage": 2,
+    "total_hyperedges": 2,
+    "coverage_pct": 100.0
+  },
+  "status_due_date": {
+    "selected_vertices": [
+      "status_due_date:enter-details:49",
+      "status_due_date:pull-up-account:albert sanders",
+      "status_due_date:pull-up-account:alessandro phoenix",
+      "status_due_date:subscription-status",
+      "status_due_date:verify-identity:albert sanders,h8ittb2wvx,4945110432",
+      "status_due_date:verify-identity:alessandro phoenix,ak3cc44kji,0386320588"
+    ],
+    "num_selected": 6,
+    "num_sessions": 2,
+    "coverage": 2,
+    "total_hyperedges": 2,
+    "coverage_pct": 100.0
+  },
+  "timing_2": {
+    "selected_vertices": [
+      "timing_2:search-faq",
+      "timing_2:search-timing",
+      "timing_2:select-faq:timing_2"
+    ],
+    "num_selected": 3,
+    "num_sessions": 2,
+    "coverage": 2,
+    "total_hyperedges": 2,
+    "coverage_pct": 100.0
+  }
+}

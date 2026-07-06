@@ -16,8 +16,9 @@ from pathlib import Path
 
 # awm/ is at project root; Trace2Skill/ is a sibling
 _PROJECT_ROOT = Path(__file__).resolve().parent
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
+if str(_PROJECT_ROOT) in sys.path:
+    sys.path.remove(str(_PROJECT_ROOT))
+sys.path.insert(0, str(_PROJECT_ROOT))
 
 from llm import resolve_config
 from eval_tod.agent_tool import ToolBasedTodAgent

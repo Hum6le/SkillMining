@@ -1,32 +1,14 @@
 {
-  "num_hyperedges": 100,
-  "num_vertices": 265,
-  "avg_hyperedge_size": 3.38,
-  "max_hyperedge_size": 7,
+  "num_hyperedges": 50,
+  "num_vertices": 142,
+  "avg_hyperedge_size": 3.22,
+  "max_hyperedge_size": 5,
   "vertex_degree_distribution": {
-    "1": 217,
-    "2": 30,
-    "3": 14,
-    "4": 1,
-    "5": 3
+    "1": 127,
+    "2": 11,
+    "3": 4
   },
   "top_vertices_by_degree": [
-    [
-      "status:ask-the-oracle",
-      5
-    ],
-    [
-      "pricing_3:search-pricing",
-      5
-    ],
-    [
-      "pricing_3:search-faq",
-      5
-    ],
-    [
-      "search_results:log-out-in",
-      4
-    ],
     [
       "promo_code_invalid:promo-code",
       3
@@ -36,15 +18,7 @@
       3
     ],
     [
-      "reset_2fa:send-link",
-      3
-    ],
-    [
-      "status_due_amount:send-link",
-      3
-    ],
-    [
-      "status_due_amount:subscription-status",
+      "search_results:log-out-in",
       3
     ],
     [
@@ -52,63 +26,15 @@
       3
     ],
     [
-      "search_results:instructions",
-      3
-    ],
-    [
-      "timing_2:search-faq",
-      3
-    ],
-    [
-      "timing_2:select-faq:timing_2",
-      3
-    ],
-    [
-      "timing_2:search-timing",
-      3
-    ],
-    [
-      "slow_speed:log-out-in",
-      3
-    ],
-    [
-      "out_of_stock_one_item:record-reason:calvin klein jacket",
-      3
-    ],
-    [
-      "out_of_stock_one_item:notify-team:purchasing departmen",
-      3
-    ],
-    [
-      "pricing_3:select-faq:pricing_3",
-      3
-    ],
-    [
-      "timing_4:search-faq",
+      "status:ask-the-oracle",
       2
     ],
     [
-      "timing_4:search-timing",
+      "status_due_amount:send-link",
       2
     ],
     [
-      "manage_dispute_bill:membership:silver",
-      2
-    ],
-    [
-      "credit_card:log-out-in",
-      2
-    ],
-    [
-      "credit_card:enter-details:troubleshoot",
-      2
-    ],
-    [
-      "policy_2:search-policy",
-      2
-    ],
-    [
-      "policy_2:search-faq",
+      "status_due_amount:subscription-status",
       2
     ],
     [
@@ -120,16 +46,88 @@
       2
     ],
     [
-      "shopping_cart:enter-details:troubleshoot",
+      "search_results:instructions",
       2
     ],
     [
-      "shopping_cart:try-again",
+      "timing_2:search-faq",
       2
     ],
     [
-      "shopping_cart:log-out-in",
+      "timing_2:search-timing",
       2
+    ],
+    [
+      "timing_2:select-faq:timing_2",
+      2
+    ],
+    [
+      "return_size:update-order:by mail",
+      2
+    ],
+    [
+      "return_size:membership:silver",
+      2
+    ],
+    [
+      "timing_4:search-timing",
+      1
+    ],
+    [
+      "timing_4:search-faq",
+      1
+    ],
+    [
+      "manage_dispute_bill:pull-up-account:albert sanders",
+      1
+    ],
+    [
+      "manage_dispute_bill:membership:silver",
+      1
+    ],
+    [
+      "manage_dispute_bill:ask-the-oracle",
+      1
+    ],
+    [
+      "manage_dispute_bill:verify-identity:albert sanders,85alflg2z,7149958247",
+      1
+    ],
+    [
+      "shirt_how_3:search-shirt",
+      1
+    ],
+    [
+      "shirt_how_3:search-faq",
+      1
+    ],
+    [
+      "policy_3:search-policy",
+      1
+    ],
+    [
+      "policy_3:select-faq:policy_3",
+      1
+    ],
+    [
+      "policy_3:send-link",
+      1
+    ],
+    [
+      "policy_3:search-faq",
+      1
+    ],
+    [
+      "credit_card:enter-details:troubleshoot",
+      1
+    ],
+    [
+      "credit_card:log-out-in",
+      1
+    ],
+    [
+      "policy_2:select-faq:policy_1",
+      1
     ]
   ]
 }

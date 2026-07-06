@@ -1,30 +1,30 @@
 {
   "selected_vertices": [
-    "credit_card:enter-details:troubleshoot",
-    "credit_card:log-out-in",
+    "manage_dispute_bill:ask-the-oracle",
     "manage_dispute_bill:membership:silver",
-    "out_of_stock_one_item:notify-team:purchasing departmen",
-    "out_of_stock_one_item:record-reason:calvin klein jacket",
-    "policy_2:search-faq",
-    "policy_2:search-policy",
-    "policy_2:select-faq:policy_1",
-    "pricing_3:search-faq",
-    "pricing_3:search-pricing",
-    "pricing_3:select-faq:pricing_3",
+    "manage_dispute_bill:pull-up-account:albert sanders",
+    "manage_dispute_bill:verify-identity:albert sanders,85alflg2z,7149958247",
+    "policy_3:search-policy",
     "promo_code_invalid:ask-the-oracle",
     "promo_code_invalid:promo-code",
     "promo_code_invalid:pull-up-account:alessandro phoenix",
+    "promo_code_invalid:pull-up-account:david williams",
+    "promo_code_invalid:pull-up-account:rodriguez domingo",
     "recover_password:make-password",
-    "reset_2fa:send-link",
+    "return_size:membership:silver",
+    "return_size:update-order:by mail",
     "search_results:instructions",
     "search_results:log-out-in",
-    "slow_speed:instructions",
-    "slow_speed:log-out-in",
+    "search_results:search-faq",
+    "search_results:try-again",
+    "shirt_how_3:search-faq",
+    "shirt_how_3:search-shirt",
     "status:ask-the-oracle",
-    "status:pull-up-account:chloe zhang",
     "status_due_amount:pull-up-account:crystal minh",
     "status_due_amount:send-link",
     "status_due_amount:subscription-status",
+    "status_due_date:enter-details:49",
+    "status_due_date:subscription-status",
     "timing_2:search-faq",
     "timing_2:search-timing",
     "timing_2:select-faq:timing_2",
@@ -32,189 +32,189 @@
     "timing_4:search-timing"
   ],
   "num_selected": 30,
-  "coverage": 18,
-  "total_hyperedges": 100,
-  "coverage_pct": 18.0,
+  "coverage": 13,
+  "total_hyperedges": 50,
+  "coverage_pct": 26.0,
   "selection_history": [
     {
-      "vertex": "status:ask-the-oracle",
-      "score": 2.5,
-      "covered_edges": 0,
-      "total_edges": 100
-    },
-    {
       "vertex": "search_results:log-out-in",
-      "score": 2.5,
+      "score": 2.0,
       "covered_edges": 1,
-      "total_edges": 100
-    },
-    {
-      "vertex": "pricing_3:search-pricing",
-      "score": 2.5,
-      "covered_edges": 1,
-      "total_edges": 100
-    },
-    {
-      "vertex": "pricing_3:search-faq",
-      "score": 3.0,
-      "covered_edges": 2,
-      "total_edges": 100
-    },
-    {
-      "vertex": "pricing_3:select-faq:pricing_3",
-      "score": 3,
-      "covered_edges": 5,
-      "total_edges": 100
+      "total_edges": 50
     },
     {
       "vertex": "recover_password:make-password",
       "score": 2.0,
-      "covered_edges": 6,
-      "total_edges": 100
-    },
-    {
-      "vertex": "search_results:instructions",
-      "score": 2.0,
-      "covered_edges": 7,
-      "total_edges": 100
-    },
-    {
-      "vertex": "slow_speed:log-out-in",
-      "score": 2.0,
-      "covered_edges": 8,
-      "total_edges": 100
-    },
-    {
-      "vertex": "slow_speed:instructions",
-      "score": 2,
-      "covered_edges": 10,
-      "total_edges": 100
+      "covered_edges": 2,
+      "total_edges": 50
     },
     {
       "vertex": "promo_code_invalid:promo-code",
       "score": 1.5,
-      "covered_edges": 10,
-      "total_edges": 100
+      "covered_edges": 2,
+      "total_edges": 50
     },
     {
       "vertex": "promo_code_invalid:ask-the-oracle",
       "score": 1.5,
-      "covered_edges": 10,
-      "total_edges": 100
-    },
-    {
-      "vertex": "reset_2fa:send-link",
-      "score": 1.5,
-      "covered_edges": 10,
-      "total_edges": 100
-    },
-    {
-      "vertex": "status_due_amount:send-link",
-      "score": 1.5,
-      "covered_edges": 10,
-      "total_edges": 100
-    },
-    {
-      "vertex": "status_due_amount:subscription-status",
-      "score": 1.5,
-      "covered_edges": 10,
-      "total_edges": 100
-    },
-    {
-      "vertex": "timing_2:search-faq",
-      "score": 1.5,
-      "covered_edges": 10,
-      "total_edges": 100
-    },
-    {
-      "vertex": "timing_2:select-faq:timing_2",
-      "score": 1.5,
-      "covered_edges": 10,
-      "total_edges": 100
-    },
-    {
-      "vertex": "timing_2:search-timing",
-      "score": 2.5,
-      "covered_edges": 12,
-      "total_edges": 100
-    },
-    {
-      "vertex": "status:pull-up-account:chloe zhang",
-      "score": 1.5,
-      "covered_edges": 13,
-      "total_edges": 100
-    },
-    {
-      "vertex": "out_of_stock_one_item:record-reason:calvin klein jacket",
-      "score": 1.5,
-      "covered_edges": 13,
-      "total_edges": 100
-    },
-    {
-      "vertex": "out_of_stock_one_item:notify-team:purchasing departmen",
-      "score": 1.5,
-      "covered_edges": 13,
-      "total_edges": 100
-    },
-    {
-      "vertex": "timing_4:search-faq",
-      "score": 1.0,
-      "covered_edges": 13,
-      "total_edges": 100
-    },
-    {
-      "vertex": "timing_4:search-timing",
-      "score": 1.5,
-      "covered_edges": 14,
-      "total_edges": 100
-    },
-    {
-      "vertex": "manage_dispute_bill:membership:silver",
-      "score": 1.0,
-      "covered_edges": 14,
-      "total_edges": 100
-    },
-    {
-      "vertex": "credit_card:log-out-in",
-      "score": 1.0,
-      "covered_edges": 14,
-      "total_edges": 100
-    },
-    {
-      "vertex": "credit_card:enter-details:troubleshoot",
-      "score": 1.5,
-      "covered_edges": 15,
-      "total_edges": 100
-    },
-    {
-      "vertex": "policy_2:search-policy",
-      "score": 1.0,
-      "covered_edges": 15,
-      "total_edges": 100
-    },
-    {
-      "vertex": "policy_2:search-faq",
-      "score": 1.0,
-      "covered_edges": 15,
-      "total_edges": 100
-    },
-    {
-      "vertex": "policy_2:select-faq:policy_1",
-      "score": 1,
-      "covered_edges": 16,
-      "total_edges": 100
+      "covered_edges": 2,
+      "total_edges": 50
     },
     {
       "vertex": "promo_code_invalid:pull-up-account:alessandro phoenix",
       "score": 1,
-      "covered_edges": 17,
-      "total_edges": 100
+      "covered_edges": 3,
+      "total_edges": 50
+    },
+    {
+      "vertex": "status:ask-the-oracle",
+      "score": 1.0,
+      "covered_edges": 3,
+      "total_edges": 50
+    },
+    {
+      "vertex": "status_due_amount:send-link",
+      "score": 1.0,
+      "covered_edges": 3,
+      "total_edges": 50
+    },
+    {
+      "vertex": "status_due_amount:subscription-status",
+      "score": 1.0,
+      "covered_edges": 3,
+      "total_edges": 50
     },
     {
       "vertex": "status_due_amount:pull-up-account:crystal minh",
       "score": 1,
-      "covered_edges": 18,
-      "total_edges": 100
+      "covered_edges": 4,
+      "total_edges": 50
+    },
+    {
+      "vertex": "status_due_date:subscription-status",
+      "score": 1.0,
+      "covered_edges": 4,
+      "total_edges": 50
+    },
+    {
+      "vertex": "status_due_date:enter-details:49",
+      "score": 1.0,
+      "covered_edges": 4,
+      "total_edges": 50
+    },
+    {
+      "vertex": "promo_code_invalid:pull-up-account:rodriguez domingo",
+      "score": 1,
+      "covered_edges": 5,
+      "total_edges": 50
+    },
+    {
+      "vertex": "search_results:instructions",
+      "score": 1.0,
+      "covered_edges": 5,
+      "total_edges": 50
+    },
+    {
+      "vertex": "search_results:try-again",
+      "score": 1,
+      "covered_edges": 6,
+      "total_edges": 50
+    },
+    {
+      "vertex": "search_results:search-faq",
+      "score": 1,
+      "covered_edges": 7,
+      "total_edges": 50
+    },
+    {
+      "vertex": "promo_code_invalid:pull-up-account:david williams",
+      "score": 1,
+      "covered_edges": 8,
+      "total_edges": 50
+    },
+    {
+      "vertex": "timing_2:search-faq",
+      "score": 1.0,
+      "covered_edges": 8,
+      "total_edges": 50
+    },
+    {
+      "vertex": "timing_2:search-timing",
+      "score": 1.0,
+      "covered_edges": 8,
+      "total_edges": 50
+    },
+    {
+      "vertex": "timing_2:select-faq:timing_2",
+      "score": 2,
+      "covered_edges": 10,
+      "total_edges": 50
+    },
+    {
+      "vertex": "return_size:update-order:by mail",
+      "score": 1.0,
+      "covered_edges": 10,
+      "total_edges": 50
+    },
+    {
+      "vertex": "return_size:membership:silver",
+      "score": 1.0,
+      "covered_edges": 10,
+      "total_edges": 50
+    },
+    {
+      "vertex": "timing_4:search-timing",
+      "score": 0.5,
+      "covered_edges": 10,
+      "total_edges": 50
+    },
+    {
+      "vertex": "timing_4:search-faq",
+      "score": 1,
+      "covered_edges": 11,
+      "total_edges": 50
+    },
+    {
+      "vertex": "manage_dispute_bill:pull-up-account:albert sanders",
+      "score": 0.5,
+      "covered_edges": 11,
+      "total_edges": 50
+    },
+    {
+      "vertex": "manage_dispute_bill:membership:silver",
+      "score": 0.5,
+      "covered_edges": 11,
+      "total_edges": 50
+    },
+    {
+      "vertex": "manage_dispute_bill:ask-the-oracle",
+      "score": 0.5,
+      "covered_edges": 11,
+      "total_edges": 50
+    },
+    {
+      "vertex": "manage_dispute_bill:verify-identity:albert sanders,85alflg2z,7149958247",
+      "score": 1,
+      "covered_edges": 12,
+      "total_edges": 50
+    },
+    {
+      "vertex": "shirt_how_3:search-shirt",
+      "score": 0.5,
+      "covered_edges": 12,
+      "total_edges": 50
+    },
+    {
+      "vertex": "shirt_how_3:search-faq",
+      "score": 1,
+      "covered_edges": 13,
+      "total_edges": 50
+    },
+    {
+      "vertex": "policy_3:search-policy",
+      "score": 0.5,
+      "covered_edges": 13,
+      "total_edges": 50
     }
   ]
 }
