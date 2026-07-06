@@ -111,23 +111,24 @@ def main():
         batch_metrics.append({"batch": batch_idx, "summary": result.get("summary", "")})
         log.info(f"  {result['summary']}")
 
-        # 3. Update memory with good responses
-        per_dialogue = result.get("per_dialogue", [])
-        if per_dialogue:
-            agent.update_memory(batch, preds, per_dialogue)
-        else:
-            # No per_dialogue for ABCD — store all as exemplars
-            for conv, pred in zip(batch, preds):
-                scenario = conv.get("scenario", {})
-                if pred.response_text:
-                    memory.add_dict({
-                        "dialogue_id": f"abcd-{conv.get('convo_id', '?')}",
-                        "domains": [scenario.get("flow", "?"), scenario.get("subflow", "?")],
-                        "goal": f"{scenario.get('flow', '?')}/{scenario.get('subflow', '?')}",
-                        "trajectory": pred.response_text[:1000],
-                    })
+        # 3. Build per-dialogue metrics for induction + memory
+        text_metrics = result.get("text", {})
+        per_sample = text_metrics.get("per_sample", []) if isinstance(text_metrics, dict) else []
+        eval_dicts = [
+            {"bert_f1": s.get("bert_f1", 0)} if isinstance(s, dict) else {"bert_f1": 0}
+            for s in per_sample
+        ]
+        # Pad if per_sample is shorter than batch
+        while len(eval_dicts) < len(batch):
+            eval_dicts.append({"bert_f1": 0})
 
-        # 4. Checkpoint
+        # 4. Induce workflow from this batch
+        agent.induce(batch, preds, eval_dicts)
+
+        # 5. Update memory with good responses
+        agent.update_memory(batch, preds, eval_dicts)
+
+        # 7. Checkpoint
         if batch_idx % CHECKPOINT_EVERY == 0:
             ckpt_dir = OUT_DIR / "checkpoints" / f"batch_{batch_idx:04d}"
             ckpt_dir.mkdir(parents=True, exist_ok=True)

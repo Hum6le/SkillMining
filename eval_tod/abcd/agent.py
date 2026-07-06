@@ -234,6 +234,65 @@ class ABCDAgent(AbstractTodAgent):
 
         return base
 
+    def induce(
+        self,
+        dialogues,
+        predictions,
+        eval_results: list[dict],
+    ) -> str:
+        """Induce workflow patterns from a batch of ABCD dialogues.
+
+        LLM analyzes the generated responses alongside scenario context to
+        extract reusable patterns for each flow/subflow.
+        """
+        from llm import chat
+
+        # Build a summary of this batch for the LLM
+        lines = ["## Batch Summary"]
+        for conv, pred, metrics in zip(dialogues, predictions, eval_results):
+            scenario = conv.get("scenario", {})
+            flow = scenario.get("flow", "?")
+            subflow = scenario.get("subflow", "?")
+            bert_f1 = metrics.get("bert_f1", 0)
+            lines.append(
+                f"- {flow}/{subflow} (convo={conv.get('convo_id','?')}): "
+                f"bert_f1={bert_f1:.3f}  "
+                f"gen={pred.response_text[:120] if pred.response_text else '(empty)'}"
+            )
+
+        prompt = (
+            "You are analyzing customer service agent responses across multiple dialogues. "
+            "Identify reusable workflow patterns that lead to good responses.\n\n"
+            + "\n".join(lines[:60])  # limit to 60 items
+            + "\n\n## Existing Workflow (update with new insights)\n"
+            + (self.workflow.text if self.workflow else "(none)")
+            + "\n\n## Output Format\n"
+            "### [Flow/Subflow] - [Pattern Name]\n"
+            "**When**: [condition]\n"
+            "**Do**: [strategy for generating a good response]\n"
+            "**Avoid**: [common mistakes]\n"
+        )
+
+        pattern = ""
+        try:
+            pattern = chat(
+                prompt,
+                model=self.model,
+                api_key=self.api_key,
+                base_url=self.base_url,
+                temperature=0.0,
+                max_tokens=2048,
+            ).strip()
+        except Exception as exc:
+            print(f"  [ABCD induce] LLM error: {exc}")
+
+        if pattern.strip():
+            self.workflow.update(pattern)
+            n_lines = len(pattern.splitlines())
+            print(f"  [AWM] Induced workflow: {n_lines} lines")
+
+        return pattern
+
     def update_memory(self, dialogues, predictions, eval_results: list[dict]):
         """Store successful dialogues as exemplars (for AWM)."""
         for conv, pred, metrics in zip(dialogues, predictions, eval_results):

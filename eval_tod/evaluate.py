@@ -241,6 +241,7 @@ def evaluate_all(
                     "rouge_2": text_result.rouge_2,
                     "rouge_l": text_result.rouge_l,
                     "num_samples": text_result.num_samples,
+                    "per_sample": text_result.per_sample,
                 }
             except Exception as e:
                 result["text"] = {"error": str(e)}
