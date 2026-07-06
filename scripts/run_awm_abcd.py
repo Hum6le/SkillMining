@@ -20,6 +20,11 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+# Ensure project root is on sys.path
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 # ── Config ────────────────────────────────────────────────────
 ABCD_DIR = "data/eval/abcd/data"
 BATCH_SIZE = 20             # dialogues per batch
