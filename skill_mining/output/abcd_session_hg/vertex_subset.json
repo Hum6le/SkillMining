@@ -1,0 +1,220 @@
+{
+  "selected_vertices": [
+    "credit_card:enter-details:troubleshoot",
+    "credit_card:log-out-in",
+    "manage_dispute_bill:membership:silver",
+    "out_of_stock_one_item:notify-team:purchasing departmen",
+    "out_of_stock_one_item:record-reason:calvin klein jacket",
+    "policy_2:search-faq",
+    "policy_2:search-policy",
+    "policy_2:select-faq:policy_1",
+    "pricing_3:search-faq",
+    "pricing_3:search-pricing",
+    "pricing_3:select-faq:pricing_3",
+    "promo_code_invalid:ask-the-oracle",
+    "promo_code_invalid:promo-code",
+    "promo_code_invalid:pull-up-account:alessandro phoenix",
+    "recover_password:make-password",
+    "reset_2fa:send-link",
+    "search_results:instructions",
+    "search_results:log-out-in",
+    "slow_speed:instructions",
+    "slow_speed:log-out-in",
+    "status:ask-the-oracle",
+    "status:pull-up-account:chloe zhang",
+    "status_due_amount:pull-up-account:crystal minh",
+    "status_due_amount:send-link",
+    "status_due_amount:subscription-status",
+    "timing_2:search-faq",
+    "timing_2:search-timing",
+    "timing_2:select-faq:timing_2",
+    "timing_4:search-faq",
+    "timing_4:search-timing"
+  ],
+  "num_selected": 30,
+  "coverage": 18,
+  "total_hyperedges": 100,
+  "coverage_pct": 18.0,
+  "selection_history": [
+    {
+      "vertex": "status:ask-the-oracle",
+      "score": 2.5,
+      "covered_edges": 0,
+      "total_edges": 100
+    },
+    {
+      "vertex": "search_results:log-out-in",
+      "score": 2.5,
+      "covered_edges": 1,
+      "total_edges": 100
+    },
+    {
+      "vertex": "pricing_3:search-pricing",
+      "score": 2.5,
+      "covered_edges": 1,
+      "total_edges": 100
+    },
+    {
+      "vertex": "pricing_3:search-faq",
+      "score": 3.0,
+      "covered_edges": 2,
+      "total_edges": 100
+    },
+    {
+      "vertex": "pricing_3:select-faq:pricing_3",
+      "score": 3,
+      "covered_edges": 5,
+      "total_edges": 100
+    },
+    {
+      "vertex": "recover_password:make-password",
+      "score": 2.0,
+      "covered_edges": 6,
+      "total_edges": 100
+    },
+    {
+      "vertex": "search_results:instructions",
+      "score": 2.0,
+      "covered_edges": 7,
+      "total_edges": 100
+    },
+    {
+      "vertex": "slow_speed:log-out-in",
+      "score": 2.0,
+      "covered_edges": 8,
+      "total_edges": 100
+    },
+    {
+      "vertex": "slow_speed:instructions",
+      "score": 2,
+      "covered_edges": 10,
+      "total_edges": 100
+    },
+    {
+      "vertex": "promo_code_invalid:promo-code",
+      "score": 1.5,
+      "covered_edges": 10,
+      "total_edges": 100
+    },
+    {
+      "vertex": "promo_code_invalid:ask-the-oracle",
+      "score": 1.5,
+      "covered_edges": 10,
+      "total_edges": 100
+    },
+    {
+      "vertex": "reset_2fa:send-link",
+      "score": 1.5,
+      "covered_edges": 10,
+      "total_edges": 100
+    },
+    {
+      "vertex": "status_due_amount:send-link",
+      "score": 1.5,
+      "covered_edges": 10,
+      "total_edges": 100
+    },
+    {
+      "vertex": "status_due_amount:subscription-status",
+      "score": 1.5,
+      "covered_edges": 10,
+      "total_edges": 100
+    },
+    {
+      "vertex": "timing_2:search-faq",
+      "score": 1.5,
+      "covered_edges": 10,
+      "total_edges": 100
+    },
+    {
+      "vertex": "timing_2:select-faq:timing_2",
+      "score": 1.5,
+      "covered_edges": 10,
+      "total_edges": 100
+    },
+    {
+      "vertex": "timing_2:search-timing",
+      "score": 2.5,
+      "covered_edges": 12,
+      "total_edges": 100
+    },
+    {
+      "vertex": "status:pull-up-account:chloe zhang",
+      "score": 1.5,
+      "covered_edges": 13,
+      "total_edges": 100
+    },
+    {
+      "vertex": "out_of_stock_one_item:record-reason:calvin klein jacket",
+      "score": 1.5,
+      "covered_edges": 13,
+      "total_edges": 100
+    },
+    {
+      "vertex": "out_of_stock_one_item:notify-team:purchasing departmen",
+      "score": 1.5,
+      "covered_edges": 13,
+      "total_edges": 100
+    },
+    {
+      "vertex": "timing_4:search-faq",
+      "score": 1.0,
+      "covered_edges": 13,
+      "total_edges": 100
+    },
+    {
+      "vertex": "timing_4:search-timing",
+      "score": 1.5,
+      "covered_edges": 14,
+      "total_edges": 100
+    },
+    {
+      "vertex": "manage_dispute_bill:membership:silver",
+      "score": 1.0,
+      "covered_edges": 14,
+      "total_edges": 100
+    },
+    {
+      "vertex": "credit_card:log-out-in",
+      "score": 1.0,
+      "covered_edges": 14,
+      "total_edges": 100
+    },
+    {
+      "vertex": "credit_card:enter-details:troubleshoot",
+      "score": 1.5,
+      "covered_edges": 15,
+      "total_edges": 100
+    },
+    {
+      "vertex": "policy_2:search-policy",
+      "score": 1.0,
+      "covered_edges": 15,
+      "total_edges": 100
+    },
+    {
+      "vertex": "policy_2:search-faq",
+      "score": 1.0,
+      "covered_edges": 15,
+      "total_edges": 100
+    },
+    {
+      "vertex": "policy_2:select-faq:policy_1",
+      "score": 1,
+      "covered_edges": 16,
+      "total_edges": 100
+    },
+    {
+      "vertex": "promo_code_invalid:pull-up-account:alessandro phoenix",
+      "score": 1,
+      "covered_edges": 17,
+      "total_edges": 100
+    },
+    {
+      "vertex": "status_due_amount:pull-up-account:crystal minh",
+      "score": 1,
+      "covered_edges": 18,
+      "total_edges": 100
+    }
+  ]
+}

@@ -1,0 +1,2062 @@
+[
+  {
+    "session_id": "4989",
+    "index": 0,
+    "ordered_operations": [
+      [
+        "timing_4",
+        "search-faq"
+      ],
+      [
+        "timing_4",
+        "search-timing"
+      ]
+    ],
+    "dialogue": "hello. how can i help you today? hi.  my name is chloe zhang.  i am curious as to when my promo code expires. would you be able to tell me? yes let me look into this im sure we can find a solution searching the faq pages ... system action: search timing okay i've looked into this for you promo codes will expire 7 days after they are issued. ok. is there anything else i can help you with? no that is all for today.  thank you."
+  },
+  {
+    "session_id": "4512",
+    "index": 1,
+    "ordered_operations": [
+      [
+        "manage_dispute_bill",
+        "pull-up-account:albert sanders"
+      ],
+      [
+        "manage_dispute_bill",
+        "verify-identity:albert sanders,85alflg2z,7149958247"
+      ],
+      [
+        "manage_dispute_bill",
+        "membership:silver"
+      ],
+      [
+        "manage_dispute_bill",
+        "ask-the-oracle"
+      ]
+    ],
+    "dialogue": "hi! how may i help you? hello. i recently signed up for a subscription but it looks like you guys charged me twice for it. i see, let's fix that. may i have your full name, account and order ids? sure, it's albert sanders and my account id is <account_id> account has been pulled up for albert sanders. do you have an order id? yes its <order_id> identity verification in progress ... thank you, what is your membership status? silver membership level of silver has been noted. i see, and what was th"
+  },
+  {
+    "session_id": "5063",
+    "index": 2,
+    "ordered_operations": [
+      [
+        "shirt_how_3",
+        "search-faq"
+      ],
+      [
+        "shirt_how_3",
+        "search-shirt"
+      ]
+    ],
+    "dialogue": "hello! how can i help you today? i'm thinking about buying an item but first i would like to get some more info on the product sure. i can help you with that. what item are you looking for more information on? the tommy hilifiger shirt and what would you like to know about it? i would like to know how long is the arm length sure give me one second and i can find that out for you ok searching the faq pages ... system action: search shirt do you know what sizes you were considering? large the slee"
+  },
+  {
+    "session_id": "1694",
+    "index": 3,
+    "ordered_operations": [
+      [
+        "policy_3",
+        "search-faq"
+      ],
+      [
+        "policy_3",
+        "search-policy"
+      ],
+      [
+        "policy_3",
+        "select-faq:policy_3"
+      ],
+      [
+        "policy_3",
+        "send-link"
+      ]
+    ],
+    "dialogue": "hello, thank you for contacting us today. how can i help you? how do you cancel a subscription? i'm sorry to hear that you might want to cancel your subscription. did something happen that made you want to do this? no, not at all.  i was just thinking of ordering some things and i don't want to if the cancelation process is too hard. alright let me see what i can find for you. searching the faq pages ... system action: search policy faq answer related to policy (question3) was selected. so, you "
+  },
+  {
+    "session_id": "8068",
+    "index": 4,
+    "ordered_operations": [
+      [
+        "credit_card",
+        "enter-details:troubleshoot"
+      ],
+      [
+        "credit_card",
+        "log-out-in"
+      ]
+    ],
+    "dialogue": "hello, thank you for contacting acmecorp, how may i help you today? hi. i am trying to make a purchase but my credit card keeps declining. i would happy to help you with this. lets try a few things, first can you look at the expiration date on the card to make sure it is still valid? ok details of troubleshoot have been entered. yes - it is still valid lets try to log out and log back in. agent is looking for solutions ... okay one minute while i try that no problem, take your time. that worked!"
+  },
+  {
+    "session_id": "7462",
+    "index": 5,
+    "ordered_operations": [
+      [
+        "policy_2",
+        "search-faq"
+      ],
+      [
+        "policy_2",
+        "search-policy"
+      ],
+      [
+        "policy_2",
+        "select-faq:policy_1"
+      ]
+    ],
+    "dialogue": "thank you for shopping with acmebrands! how may i assist you? hi, i was wondering what the return policy is as i am torn between two sizes. searching the faq pages ... system action: search policy faq answer related to policy (question1) was selected. our return policy depends on what membership level you are. gold members can return unlimited items; silver members can make returns for anything purchased within the last 6 months; bronze members can make returns for anything purchased in the last"
+  },
+  {
+    "session_id": "3585",
+    "index": 6,
+    "ordered_operations": [
+      [
+        "promo_code_invalid",
+        "pull-up-account:alessandro phoenix"
+      ],
+      [
+        "promo_code_invalid",
+        "ask-the-oracle"
+      ],
+      [
+        "promo_code_invalid",
+        "promo-code"
+      ]
+    ],
+    "dialogue": "hello, how can i help you today? hi.  my name is alessandro phoenix.  my order id is <order_id>.  the promo code i tried to use on these michael kors jeans keeps saying it's invalid. i just received this code 2 days ago. i am very sorry to hear that.  let me check on this information. account has been pulled up for alessandro phoenix. i am going to check with the system about this, give me one more moment. querying the system for an answer ... ok this seems to be an error on our part.  i am goin"
+  },
+  {
+    "session_id": "1136",
+    "index": 7,
+    "ordered_operations": [
+      [
+        "reset_2fa",
+        "pull-up-account:chloe zhang"
+      ],
+      [
+        "reset_2fa",
+        "enter-details:czhang14@email.com"
+      ],
+      [
+        "reset_2fa",
+        "send-link"
+      ]
+    ],
+    "dialogue": "how can i help you today? hi! i was wanting to check my account today.. but i don't  have my phone that i used to set up my authentication. you are trying to log in to your account, correct? that's correct. do you need to reset your authentication? yes, that would be helpful! great, i can help you with that. may i get your full name or account id so i can pull up your account. chloe zhang account has been pulled up for chloe zhang. great, found it. now can i get your email address for me to send"
+  },
+  {
+    "session_id": "1601",
+    "index": 8,
+    "ordered_operations": [
+      [
+        "boots_other_3",
+        "pull-up-account:norman bouchard"
+      ],
+      [
+        "boots_other_3",
+        "notify-team:michael kors boots s"
+      ],
+      [
+        "boots_other_3",
+        "make-purchase:michael kors boots, "
+      ]
+    ],
+    "dialogue": "thanks for contacting acme.  how may i help you today? i'm looking at a pair of boots on your website and the size i want says unavailable. oh, i'm sorry to hear that.  let me see what i can do i may be able to help with this, may i ask your full name and account id before we begin? norman bouchard i might not be able to find the item for you, but i should still be able to let our purchasing department know what it is that you were looking for i don't have my account id account has been pulled u"
+  },
+  {
+    "session_id": "5735",
+    "index": 9,
+    "ordered_operations": [
+      [
+        "status",
+        "pull-up-account:joseph banter"
+      ],
+      [
+        "status",
+        "verify-identity:joseph banter,zpssknguqr,9503594314"
+      ],
+      [
+        "status",
+        "validate-purchase:josephb3,josephb3@email.com,9503594314"
+      ],
+      [
+        "status",
+        "ask-the-oracle"
+      ],
+      [
+        "status",
+        "update-order:change date"
+      ]
+    ],
+    "dialogue": "hello! thank you for choosing acmebrands. how may i assist you? i need to make sure i am getting my package tomorrow i got an email stating it would be delivered some other time i'll be glad to help you with that. would you provide your full name, please? joseph banter account has been pulled up for joseph banter. thank you, joseph! to continue assisting you, may i please get your account id and order id? account id: <account_id> <order_id> identity verification in progress ... thank you! to con"
+  },
+  {
+    "session_id": "960",
+    "index": 10,
+    "ordered_operations": [
+      [
+        "status_due_amount",
+        "pull-up-account:crystal minh"
+      ],
+      [
+        "status_due_amount",
+        "subscription-status"
+      ],
+      [
+        "status_due_amount",
+        "send-link"
+      ]
+    ],
+    "dialogue": "hi, how can i help you? i'm needing to check on the status of my subscription. let me check on that for you. one moment please. can i have your full name or account id? crystal minh account has been pulled up for crystal minh. my account id is <account_id> and what is your question about your subscription? i would like to check on the status to make sure i still have it. do you have an order id? <order_id> querying the system for subscription status ... you do have an active subscription. howeve"
+  },
+  {
+    "session_id": "2341",
+    "index": 11,
+    "ordered_operations": [
+      [
+        "search_results",
+        "log-out-in"
+      ]
+    ],
+    "dialogue": "hello i need some help sure what cna i help you with i keep trying to search for a jacket for my sister's birthday but every time there are 0 results what's happening?? sure! can you please try logging out and logging backin? ok did that work agent is looking for solutions ... are you there?"
+  },
+  {
+    "session_id": "10365",
+    "index": 12,
+    "ordered_operations": [
+      [
+        "status_due_date",
+        "pull-up-account:albert sanders"
+      ],
+      [
+        "status_due_date",
+        "verify-identity:albert sanders,h8ittb2wvx,4945110432"
+      ],
+      [
+        "status_due_date",
+        "subscription-status"
+      ],
+      [
+        "status_due_date",
+        "enter-details:49"
+      ],
+      [
+        "status_due_date",
+        "send-link"
+      ]
+    ],
+    "dialogue": "hello, thanks for contacting acmebrands. how can i help today? hi, this is albert sanders, gold member i have a premium subscription with acme brands, but i'm having a bit of trouble finding my account details i see, are you needing help accessing your account? yes, well, really i just want to know when my annual fee is due.  i can pay it today if there's anything outstanding account has been pulled up for albert sanders. do you have your account id and order id albert? yes, i do: <account_id> <"
+  },
+  {
+    "session_id": "5231",
+    "index": 13,
+    "ordered_operations": [
+      [
+        "recover_password",
+        "pull-up-account:alessandro phoenix"
+      ],
+      [
+        "recover_password",
+        "verify-identity:alessandro phoenix,57820,(499) 412-7409"
+      ],
+      [
+        "recover_password",
+        "enter-details:aphoenix1"
+      ],
+      [
+        "recover_password",
+        "make-password"
+      ]
+    ],
+    "dialogue": "hello and thank you for contacting acmebrand. how may i help you? hello! i'd like to check my order status, but i forgot my password. oh alright, that shou;dn't be too much of an issue. let's try to get your password reset. thank you could you give me you full name so i can pull up your account please? yes, it is alessandro phoenix account has been pulled up for alessandro phoenix. alright the next bit of information i'll need is your username. do you have that available? i don't, sorry. would m"
+  },
+  {
+    "session_id": "5485",
+    "index": 14,
+    "ordered_operations": [
+      [
+        "shopping_cart",
+        "try-again"
+      ],
+      [
+        "shopping_cart",
+        "log-out-in"
+      ],
+      [
+        "shopping_cart",
+        "enter-details:troubleshoot"
+      ]
+    ],
+    "dialogue": "hi how can i help you? whenever i try to add anything to my cart it won't add oh i hate when that happens will you please refresh the page & try again? agent is looking for solutions ... okay i tried that but it's still not adding it please log out of your account & log in again agent is looking for solutions ... i tried that but it still doesn't seem to be working. perhaps it is out of stock should say on the bottom left side of the product page details of troubleshoot have been entered. oh my "
+  },
+  {
+    "session_id": "10061",
+    "index": 15,
+    "ordered_operations": [
+      [
+        "manage_upgrade",
+        "pull-up-account:rodriguez domingo"
+      ],
+      [
+        "manage_upgrade",
+        "verify-identity:rodriguez domingo,vgcpyovmue,7271188178"
+      ],
+      [
+        "manage_upgrade",
+        "shipping-status:out for delivery"
+      ]
+    ],
+    "dialogue": "hello! thank you for shopping with acmebrands. how may i assist you? i was wondering if i could upgrade my shipping status i'll be glad to help you with that. may i get your full name, please? rodriguez domingo account has been pulled up for rodriguez domingo. to continue assisting you, may i please get your account id and order id? <account_id> <order_id> identity verification in progress ... what is the shipping status on your order? it may be \"order received\", \"in transit\", \"out for delivery\""
+  },
+  {
+    "session_id": "5718",
+    "index": 16,
+    "ordered_operations": [
+      [
+        "status_service_added",
+        "pull-up-account:crystal minh"
+      ],
+      [
+        "status_service_added",
+        "record-reason:spouse"
+      ],
+      [
+        "status_service_added",
+        "ask-the-oracle"
+      ]
+    ],
+    "dialogue": "thank you for shopping with acmebrands! how may i assist you? hi! i have a question about my account. i noticed that when looking for the status of it, i was signed up for a subscription service i didn't authorize that i see. let's see what we can find out! may i have your full name? my name is crystal minh account has been pulled up for crystal minh. thank you. how did you find out that this happened? my husband was checking the status of the account and he noticed the subscription had been add"
+  },
+  {
+    "session_id": "1941",
+    "index": 17,
+    "ordered_operations": [
+      [
+        "manage_change_phone",
+        "pull-up-account:albert sanders"
+      ],
+      [
+        "manage_change_phone",
+        "record-reason:(609) 646-7423"
+      ],
+      [
+        "manage_change_phone",
+        "verify-identity:23626,as269117,as269117@email.com"
+      ],
+      [
+        "manage_change_phone",
+        "update-account:(609) 646-7433"
+      ]
+    ],
+    "dialogue": "hello, how may i help you? i noticed my phone number was wrong and i need to fix it. let me help you with that. so you just want to change the phone number on your account is that correct? that's correct. could i have your full name or account id? albert sanders account has been pulled up for albert sanders. could i have the current phone number on your account? <phone> a reason of <phone> has been recorded. that should be changed to (609) 646-7433 i need to verify your identity, could i have 3 "
+  },
+  {
+    "session_id": "3631",
+    "index": 18,
+    "ordered_operations": [
+      [
+        "promo_code_invalid",
+        "pull-up-account:rodriguez domingo"
+      ],
+      [
+        "promo_code_invalid",
+        "ask-the-oracle"
+      ],
+      [
+        "promo_code_invalid",
+        "promo-code"
+      ]
+    ],
+    "dialogue": "hello hello, how may i help you today? i'm trying to use a promo code but the site says its invalid oh i am sorry to hear that.  let's see what we can do about this. may i have your full name or account id please? rodriguez domingo account has been pulled up for rodriguez domingo. typically promo codes last for 7 days, have you had yours longer than that? no, i got it 5 days ago alright, let me check with our system and see what can be done, one moment please. querying the system for an answer ."
+  },
+  {
+    "session_id": "5334",
+    "index": 19,
+    "ordered_operations": [
+      [
+        "mistimed_billing_already_returned",
+        "pull-up-account:norman bouchard"
+      ],
+      [
+        "mistimed_billing_already_returned",
+        "validate-purchase:normanbouchard902,normanbouchard902@em,9055618082"
+      ],
+      [
+        "mistimed_billing_already_returned",
+        "membership:guest"
+      ]
+    ],
+    "dialogue": "hi, how can i help you i am very upset with this company. sorry this has happened how can i help well, i see a charge on my billing statement that was supposed to have been reversed. i sent the darn jeans back already!!! what is the charge for? $<amount>.00 so you returned jeans and didn't get the credit you were supposed to get? exactly.  finally someone is actually helping me! sorry this happened. i should be able to help can i have your full name or account id please? did you lay off agents b"
+  },
+  {
+    "session_id": "5177",
+    "index": 20,
+    "ordered_operations": [
+      [
+        "search_results",
+        "log-out-in"
+      ],
+      [
+        "search_results",
+        "try-again"
+      ],
+      [
+        "search_results",
+        "instructions"
+      ]
+    ],
+    "dialogue": "acmebrands, how may i help you? the search bar isn't working let me help you with that. are the search results showing no results found? yes agent is looking for solutions ... could you log out and then log back in, and try to search again? i just tried that, it still didn't work. ok agent is looking for solutions ... what product are you searching for? jacket can you put a different product in the search engine, like boots? i put boots, nothing showing up. i am sorry that nothing so far is work"
+  },
+  {
+    "session_id": "399",
+    "index": 21,
+    "ordered_operations": [
+      [
+        "search_results",
+        "search-faq"
+      ],
+      [
+        "search_results",
+        "log-out-in"
+      ],
+      [
+        "search_results",
+        "instructions"
+      ]
+    ],
+    "dialogue": "hello! thank you for contacting us today. how can i help you? hello! hope you can help me out. every time i search for a particular pair of <name>, i can't seem to get any results! can you help me find these? sure! could you try logging out and then logging back into your account first? searching the faq pages ... aw, man - i tried that and it does not seem to be working either. any other sugestions agent is looking for solutions ... how about we try clearing your cookies? you can do this by che"
+  },
+  {
+    "session_id": "1315",
+    "index": 22,
+    "ordered_operations": [
+      [
+        "bad_price_yesterday",
+        "pull-up-account:joyce wu"
+      ],
+      [
+        "bad_price_yesterday",
+        "record-reason:yesterday"
+      ],
+      [
+        "bad_price_yesterday",
+        "verify-identity:joyce wu,axaaqrahzg,6678834038"
+      ]
+    ],
+    "dialogue": "hello, welcome to customer care unit hi. my name is joyce wu.  my account id is <account_id>. how may i help you today? the item i purchased was a lower price yesterday than when i purchased it. is it possible to receive a price adjustment? i am very sorry for the inconvenience. give time to look into this account has been pulled up for joyce wu. i am still looking into it. give me a moment a reason of yesterday has been recorded. i need to verify your identity. give me your order id my order id"
+  },
+  {
+    "session_id": "8141",
+    "index": 23,
+    "ordered_operations": [
+      [
+        "return_size",
+        "pull-up-account:alessandro phoenix"
+      ],
+      [
+        "return_size",
+        "validate-purchase:alessandrop176,alessandrop176@email,4223520702"
+      ],
+      [
+        "return_size",
+        "membership:gold"
+      ],
+      [
+        "return_size",
+        "enter-details:2164 lincoln ave new"
+      ],
+      [
+        "return_size",
+        "enter-details:drop off center"
+      ]
+    ],
+    "dialogue": "i bought the wrong size, i want to return it. thanks for contacting client support, how may i help you today? no problem, can i please get your name so that i can bring up your account? alessandro phoenix account has been pulled up for alessandro phoenix. i need to pull up your order. can i ask for your username, email address and order id? <username> <email> <order_id> purchase validation in progress ... great. can you also give me your membership level? gold membership level of gold has been n"
+  },
+  {
+    "session_id": "965",
+    "index": 24,
+    "ordered_operations": [
+      [
+        "cost",
+        "pull-up-account:david williams"
+      ],
+      [
+        "cost",
+        "record-reason:yesterday"
+      ],
+      [
+        "cost",
+        "verify-identity:david williams,qs1bixhffl,6775971413"
+      ],
+      [
+        "cost",
+        "promo-code"
+      ]
+    ],
+    "dialogue": "welcome to acmebrands, how may i help you? hi, my name is david williams, and i have a question about my recent order. ok, david. i'll pull up your account and have a look. account has been pulled up for david williams. thanks what specifically do you want to know about your order? well, as a regular customer of acmebrands, i feel that the shipping cost is excessive. ok, let me see what i can do about that. are you asking about a mystery fee? no, no mystery fee, just the amount charged for shipp"
+  },
+  {
+    "session_id": "6601",
+    "index": 25,
+    "ordered_operations": [
+      [
+        "recover_password",
+        "pull-up-account:crystal minh"
+      ],
+      [
+        "recover_password",
+        "enter-details:cm374950"
+      ],
+      [
+        "recover_password",
+        "make-password"
+      ]
+    ],
+    "dialogue": "hello, how can i help you today hi i forgot my password to my account. my name is crystal minh. account has been pulled up for  crystal minh.. okay, could i get your username please <username> details of <username> have been entered. a password has been generated. okay, here is your new password 3mihalbfbem you can log in and change it again if you want to. is there anything else i can help you with great. thanks that's all okay, have a nice day"
+  },
+  {
+    "session_id": "4397",
+    "index": 26,
+    "ordered_operations": [
+      [
+        "boots_other_4",
+        "search-faq"
+      ],
+      [
+        "boots_other_4",
+        "search-boots"
+      ]
+    ],
+    "dialogue": "hi! how can i help you? hello i'd like to know more about these tommy hilfiger boots before confirming my purchase from you sure, i'd be happy to help with that. what would you like to know? searching the faq pages ... system action: search boots i'm wondering about their durability and longevity mostly had a lot of boots fall apart after no time at all i'd be interested in a warranty if one were available possilby well these boots have a 12 month warranty starting the date you buy them that is "
+  },
+  {
+    "session_id": "8137",
+    "index": 27,
+    "ordered_operations": [
+      [
+        "promo_code_invalid",
+        "pull-up-account:david williams"
+      ],
+      [
+        "promo_code_invalid",
+        "ask-the-oracle"
+      ],
+      [
+        "promo_code_invalid",
+        "promo-code"
+      ]
+    ],
+    "dialogue": "b141-889b hello, thank you for contacting acmecorp, how may i help you today? i got a promo code two days ago, it doesnt seem to be working though i can check on this for you. may i have your full name or account id please? david williams account has been pulled up for david williams. david are you trying to use the promo now or just have questions about it? trying to use it now it is saying invalid ok can you check the date to make sure it is not expired. yes i just got it two days ago i will c"
+  },
+  {
+    "session_id": "5869",
+    "index": 28,
+    "ordered_operations": [
+      [
+        "out_of_stock_general",
+        "pull-up-account:norman bouchard"
+      ],
+      [
+        "out_of_stock_general",
+        "notify-team:purchasing departmen"
+      ]
+    ],
+    "dialogue": "hello, how can i help you today? i am getting really frustrated because it seems like many of your items are always out of stock. sorry about that. i am glad to help. may i have your  name please? norman bouchard thanks norman. i will write up a report and let the purchasing department know about this, so they can do a better job. account has been pulled up for norman bouchard. the purchasing department  has been notified. okay, thank you. great, is there anything else that i can help you with? "
+  },
+  {
+    "session_id": "6804",
+    "index": 29,
+    "ordered_operations": [
+      [
+        "jeans_other_2",
+        "search-faq"
+      ],
+      [
+        "jeans_other_2",
+        "search-jeans"
+      ],
+      [
+        "jeans_other_2",
+        "select-faq:jeans_other_2"
+      ]
+    ],
+    "dialogue": "icould you please clarify the color i’m not sure if they are dark blue or black welcome to acmebrands. how may i help you? albert sanders ok. the color of what item? michael kors jeans sure. let me look into that. searching the faq pages ... system action: search jeans yes. we have many available colors: deep sea, indigo, equinox, indie blue, sky blue. there are also various shades of brown and black as well. i hope this helps. faq answer related to jeans (other2) was selected. ok is there anyth"
+  },
+  {
+    "session_id": "4019",
+    "index": 30,
+    "ordered_operations": [
+      [
+        "status_due_amount",
+        "pull-up-account:norman bouchard"
+      ],
+      [
+        "status_due_amount",
+        "verify-identity:norman bouchard,8966457472,iey3db2ewk"
+      ],
+      [
+        "status_due_amount",
+        "subscription-status"
+      ],
+      [
+        "status_due_amount",
+        "send-link"
+      ],
+      [
+        "status_due_amount",
+        "enter-details:20"
+      ]
+    ],
+    "dialogue": "hi, how can i help you? what is the status of my subscription i want to keep it sure, let me check up on that for you. what is your full name? norman bouchard account has been pulled up for norman bouchard. thank you, can i have your account id and order id? <order_id> <account_id> identity verification in progress ... querying the system for subscription status ... your subscription is inactive as your bill was due yesterday. a link will be sent. i've sent you a link where you can check on your"
+  },
+  {
+    "session_id": "5700",
+    "index": 31,
+    "ordered_operations": [
+      [
+        "timing_2",
+        "search-faq"
+      ],
+      [
+        "timing_2",
+        "search-timing"
+      ],
+      [
+        "timing_2",
+        "select-faq:timing_2"
+      ]
+    ],
+    "dialogue": "good afternoon, how can i help you? hi! i want to know what time my local store closes oh sure, one moment please searching the faq pages ... system action: search timing faq answer related to timing (question2) was selected. ok, our stores have a standard schedule from 8 am to 11 pm but our webtsite is open 24/7 in case it does not reach the hours of our local stores. thank you so much not problem a pleasure to help you have a nice day"
+  },
+  {
+    "session_id": "9043",
+    "index": 32,
+    "ordered_operations": [
+      [
+        "slow_speed",
+        "log-out-in"
+      ],
+      [
+        "slow_speed",
+        "instructions"
+      ]
+    ],
+    "dialogue": "good afternoon, how can i help you? hi, i am having problems with the website running slow. ok, we will do a series of steps and we will see which one solves the problem first, try to log out of your account and log back in agent is looking for solutions ... okay. done. it is still lagging a bit. is there another solution? yes, try to close all the tabs and other programs that you have apart from our website. agent is looking for solutions ... okay, i did that and refreshed the page and it seems"
+  },
+  {
+    "session_id": "8937",
+    "index": 33,
+    "ordered_operations": [
+      [
+        "timing_2",
+        "search-faq"
+      ],
+      [
+        "timing_2",
+        "search-timing"
+      ],
+      [
+        "timing_2",
+        "select-faq:timing_2"
+      ]
+    ],
+    "dialogue": "welcome, how may i help you? hey, i see somethings i may order can you tell me what time the store closes here locally i am in san lima washington hmm, let me look ty searching the faq pages ... system action: search timing faq answer related to timing (question2) was selected. we encourage our stores to be open from 8am til 11pm of course, online, it is 24/7 so it closes at 11 pm daily and nowadays, ofc, most stores are keeping limited hours okay i will consider that when heading out thanks all"
+  },
+  {
+    "session_id": "7961",
+    "index": 34,
+    "ordered_operations": [
+      [
+        "manage_create",
+        "pull-up-account:joyce wu"
+      ],
+      [
+        "manage_create",
+        "verify-identity:joyce wu,qevpkqtr22,4452385654"
+      ],
+      [
+        "manage_create",
+        "shipping-status:delivered"
+      ]
+    ],
+    "dialogue": "hello, how may i help you today? i forgot to add jeans that. i love to my order can you help me adjust my order to add the extra item i am sure we can do that, let's find out. my name is joyce wu order id: <order_id> of course, one moment. account has been pulled up for joyce wu. may i have your account id please? <account_id> identity verification in progress ... thank you for that, do you happen to know your shipping status?  such as in transit or out for delivery etc? delivered shipping statu"
+  },
+  {
+    "session_id": "3685",
+    "index": 35,
+    "ordered_operations": [
+      [
+        "membership_1",
+        "search-faq"
+      ],
+      [
+        "membership_1",
+        "search-membership"
+      ],
+      [
+        "membership_1",
+        "search-policy"
+      ],
+      [
+        "membership_1",
+        "select-faq:membership_1"
+      ]
+    ],
+    "dialogue": "welcome to acmebrands. how may i help? hi.  my name is david williams.  i wanted to inquire what each of the membership levels entails? ok. let me check. searching the faq pages ... system action: search membership system action: search policy we have bronze, silver, and gold. faq answer related to membership (question1) was selected. gold has unlimited returns bronze and silver have extended periods for returns it allows you to try items and return if not satisfied anything else? that's it for "
+  },
+  {
+    "session_id": "9243",
+    "index": 36,
+    "ordered_operations": [
+      [
+        "shirt_how_2",
+        "search-faq"
+      ],
+      [
+        "shirt_how_2",
+        "search-shirt"
+      ],
+      [
+        "shirt_how_2",
+        "select-faq:shirt_how_2"
+      ]
+    ],
+    "dialogue": "hi hi, there.  how may i help you? i want to know more about a product, it is a shirt, i would like to know how to wash it okay, which shirt is it specifically? searching the faq pages ... system action: search shirt product: shirt brand: guess faq answer related to shirt (how2) was selected. white with guess logo and question mark okay, i have it pulled up. you can wash it normally in the washing machine, but we do recommend using a color guard with bleach detergent to maintain the color. thank"
+  },
+  {
+    "session_id": "4389",
+    "index": 37,
+    "ordered_operations": [
+      [
+        "mistimed_billing_never_bought",
+        "pull-up-account:sanya afzal"
+      ],
+      [
+        "mistimed_billing_never_bought",
+        "validate-purchase:sa007651,sa007651@email.com,7375793593"
+      ],
+      [
+        "mistimed_billing_never_bought",
+        "ask-the-oracle"
+      ],
+      [
+        "mistimed_billing_never_bought",
+        "update-order:give credit"
+      ]
+    ],
+    "dialogue": "hello i have a charge on my account for something i did not buy hello sorry about this can i have your full name or account id sanya afzal account has been pulled up for sanya afzal. <order_id> i never placed that order number please give me your username, email and order id <username> <email> order is above purchase validation in progress ... querying the system for an answer ... i have checked my system and you are right i will process the credit now thanks a ton order has been updated with gi"
+  },
+  {
+    "session_id": "4588",
+    "index": 38,
+    "ordered_operations": [
+      [
+        "jacket_other_3",
+        "search-faq"
+      ],
+      [
+        "jacket_other_3",
+        "search-jacket"
+      ],
+      [
+        "jacket_other_3",
+        "select-faq:jacket_other_3"
+      ]
+    ],
+    "dialogue": "welcome to acmebrands. how may i help? hi! i was looking at the tommy hilfiger winter jacket. do you know what degree it covers for chill? ok. let me check. searching the faq pages ... also, whats the lining comprised of? system action: search jacket faq answer related to jacket (other3) was selected. yes. it is made of insulation material and is windproof. the synthetic materials are: polyester, nylon, tricot optimized to retain body heat anything else? nope, that should do it. thanks!"
+  },
+  {
+    "session_id": "4162",
+    "index": 39,
+    "ordered_operations": [
+      [
+        "return_size",
+        "pull-up-account:albert sanders"
+      ],
+      [
+        "return_size",
+        "validate-purchase:asanders869,asanders869@email.co,4800317848"
+      ],
+      [
+        "return_size",
+        "membership:silver"
+      ],
+      [
+        "return_size",
+        "enter-details:7640 circle drive br"
+      ],
+      [
+        "return_size",
+        "update-order:by mail"
+      ]
+    ],
+    "dialogue": "hello, how can i help you hi i want to start a return, the item i received was the wrong size. my name is albert sanders and my order id is <order_id> id happily help you with that. account has been pulled up for albert sanders . thanks, i bought these boots in size 9 but they really hurt my feet okay i found your account, albert. now i need your email address and username <email> username: <username> purchase validation in progress ... thank you i was able to validate your purhcase. now what le"
+  },
+  {
+    "session_id": "6156",
+    "index": 40,
+    "ordered_operations": [
+      [
+        "status_due_date",
+        "pull-up-account:alessandro phoenix"
+      ],
+      [
+        "status_due_date",
+        "verify-identity:alessandro phoenix,ak3cc44kji,0386320588"
+      ],
+      [
+        "status_due_date",
+        "subscription-status"
+      ],
+      [
+        "status_due_date",
+        "enter-details:49"
+      ],
+      [
+        "status_due_date",
+        "update-account:extend subscription"
+      ]
+    ],
+    "dialogue": "hi! how can i help you? yes i would like  to check the status of my subscription. i would like to keep. trying to see when the annual fee is due and if its today i would like to pay it, if i owe anything sure, i can look into that for you. what is your full name? alessandro phoenix and my account id <account_id> also my order id is  <order_id> account has been pulled up for alessandro phoenix. identity verification in progress ... querying the system for subscription status ... thank you for all"
+  },
+  {
+    "session_id": "8904",
+    "index": 41,
+    "ordered_operations": [
+      [
+        "status",
+        "pull-up-account:chloe zhang"
+      ],
+      [
+        "status",
+        "verify-identity:chloe zhang,efmsbyorkr,5098745716"
+      ],
+      [
+        "status",
+        "validate-purchase:cz565425,cz565425@email.com,5098745716"
+      ],
+      [
+        "status",
+        "ask-the-oracle"
+      ]
+    ],
+    "dialogue": "hi, how can i help you? hi i want to make sure the items i ordered are actually being shipped because i got an email saying it was another item. my name is chloe zhang account has been pulled up for chloe zhang. thanks, chloe. i'll also need your account and order id. account id: <account_id> order id: <order_id> identity verification in progress ... the item i purchased was boots by guess thanks, last thing i need is your username and email. email address: <email> username: <username> purchase "
+  },
+  {
+    "session_id": "3550",
+    "index": 42,
+    "ordered_operations": [
+      [
+        "pricing_3",
+        "search-faq"
+      ],
+      [
+        "pricing_3",
+        "search-pricing"
+      ]
+    ],
+    "dialogue": "hello, thank you for contacting acmebrand. how may i help you? hi! i wanted to buy a couple of items and wanted to inquire about your overnight shipping charges sure thing. let me look into that for you. i need the items in a couple of days or else they are useless searching the faq pages ... system action: search pricing thank you so overnight shipping dos not depend on the distance it is shipping but instead on the weight. the classes for the weight are 5 lbs or less for $40, 10lbs or less 54."
+  },
+  {
+    "session_id": "169",
+    "index": 43,
+    "ordered_operations": [
+      [
+        "missing",
+        "validate-purchase:jbanter1,jbanter1@email.com,8310323014"
+      ],
+      [
+        "missing",
+        "update-order:change address"
+      ],
+      [
+        "missing",
+        "update-order:change order"
+      ],
+      [
+        "missing",
+        "make-purchase:michael kors jeans"
+      ]
+    ],
+    "dialogue": "hello! what's your name and how may i help you today? hi. i never received my package. can i please get it resent? i'm sorry. my name is joseph banter of course, first let me verify the purchase in order to help you. may i have your order id, email and username, joseph? <order_id> <email> user name is <username> how long have you been waiting for your order? 3 weeks it says right here the order failed. let me get you a new one! may i have your address to send it? thank you! <street_address> mont"
+  },
+  {
+    "session_id": "6657",
+    "index": 44,
+    "ordered_operations": [
+      [
+        "shirt_how_1",
+        "search-faq"
+      ],
+      [
+        "shirt_how_1",
+        "search-shirt"
+      ],
+      [
+        "shirt_how_1",
+        "select-faq:shirt_how_1"
+      ]
+    ],
+    "dialogue": "hello, how can i help you today hi.  my name is rodriguez domingo.  i have a question about this calvin klein shirt for $<amount>. searching the faq pages ... system action: search shirt i need to know how to remove a pasta sauce stain from it? if the stain is fresh ring it in cold water before you normally wash it. if it has dried soak the shirt in cold water for about an hour and then scrub at it with dishwashing soap then wash it again in cold water. faq answer related to shirt (how1) was sel"
+  },
+  {
+    "session_id": "8450",
+    "index": 45,
+    "ordered_operations": [
+      [
+        "recover_username",
+        "pull-up-account:joseph banter"
+      ],
+      [
+        "recover_username",
+        "verify-identity:joseph banter,15167,(211) 608-7702"
+      ]
+    ],
+    "dialogue": "good morning, how can i help you today? hi i want to view your shopping history online. however, you cannot access your account because you forgot your username. i'd be happy to help you today. just to clarify, you can't log on to your account because you forgot your username? yes can i get your full name or account id? name: joseph banter account has been pulled up for joseph banter. thanks joseph. to verify your identity could i get your zip code and phone number? zip code is <zip_code> phone "
+  },
+  {
+    "session_id": "3176",
+    "index": 46,
+    "ordered_operations": [
+      [
+        "jacket_other_4",
+        "search-faq"
+      ],
+      [
+        "jacket_other_4",
+        "search-jacket"
+      ],
+      [
+        "jacket_other_4",
+        "select-faq:jacket_other_4"
+      ]
+    ],
+    "dialogue": "thanks for contacting acmebrands! how can i help you today? i.m checking out this <name> and want to know what the material is i can help you with that, but first could i have your name? well, i don't have an account yet, i just want to know what the material is alright. give me one moment to find that information. searching the faq pages ... system action: search jacket faq answer related to jacket (other4) was selected. is the one for <amount>$ black, hip length, zips up front the <name> has s"
+  },
+  {
+    "session_id": "3342",
+    "index": 47,
+    "ordered_operations": [
+      [
+        "return_size",
+        "pull-up-account:norman bouchard"
+      ],
+      [
+        "return_size",
+        "validate-purchase:nb244266,nb244266@email.com,7214916269"
+      ],
+      [
+        "return_size",
+        "membership:silver"
+      ],
+      [
+        "return_size",
+        "enter-details:0069 kennedy st newa"
+      ],
+      [
+        "return_size",
+        "update-order:by mail"
+      ]
+    ],
+    "dialogue": "hello! thank you for contacting us today. how can i help you? i would like to return an item because it is the wrong size perfect. can i get your name please? norman bouchard account has been pulled up for norman bouchard. thank you, norman. can you please provide me with your username, email address, and the order id also? username: <username> and email address: <email> order id: <order_id> purchase validation in progress ... thank you! do you know what your membership level is? silver membersh"
+  },
+  {
+    "session_id": "143",
+    "index": 48,
+    "ordered_operations": [
+      [
+        "recover_password",
+        "make-password"
+      ]
+    ],
+    "dialogue": "hello friend are you here? hello! how may i help you today? hey i lost my freaking password get me in now you there? ffs this is important sure, i should be able to help you with that. give me one second, please. oh ffs i work by the hour, guess you dont you are very rude btw sorry for the delay. i won't be able to retrieve your old password, but i can help you set up a new one. ok fine do that then what is it? you must tell me what it is can i get your username, please? iamthesuperduperpoopersh"
+  },
+  {
+    "session_id": "3601",
+    "index": 49,
+    "ordered_operations": [
+      [
+        "out_of_stock_one_item",
+        "pull-up-account:crystal minh"
+      ],
+      [
+        "out_of_stock_one_item",
+        "record-reason:calvin klein jacket"
+      ],
+      [
+        "out_of_stock_one_item",
+        "notify-team:purchasing departmen"
+      ]
+    ],
+    "dialogue": "thank you for shopping with acmebrands! how can i help you? i just wanted to put in a complaint because the item i am trying to order is out of stock i'm sorry to hear that. may i have your full name to pull up your account? crystal minh account has been pulled up for crystal minh. thank you. which item is out of stock? the gray jacket brand calvin klein a reason of calvin klein jacket has been recorded. i am writing a report to the purchasing department so that they know they need to fix their "
+  },
+  {
+    "session_id": "7102",
+    "index": 50,
+    "ordered_operations": [
+      [
+        "shirt_how_1",
+        "search-faq"
+      ],
+      [
+        "shirt_how_1",
+        "search-shirt"
+      ],
+      [
+        "shirt_how_1",
+        "select-faq:shirt_how_1"
+      ]
+    ],
+    "dialogue": "hello, how can i help you today? hi i have question on a product it's the tommy hilfiger shirt i wanted to know how easy (or hard) it is to get stains off of the shirt? okay, i can check on that for you. ok could i get your name please? joseph banter searching the faq pages ... system action: search shirt well, mr. banter blood stains are especially tough, does it happen to be a blood stain? no, food like pasta sauce or pizza sauce can you remind me, this was a shirt not a jacket right? yes the "
+  },
+  {
+    "session_id": "4960",
+    "index": 51,
+    "ordered_operations": [
+      [
+        "status",
+        "pull-up-account:sanya afzal"
+      ],
+      [
+        "status",
+        "verify-identity:sanya afzal,njuicfxbz7,1787691758"
+      ],
+      [
+        "status",
+        "validate-purchase:sa498282,sa498282@email.com,1787691758"
+      ],
+      [
+        "status",
+        "ask-the-oracle"
+      ]
+    ],
+    "dialogue": "hi ou todayhow may i help y how may i. help you today? hello i have ordered a jacket and would like to check the status of shipment. i also want to double check my address sure what is your name sanya afzal account has been pulled up for sanya afzal. what is your order id and account id? as well as your user name, email address? <account_id> account number <username> user name <email> <order_id> order number identity verification in progress ... purchase validation in progress ... thank you! que"
+  },
+  {
+    "session_id": "1529",
+    "index": 52,
+    "ordered_operations": [
+      [
+        "refund_initiate",
+        "pull-up-account:rodriguez domingo"
+      ],
+      [
+        "refund_initiate",
+        "validate-purchase:rd542657,rd542657@email.com,3764775976"
+      ],
+      [
+        "refund_initiate",
+        "record-reason:credit card"
+      ],
+      [
+        "refund_initiate",
+        "enter-details:3764775976"
+      ],
+      [
+        "refund_initiate",
+        "offer-refund:84"
+      ]
+    ],
+    "dialogue": "thank you for contacting acmebrands, how can i help you today? hello, i've changed my mind about an order and i'd like a refund. is there anything wrong with the item you ordered? no, i've just changed my mind. sorry. that is understandable, can you provide me with your full name or account id please? rodriguez domingo account has been pulled up for rodriguez domingo. thank you, and can you also provide your username, email address, and order id please? username: <username> email address: <email"
+  },
+  {
+    "session_id": "568",
+    "index": 53,
+    "ordered_operations": [
+      [
+        "status_questions",
+        "verify-identity:albert sanders,1fmgzzuj32,6075696277"
+      ],
+      [
+        "status_questions",
+        "pull-up-account:1fmgzzuj32"
+      ],
+      [
+        "status_questions",
+        "subscription-status"
+      ],
+      [
+        "status_questions",
+        "update-account:extend subscription"
+      ]
+    ],
+    "dialogue": "hi, how can i help you? hi there! i was wondering if you could please help me out with the status of my subscription. of course, can i have you name and account number please name: albert sanders thank you, i will look into that. account #: <account_id> identity verification in progess ... what about your subscription status would you like me to look into? account has been pulled up for <account_id>. querying the system for subscription status ... thanks for asking! so i would first like to see "
+  },
+  {
+    "session_id": "10186",
+    "index": 54,
+    "ordered_operations": [
+      [
+        "jeans_other_2",
+        "search-faq"
+      ],
+      [
+        "jeans_other_2",
+        "search-jeans"
+      ],
+      [
+        "jeans_other_2",
+        "select-faq:jeans_other_2"
+      ]
+    ],
+    "dialogue": "hi! how can i help you today? i'm interested in purchasing some tommy hilfiger jeans, but i have a question. sure thing, i'd be happy to help! what is your question? are the jeans dark blue or black? it's really hard to tell from the picture. one second, i think i can find the answer for you. searching the faq pages ... system action: search jeans hm, it seems that there is some information about the specific colors that are available, but not about whether the jeans are specifically dark blue o"
+  },
+  {
+    "session_id": "2280",
+    "index": 55,
+    "ordered_operations": [
+      [
+        "pricing_3",
+        "search-faq"
+      ],
+      [
+        "pricing_3",
+        "search-timing"
+      ],
+      [
+        "pricing_3",
+        "search-pricing"
+      ]
+    ],
+    "dialogue": "acmebrands, how may i help you? do you offer overnight shipping? let me help you with that. searching the faq pages ... system action: search timing system action: search pricing we do offer overnight shipping. are you in the usa? can you tell me what the cost is? i need an outfit asap for event this weekend. sure yes, i am in baltimore wa for 5 pound or less it is 39.99 for 10 pounds or less it is 54.99 all other items are <amount>.99 can i help you with anything else? no, that is what i needed"
+  },
+  {
+    "session_id": "6799",
+    "index": 56,
+    "ordered_operations": [
+      [
+        "out_of_stock_one_item",
+        "pull-up-account:sanya afzal"
+      ],
+      [
+        "out_of_stock_one_item",
+        "record-reason:calvin klein jacket"
+      ],
+      [
+        "out_of_stock_one_item",
+        "notify-team:purchasing departmen"
+      ],
+      [
+        "out_of_stock_one_item",
+        "make-purchase:calvin klein jacket"
+      ]
+    ],
+    "dialogue": "hello, how can i help you hello, i'm trying to buy a calvin klein jacket but it's out of stock. do you know when it will be back in stock or how i can get it? i will be happy to help you out but can i get full name first sanya afzal account has been pulled up for sanya afzal. a reason of calvin klein jacket  has been recorded. i will be notifying the internal team about this out of stock so they can do a better job the purchasing department  has been notified. alright, thanks i guess we should g"
+  },
+  {
+    "session_id": "2415",
+    "index": 57,
+    "ordered_operations": [
+      [
+        "status",
+        "pull-up-account:norman bouchard"
+      ],
+      [
+        "status",
+        "verify-identity:norman bouchard,hdmeh2y0lo,1660644535"
+      ],
+      [
+        "status",
+        "validate-purchase:nbouchard849,nbouchard849@email.c,1660644535"
+      ],
+      [
+        "status",
+        "ask-the-oracle"
+      ],
+      [
+        "status",
+        "update-order:change price"
+      ]
+    ],
+    "dialogue": "hello. how can i help you today? i need to confirm the shipping date on an order.  i got an email saying it was going to be delivered at a different time frame than originally stated. okay let me look into this for a moment i just want to check the status of the shipment okay so you got an email stating the delivery is different than the original date provided. you wish to confirm if the delivery will be as originally promised or as stated in the email? yes, i want to check the status of the shi"
+  },
+  {
+    "session_id": "8735",
+    "index": 58,
+    "ordered_operations": [
+      [
+        "reset_2fa",
+        "pull-up-account:alessandro phoenix"
+      ],
+      [
+        "reset_2fa",
+        "enter-details:alessandrophoenix@gm"
+      ],
+      [
+        "reset_2fa",
+        "send-link"
+      ]
+    ],
+    "dialogue": "hi hi, how can i help you? i can not get into my account because i lost the phone i use for two factor authentication okay, i can help with that first, can i get your name? alessandro phoenix account has been pulled up for alessandro phoenix. okay, thanks. i will also need your email address. alessandrophoenix@gmail.com details of alessandrophoenix@gmail.com have been entered. okay just give me a minute and i will send you a reset code to that email address. a link will be sent. okay you can che"
+  },
+  {
+    "session_id": "9807",
+    "index": 59,
+    "ordered_operations": [
+      [
+        "mistimed_billing_never_bought",
+        "pull-up-account:alessandro phoenix"
+      ],
+      [
+        "mistimed_billing_never_bought",
+        "validate-purchase:alessandrophoenix601,alessandrophoenix601,6837496410"
+      ],
+      [
+        "mistimed_billing_never_bought",
+        "ask-the-oracle"
+      ],
+      [
+        "mistimed_billing_never_bought",
+        "update-order:give credit"
+      ]
+    ],
+    "dialogue": "hello, how may i help you today? i have a charge on my credit card for a pair of boots i supposedly bought from your website. but i didn't buy the boots. what's going on? i am so sorry to hear that. i will do my best to resolve your issue. can you please provide me with your full name, username, email address, and order id? wow...that's a lot of information you need. this is going to take a minute please take your time. alessandro phoenix account has been pulled up for alessandro phoenix. userna"
+  },
+  {
+    "session_id": "456",
+    "index": 60,
+    "ordered_operations": [
+      [
+        "status",
+        "pull-up-account:chloe zhang"
+      ]
+    ],
+    "dialogue": "hello, can i help you? i'm needing help with shipping. okay, whta particlar problem are you having? i need to make sure my order will be here tomorrow afternoon. the email is saying it will be next week. okay , i can check on that for you. can i have your account number and full name? my name is chloe zhang and the id is <account_id> account has been pulled up for . do you have the current shipping status? it says it has been delivered. if that is the status then you will be recieving today or t"
+  },
+  {
+    "session_id": "2627",
+    "index": 61,
+    "ordered_operations": [
+      [
+        "pricing_3",
+        "search-faq"
+      ],
+      [
+        "pricing_3",
+        "search-pricing"
+      ],
+      [
+        "pricing_3",
+        "select-faq:pricing_3"
+      ]
+    ],
+    "dialogue": "hello, how can i help you? hi! i just want to know the price of overnight shipping.  i have a concert tomorrow that i need to get a something for sure, let me find that out for you. searching the faq pages ... system action: search pricing overnight shipping depends on the weight of the item. if you're in the continental us, it will be $39.99 for items that are 5 lbs or less, $54.99 for items of 5-10 pounds, and $69.99 for anything more than 10 pounds. if you're in hawaii or alaska, the price is"
+  },
+  {
+    "session_id": "183",
+    "index": 62,
+    "ordered_operations": [
+      [
+        "reset_2fa",
+        "verify-identity:albert sanders,n/a,n/a"
+      ],
+      [
+        "reset_2fa",
+        "enter-details:livingston"
+      ],
+      [
+        "reset_2fa",
+        "enter-details:ahmed"
+      ],
+      [
+        "reset_2fa",
+        "send-link"
+      ]
+    ],
+    "dialogue": "hi hello, how may i help you today? i have an issue with my account i really need to see my shopping history because i want to see everything that i've bought but i can't get into my account it's so annoying! i lost the phone that uses the authentication for my account so i can't get in can you help me? may i have your full name, address, and phone number? okay sure i'm albert sanders my number is <phone> my address is <street_address> la fayette, tx <zip_code> your username is alsandtx no, that"
+  },
+  {
+    "session_id": "7950",
+    "index": 63,
+    "ordered_operations": [
+      [
+        "status_delivery_time",
+        "pull-up-account:norman bouchard"
+      ],
+      [
+        "status_delivery_time",
+        "validate-purchase:nbouchard,nbouchard@email.com,2449382036"
+      ],
+      [
+        "status_delivery_time",
+        "record-reason:7 days"
+      ],
+      [
+        "status_delivery_time",
+        "update-order:1614 circle drive, s"
+      ]
+    ],
+    "dialogue": "hello, how can i help you today i need to check the status of my order.  it says it's been delivered but i don't have it and wanted to check on where it might be okay sure, could i get your full name your username email adress and order id please norman bouchard account has been pulled up for norman bouchard. nbouchard nbouchard@email.com order id: <order_id> purchase validation in progress ... okay, how many days has it been since you placed the order seven okay it looks like it got lost at som"
+  },
+  {
+    "session_id": "5301",
+    "index": 64,
+    "ordered_operations": [
+      [
+        "status",
+        "pull-up-account:joyce wu"
+      ],
+      [
+        "status",
+        "verify-identity:joyce wu,jtcsofbkkl,8770714815"
+      ],
+      [
+        "status",
+        "ask-the-oracle"
+      ],
+      [
+        "status",
+        "membership:gold"
+      ]
+    ],
+    "dialogue": "thank you for contacting acmebrands! how can i help you? i want to know the total cost of the order i purchased because i got an email saying conflicting information. okay, i can help you with that. could i please have your name and account id? joyce wu account has been pulled up for joyce wu. account id: <account_id> what was the cost of your order suppose to be? <amount> dollars do you have your order id? <order_id> thank you. give me a moment while i pull up the order. identity verification i"
+  },
+  {
+    "session_id": "8008",
+    "index": 65,
+    "ordered_operations": [
+      [
+        "slow_speed",
+        "log-out-in"
+      ],
+      [
+        "slow_speed",
+        "instructions"
+      ]
+    ],
+    "dialogue": "thanks for choosing acmebrands! how can i help today? hi there!   i'm trying to buy some things for my sister and the website just isn't working.  can you help? i'm sorry to hear! let me help you troubleshoot. what is the issue with the website? it runs really slowly okay. the first thing that i recommend you try is logging out and then back in. that may help. agent is looking for solutions ... ok i'll go try that nope, the website is still prety much unuseable okay. another thing that often hel"
+  },
+  {
+    "session_id": "1957",
+    "index": 66,
+    "ordered_operations": [
+      [
+        "bad_price_competitor",
+        "pull-up-account:qw8satggua"
+      ],
+      [
+        "bad_price_competitor",
+        "record-reason:competitor"
+      ],
+      [
+        "bad_price_competitor",
+        "verify-identity:alessandro phoenix,qw8satggua,3278902139"
+      ],
+      [
+        "bad_price_competitor",
+        "promo-code"
+      ]
+    ],
+    "dialogue": "hello, how may i help you today? i got a question about a recent purchase i just made i literally just bout this shirt recently but i found out that one of your competitors is selling it for almost half the price! do you have a price match on these things? or can i cancel my order? i can help you with that, first could you send me your account id? yeah its <account_id> account has been pulled up for <account_id>. ok, i'm going to enter your issue into the system real quick. ok a reason of compet"
+  },
+  {
+    "session_id": "10329",
+    "index": 67,
+    "ordered_operations": [
+      [
+        "membership_1",
+        "search-faq"
+      ],
+      [
+        "membership_1",
+        "search-membership"
+      ],
+      [
+        "membership_1",
+        "select-faq:membership_1"
+      ]
+    ],
+    "dialogue": "hello, how can i help you? hello i want to know about membership levels im interestd n buying thigns searching the faq pages ... system action: search membership faq answer related to membership (question1) was selected. acmebrands membership is the official rewards program for our most valued customers. the membership levels include bronze, silver, and gold. all other customers are considered guests. unlike other programs, we do not offer overly ostentatious titles such as platinum or super exc"
+  },
+  {
+    "session_id": "671",
+    "index": 68,
+    "ordered_operations": [
+      [
+        "timing_1",
+        "search-faq"
+      ],
+      [
+        "timing_1",
+        "search-timing"
+      ]
+    ],
+    "dialogue": "hi! thank you for contacting us today.  it will be my pleasure to assist you how can i help today? hello, i have a question about the upcoming fall collection. do you know when the fall collection will appear in stores? i can try and find that information for you.  please allow me one moment sure, thank you very much. searching the faq pages ... system action: search timing the fall collection will appear in the stores on october 3rd great, that's really helpful. i appreciate your help. not a pr"
+  },
+  {
+    "session_id": "4417",
+    "index": 69,
+    "ordered_operations": [
+      [
+        "cost",
+        "pull-up-account:sanya afzal"
+      ],
+      [
+        "cost",
+        "verify-identity:sanya afzal,tkx4racsej,2558097273"
+      ],
+      [
+        "cost",
+        "shipping-status:order received"
+      ],
+      [
+        "cost",
+        "update-order:waive fee"
+      ]
+    ],
+    "dialogue": "welcome to acmebrands. how may i help? hi.  my name is sanya afzal.  my order id is <order_id>.  i'm checking on my order status because i am not satisfied with the shipping cost. ok. i can help. is it possible to get free shipping? did you want to downgrade shipping to reduce cost? if that's what it takes to waive the shipping cost, then yes. ok. the cost will be waived. let me just start the process account has been pulled up for sanya afzal. ok. i have pulled up your account what is your acco"
+  },
+  {
+    "session_id": "4135",
+    "index": 70,
+    "ordered_operations": [
+      [
+        "timing_4",
+        "search-faq"
+      ],
+      [
+        "timing_4",
+        "search-timing"
+      ],
+      [
+        "timing_4",
+        "select-faq:timing_4"
+      ]
+    ],
+    "dialogue": "hello, how may i help you? i would like to know when promo code expires sure, i can let you know about that searching the faq pages ... system action: search timing faq answer related to timing (question4) was selected. they usually expire after 7 days. it should be printed on the bottom when it expires as well. is there anything else i can help with? okay thank you i noe see it at the botton that is everything i needed help with have a great day!"
+  },
+  {
+    "session_id": "8464",
+    "index": 71,
+    "ordered_operations": [
+      [
+        "recover_username",
+        "pull-up-account:david williams"
+      ],
+      [
+        "recover_username",
+        "verify-identity:david williams,davidw78@email.com,4510"
+      ]
+    ],
+    "dialogue": "hello, how can i help you today would like to check order status online but cant access my account since i forgot my username okay sure, could i get your full name please david williams i will also need your zip code email adress and phone number account has been pulled up for david williams. <zip_code>. <email> 866 418 3702 identity verification in progress ... okay your username is davidw1 thank you. i will log in now okay great, is there anything else i cna do for you that is all have a good "
+  },
+  {
+    "session_id": "5463",
+    "index": 72,
+    "ordered_operations": [
+      [
+        "slow_speed",
+        "log-out-in"
+      ]
+    ],
+    "dialogue": "hi.  how can i help you? hello, i have been trying to place an order for half an hour now but the site is soooo slow, is there anything ai can do to speed this up? yes, there are some things we can try thank you try visiting another website and then coming back to this one and see if it's faster ok no it seems to be the same ok, try logging out of the site and then logging back in and see if that helps ok agent is looking for solutions ... that helped a for a second but it is still really slow w"
+  },
+  {
+    "session_id": "10543",
+    "index": 73,
+    "ordered_operations": [
+      [
+        "out_of_stock_general",
+        "pull-up-account:alessandro phoenix"
+      ],
+      [
+        "out_of_stock_general",
+        "notify-team:purchasing departmen"
+      ]
+    ],
+    "dialogue": "how may i help you tonight? hey. why are some many items always out of stock? i want to buy a jacket - no jacket i want to buy some jeans - no jeans nothing is available! hi, sorry to hear that! let me see what i can do to help you can i get your name or account id to get started? what do you need that for?! to pull up your account my name is alessandro phoenix account has been pulled up for alessandro phoenix. hi alessandro, i see that you have been a valued member for a number of years now tha"
+  },
+  {
+    "session_id": "10315",
+    "index": 74,
+    "ordered_operations": [
+      [
+        "missing",
+        "pull-up-account:crystal minh"
+      ],
+      [
+        "missing",
+        "validate-purchase:cminh450,cminh450@email.com,2137390162"
+      ],
+      [
+        "missing",
+        "update-order:9438 brushwick dr mo"
+      ],
+      [
+        "missing",
+        "make-purchase:michael kors jacket"
+      ]
+    ],
+    "dialogue": "thanks for contacting us! how can i help you today? hi, i have never received my package and i've been waiting 9 days.  could you check on that for me please? i'm very sorry for the trouble! may i ask your name, please? i'll pull up your account and take a look. crystal minh thank you, crystal. account has been pulled up for crystal minh. can you please tell me your username, email address, and order id? <username> email address: <email> order id: <order_id> thank you! purchase validation in pro"
+  },
+  {
+    "session_id": "2914",
+    "index": 75,
+    "ordered_operations": [
+      [
+        "status_payment_method",
+        "pull-up-account:crystal minh"
+      ],
+      [
+        "status_payment_method",
+        "verify-identity:crystal minh,cmh84,5803593072"
+      ],
+      [
+        "status_payment_method",
+        "verify-identity:cmh84,(870) 188 0693,5803593072"
+      ],
+      [
+        "status_payment_method",
+        "record-reason:credit card"
+      ],
+      [
+        "status_payment_method",
+        "verify-identity:(870) 188 0693,cmh84,5803593072"
+      ],
+      [
+        "status_payment_method",
+        "update-account:6011123412341234"
+      ],
+      [
+        "status_payment_method",
+        "update-account:09/24"
+      ]
+    ],
+    "dialogue": "acmebrands, how may i help you? i would like to check the status of my order please i think i gave you the wrong credit card information let me help you with that. could i have your full name or account id? great . my order number is <order_id> name is crystal minh account has been pulled up for crystal minh. could i have your account id and order id to verify your identity? my id is cmh<amount>  and order <order_id> identity verification in progess ... is that the right account id? yes <order_i"
+  },
+  {
+    "session_id": "5691",
+    "index": 76,
+    "ordered_operations": [
+      [
+        "mistimed_billing_already_returned",
+        "pull-up-account:norman bouchard"
+      ],
+      [
+        "mistimed_billing_already_returned",
+        "membership:silver"
+      ],
+      [
+        "mistimed_billing_already_returned",
+        "ask-the-oracle"
+      ],
+      [
+        "mistimed_billing_already_returned",
+        "offer-refund:99"
+      ]
+    ],
+    "dialogue": "hi! how may i help you today? hi i've completed a return recently but there's still a charge on my billing statement ok, i can look at that for you can i have your name? norman bouchard account has been pulled up for norman bouchard. can i have your account id and order id order id: <order_id> do you have your account id no ok, one moment please hello? what is your membership level silver membership level of silver has been noted. how much was the refund querying the system for an answer ... $<a"
+  },
+  {
+    "session_id": "10392",
+    "index": 77,
+    "ordered_operations": [
+      [
+        "manage_create",
+        "search-faq"
+      ],
+      [
+        "manage_create",
+        "pull-up-account:rodriguez domingo"
+      ],
+      [
+        "manage_create",
+        "verify-identity:rodriguez domingo,prgmmcjfrh,2291546305"
+      ],
+      [
+        "manage_create",
+        "shipping-status:out for delivery"
+      ],
+      [
+        "manage_create",
+        "membership:guest"
+      ]
+    ],
+    "dialogue": "hi how may i helpo i want to add an item to my order i forgot to add it to my cart earlier can you help me get it fixed i see yo uhave having issues adding items to cart i can help wit that, may i have your name plase? searching the faq pages ... rodriguez domingo oh i see, you wished to add an item to an order now, i can help with that too, my apoligies account has been pulled up for rodriguez domingo. may i also have your account and order ird? 'id*? account id: <account_id> order id: <order_i"
+  },
+  {
+    "session_id": "3007",
+    "index": 78,
+    "ordered_operations": [
+      [
+        "search_results",
+        "log-out-in"
+      ],
+      [
+        "search_results",
+        "instructions"
+      ]
+    ],
+    "dialogue": "hi my computer is taking a long time to search and all i see is a spinning wheel i'm so sorry! let me look into that for you can you please try loggin gout and logging back in agent is looking for solutions ... that didn’t work. anything else cna you please try clearing your cookies agent is looking for solutions ... you can do that from your settings ok that worked. thanks great! can i help you with anything else? that’s all. thanks for your help."
+  },
+  {
+    "session_id": "7040",
+    "index": 79,
+    "ordered_operations": [
+      [
+        "out_of_stock_one_item",
+        "pull-up-account:alessandro phoenix"
+      ],
+      [
+        "out_of_stock_one_item",
+        "record-reason:calvin klein jacket"
+      ],
+      [
+        "out_of_stock_one_item",
+        "notify-team:purchasing departmen"
+      ]
+    ],
+    "dialogue": "hello, how can i assist you today? hi.  my name is alessandro phoenix.  i would like to purchase this calvin klein jacket for $<amount>, but it is out of stock and i am not happy. i'm sorry to hear that mr. phoenix, let me check on this for you. just to clarify, your upset because the item is out of stock not because of the price right? yes could i get your name or account id? sorry, i meant your account id. i do not have that information.  my username is <username>, and email is <email> if that"
+  },
+  {
+    "session_id": "6780",
+    "index": 80,
+    "ordered_operations": [
+      [
+        "pricing_3",
+        "search-faq"
+      ],
+      [
+        "pricing_3",
+        "search-pricing"
+      ],
+      [
+        "pricing_3",
+        "select-faq:pricing_3"
+      ]
+    ],
+    "dialogue": "welcome to acmebrands. how may i help you? i want to know the price of over shipping because i want to buy some stuffs ok. let me see if i can help. searching the faq pages ... system action: search pricing faq answer related to pricing (question3) was selected. the overnight shipping depends on weight. are you in the continental us>? yes ok. the rate will be 39.99 for 5 pound items or less 54.99 for 10 pounds or less  it will be 69.99 for all other items. i hope this helps answer your question."
+  },
+  {
+    "session_id": "4471",
+    "index": 81,
+    "ordered_operations": [
+      [
+        "manage_pay_bill",
+        "pull-up-account:sanya afzal"
+      ],
+      [
+        "manage_pay_bill",
+        "verify-identity:sanya afzal,nrv6qybzbc,9779562426"
+      ],
+      [
+        "manage_pay_bill",
+        "subscription-status"
+      ],
+      [
+        "manage_pay_bill",
+        "enter-details:55"
+      ],
+      [
+        "manage_pay_bill",
+        "update-account:renew subscription"
+      ]
+    ],
+    "dialogue": "hello, how may i help you today? hi, can i pay the remainder of my subscription balance please. sure, no problem. can i please have your full name, account id, and order id? sanya afzal account id: <account_id> order id: <order_id> account has been pulled up for sanya afzal. thank you. identity verification in progress ... do you know the remaining balance on your subscription bill? no, that is why i want to know. one moment please. querying the system for subscription status ... you have an amo"
+  },
+  {
+    "session_id": "10497",
+    "index": 82,
+    "ordered_operations": [
+      [
+        "shirt_other_2",
+        "search-faq"
+      ],
+      [
+        "shirt_other_2",
+        "search-shirt"
+      ]
+    ],
+    "dialogue": "hello, how can i help you today? hi, i would like to buy a shirt off of your site, but i'm not seeing my size. could you check if you have it? sure let me check on that for you. thank you can i have your name please? sanya afzal searching the faq pages ... system action: search shirt although our shirts come in a variety of sizes if it's listed as empty we are temporarily out of stock. oh, i see. do you know if you will get more in stock? shirts are refilled on the second week of the month, so i"
+  },
+  {
+    "session_id": "5492",
+    "index": 83,
+    "ordered_operations": [
+      [
+        "mistimed_billing_already_returned",
+        "pull-up-account:chloe zhang"
+      ],
+      [
+        "mistimed_billing_already_returned",
+        "validate-purchase:czhang28,czhang28@email.com,2269137343"
+      ],
+      [
+        "mistimed_billing_already_returned",
+        "record-reason:more than 7 days"
+      ],
+      [
+        "mistimed_billing_already_returned",
+        "update-order:give credit"
+      ]
+    ],
+    "dialogue": "hi! how can i help you? hi i want to know why you guys still haven't refunded me even though i already returned my order last week i'm sorry you haven't received your refund yet. i would be happy to look into this for you. you're saying it was over 7 days ago that you returned the item, correct? yes okay, what is your full name? chloe zhang thank you, chloe. i also need your username, email address, and order id, please. account has been pulled up for chloe zhang. username <username> <email> and"
+  },
+  {
+    "session_id": "8168",
+    "index": 84,
+    "ordered_operations": [
+      [
+        "timing_2",
+        "search-faq"
+      ],
+      [
+        "timing_2",
+        "search-timing"
+      ],
+      [
+        "timing_2",
+        "select-faq:timing_2"
+      ],
+      [
+        "timing_2",
+        "enter-details:57907"
+      ]
+    ],
+    "dialogue": "hello, this is amy from acme. how may i assist you today? hi amy, i'm chloe. i was wondering when the store near me opens up because i need to buy a present for my boyfriend, and wanted to check out your company's store first. i can look that up for you right now. searching the faq pages ... system action: search timing usually our stores open at 8 am and close at 11 pm. what is your zip code or address? faq answer related to timing (question2) was selected. my zip code is <zip_code> details of "
+  },
+  {
+    "session_id": "9315",
+    "index": 85,
+    "ordered_operations": [
+      [
+        "policy_2",
+        "search-faq"
+      ],
+      [
+        "policy_2",
+        "search-policy"
+      ],
+      [
+        "policy_2",
+        "select-faq:policy_2"
+      ]
+    ],
+    "dialogue": "hello, how can i help you today? what is the refund policy? i am thinking about buying stuff and would like to know about the refund policy so just a question about the refund policy in general? yes sure thing. ok searching the faq pages ... system action: search policy faq answer related to policy (question2) was selected. refunds are available on items that have not yet shipped. to complete a refund you would just need to provide your order id, username and email address. ok. thank you was the"
+  },
+  {
+    "session_id": "9273",
+    "index": 86,
+    "ordered_operations": [
+      [
+        "manage_dispute_bill",
+        "pull-up-account:sanya afzal"
+      ],
+      [
+        "manage_dispute_bill",
+        "verify-identity:sanya afzal,h2mwrcpbt5,9568217681"
+      ],
+      [
+        "manage_dispute_bill",
+        "membership:silver"
+      ],
+      [
+        "manage_dispute_bill",
+        "offer-refund:40.12"
+      ],
+      [
+        "manage_dispute_bill",
+        "offer-refund:40.12"
+      ]
+    ],
+    "dialogue": "good afternoon, how can i help you? hi there, i signed up for a premium subscription and i'm really not sure about this bill.... i got charged twice for my subscription.  can you check into it for me please? sure, don't worry would you give me your full name or account id my name is sanya afzal, and my account id is <account_id> account has been pulled up for sanya afzal. additional to this you would give me the order id please the order id is <order_id> identity verification in progress ... ok "
+  },
+  {
+    "session_id": "6805",
+    "index": 87,
+    "ordered_operations": [
+      [
+        "refund_update",
+        "pull-up-account:joseph banter"
+      ],
+      [
+        "refund_update",
+        "validate-purchase:josephbanter382,josephbanter382@emai,4336948911"
+      ],
+      [
+        "refund_update",
+        "record-reason:michael kors boots"
+      ],
+      [
+        "refund_update",
+        "offer-refund:184"
+      ]
+    ],
+    "dialogue": "hi, what can i do for you? i have an existing refund that i would like to add another item to okay, sure. can i have your name? joseph banter account has been pulled up for joseph banter. thanks, can i have your username, email address and order id? <username>  <email>   <order_id> purchase validation in progress ... what item did you want to return? michael kors boots for $<amount> a reason of michael kors boots has been recorded. how much was the orginal refund for? $100 a refund has been made"
+  },
+  {
+    "session_id": "3175",
+    "index": 88,
+    "ordered_operations": [
+      [
+        "credit_card",
+        "try-again"
+      ],
+      [
+        "credit_card",
+        "log-out-in"
+      ],
+      [
+        "credit_card",
+        "enter-details:troubleshoot"
+      ]
+    ],
+    "dialogue": "hello, how can i help you today hello i am trying to pay for my purchase but my credit card keeps getting rejected... okay i can help you with that could you try log out and log back in and try to make the purchase ok ill try that no that did not work :( agent is looking for solutions ... okay could you check to make sure you are entering your card info right or that it is not expired ok one sec agent is looking for solutions ... oh silly me, it is expired. duh. ok got the new one entered and my"
+  },
+  {
+    "session_id": "10127",
+    "index": 89,
+    "ordered_operations": [
+      [
+        "refund_initiate",
+        "pull-up-account:joyce wu"
+      ],
+      [
+        "refund_initiate",
+        "validate-purchase:joycewu6,joycewu6@email.com,6795414897"
+      ],
+      [
+        "refund_initiate",
+        "membership:silver"
+      ],
+      [
+        "refund_initiate",
+        "enter-details:9146 primrose ave sa"
+      ],
+      [
+        "refund_initiate",
+        "update-order:by mail"
+      ],
+      [
+        "refund_initiate",
+        "update-order:by mail"
+      ],
+      [
+        "refund_initiate",
+        "enter-details:credit card s2xgblzl"
+      ],
+      [
+        "refund_initiate",
+        "offer-refund:94"
+      ]
+    ],
+    "dialogue": "hi, how can i help you? hi! i want to return a jacket what is the reason for the return? and get a refund, of course. the reason is that it is not what i expected. can i get your full name or account id? sure joyce wu <account_id> account has been pulled up for joyce wu. and can i get your username, e-mail address, and the order id? sure just a moment <email> <username> <order_id> purchase validation in progress ... what is your membership level? if i recall correctly silver membership level of "
+  },
+  {
+    "session_id": "9366",
+    "index": 90,
+    "ordered_operations": [
+      [
+        "return_color",
+        "pull-up-account:rodriguez domingo"
+      ],
+      [
+        "return_color",
+        "validate-purchase:rd090959,rd090959@email.com,2762764761"
+      ],
+      [
+        "return_color",
+        "membership:silver"
+      ],
+      [
+        "return_color",
+        "enter-details:4852 circle drive ja"
+      ],
+      [
+        "return_color",
+        "update-order:by mail"
+      ]
+    ],
+    "dialogue": "thank you for being an acmebrands shopper! how may i help you? i want to return an item because it came in the wrong color. i can help you with that. may i have your full name? rodriguez domingo account has been pulled up for rodriguez domingo. may i also have your username, email address, and order id to validate your purchase?  <username> <email> <order_id> purchase validation in progress ... thank you. what membership do you have? silver membership level of silver has been noted. when did you"
+  },
+  {
+    "session_id": "10535",
+    "index": 91,
+    "ordered_operations": [
+      [
+        "membership_3",
+        "search-faq"
+      ],
+      [
+        "membership_3",
+        "search-membership"
+      ],
+      [
+        "membership_3",
+        "select-faq:membership_3"
+      ]
+    ],
+    "dialogue": "hello, how may i help you? hi, i want to know the benefits of premium membership it seems i'm silver now, but i don't know what that means thanks for being a valued silver member! membership levels range from guest to gold, so silver is quite high! let me look up some more information for you searching the faq pages ... system action: search membership oh nice! so what are the other levels? i'm guessing bronze, silver, and gold? yup, you got that right in terms of benefits, all exclusive members"
+  },
+  {
+    "session_id": "3119",
+    "index": 92,
+    "ordered_operations": [
+      [
+        "jacket_other_2",
+        "search-faq"
+      ],
+      [
+        "jacket_other_2",
+        "search-jacket"
+      ],
+      [
+        "jacket_other_2",
+        "select-faq:jacket_other_2"
+      ]
+    ],
+    "dialogue": "thank you for contacting acmebrands! how can i help you? hi.  i'm looking to buy a new jacket.  it's getting cold here! we have a lot of jackets available. are you having a problem with placing your order? no i just have a question about the <name> that is $<amount>. i can help you with that, but first could you provide me with your name? crystal minh what type of information do you need about our jackets, crystal? i was wondering if this jacket came in a medium size and if there is a medium in "
+  },
+  {
+    "session_id": "7264",
+    "index": 93,
+    "ordered_operations": [
+      [
+        "shopping_cart",
+        "pull-up-account:chloe zhang"
+      ],
+      [
+        "shopping_cart",
+        "log-out-in"
+      ],
+      [
+        "shopping_cart",
+        "try-again"
+      ],
+      [
+        "shopping_cart",
+        "enter-details:troubleshoot"
+      ]
+    ],
+    "dialogue": "hi hello! thank you for shopping with acmebrands. how may i assist you? i really don't know what's happening when i add item to my cart, it's not updating i'm so sorry for the inconvenience! i'll be glad to help you with that. may i get your full name, please? chloe zhang account has been pulled up for chloe zhang. thank you, chloe. i really appreciate your patience with this issue. may i ask you to please try logging out of your account and logging in again? agent is looking for solutions ... o"
+  },
+  {
+    "session_id": "9268",
+    "index": 94,
+    "ordered_operations": [
+      [
+        "return_size",
+        "pull-up-account:albert sanders"
+      ],
+      [
+        "return_size",
+        "validate-purchase:asanders852,asanders852@email.co,1846624794"
+      ],
+      [
+        "return_size",
+        "enter-details:asanders852"
+      ],
+      [
+        "return_size",
+        "enter-details:7440 primrose ave sa"
+      ],
+      [
+        "return_size",
+        "send-link"
+      ]
+    ],
+    "dialogue": "hello, how can i help you today hello, my name is albert sanders and i would like to make a return. account has been pulled up for albert sanders. okay sure, what is your reason for return i just don't want it anymore. it's still in the original packaging. sure, could i get your username email adress and order id please <email> <username> purchase validation in progress ... okay and how would you like to get your refund in gift card check back to card ? back on the card please. details of <usern"
+  },
+  {
+    "session_id": "6686",
+    "index": 95,
+    "ordered_operations": [
+      [
+        "status_due_amount",
+        "pull-up-account:alessandro phoenix"
+      ],
+      [
+        "status_due_amount",
+        "verify-identity:alessandro phoenix,2qijal64u8,4536144857"
+      ],
+      [
+        "status_due_amount",
+        "subscription-status"
+      ],
+      [
+        "status_due_amount",
+        "enter-details:14"
+      ],
+      [
+        "status_due_amount",
+        "send-link"
+      ]
+    ],
+    "dialogue": "hello, how can i help you today? i wanted to check on my premium subscription and see if anything is due okay, let me look into that for you. can i have your full name? alessandro phoenix account has been pulled up for alessandro phoenix. and can i have your account and order id's? account id: <account_id> order id: <order_id> identity verification in progress ... okay, let me pull up your subscription info. querying the system for subscription status ... okay, you have $14 due tomorrow. can i g"
+  },
+  {
+    "session_id": "8285",
+    "index": 96,
+    "ordered_operations": [
+      [
+        "pricing_3",
+        "search-faq"
+      ],
+      [
+        "pricing_3",
+        "search-pricing"
+      ],
+      [
+        "pricing_3",
+        "select-faq:pricing_3"
+      ]
+    ],
+    "dialogue": "hello, how may i help you today? hi, i found this awesome shirt and need it now! how much is overnight shipping let's see what we can find out.  one moment. searching the faq pages ... system action: search pricing here is what i found out. overnight shipping is a weight-based rate that does not depend on distance if you are located in the continental united states. oh ok so i guess it shouldnt be too much just for one shirt for us based customers, it is $39.99 for 5 pounds or less. oh wow i was"
+  },
+  {
+    "session_id": "8534",
+    "index": 97,
+    "ordered_operations": [
+      [
+        "jeans_other_1",
+        "search-faq"
+      ],
+      [
+        "jeans_other_1",
+        "search-jeans"
+      ],
+      [
+        "jeans_other_1",
+        "select-faq:jeans_other_1"
+      ]
+    ],
+    "dialogue": "hi, there.  how may i help you? could you tell me if the michael kors jeans will shrink after i wash them? i sure can.  let me pull up the item. thank you searching the faq pages ... system action: search jeans faq answer related to jeans (other1) was selected. if you wash the jeans according to the label recommendations, they should not shrink. ok.  thank you always fold them inside out and use the cold wash. you can hang-dry them, which is recommended, or you can put them in the dryer and use "
+  },
+  {
+    "session_id": "8848",
+    "index": 98,
+    "ordered_operations": [
+      [
+        "shirt_how_4",
+        "search-faq"
+      ],
+      [
+        "shirt_how_4",
+        "search-shirt"
+      ],
+      [
+        "shirt_how_4",
+        "select-faq:shirt_how_4"
+      ]
+    ],
+    "dialogue": "thank you for contacting acme.  how may i help you today? i would like to know more about a product because i am thinking of buying it. certainly, i have some detailed product manuals on my shelf, so i can probably find out anything you'd like to know searching the faq pages ... what would you like to know? i want to know more about a shirt system action: search shirt brand : michael_kors that's one of our more popular items.  what questions did you have about it? i want to know how wide the col"
+  },
+  {
+    "session_id": "4685",
+    "index": 99,
+    "ordered_operations": [
+      [
+        "status_shipping_question",
+        "pull-up-account:joseph banter"
+      ],
+      [
+        "status_shipping_question",
+        "ask-the-oracle"
+      ]
+    ],
+    "dialogue": "hi how can i help you hi i have a few questions about my account. i'm happy to help what are your questions. i need to know what member level i am joseph banter is my name account has been pulled up for joseph banter. do you have your account id and order id no.  i don't have the account id and i haven't placed the order yet i'm just trying to see if my account is eligible for free international shipping querying the system for an answer ... oh very good i can check that yes, it shows that you a"
+  }
+]
