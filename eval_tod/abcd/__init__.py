@@ -34,6 +34,10 @@ from .metrics import (
     compute_cds_aggregate,
     evaluate_abcd,
 )
+from .agent_skill import (
+    SkillSelectingAgent,
+    compute_selection_accuracy,
+)
 
 __all__ = [
     # Schemas
@@ -57,4 +61,7 @@ __all__ = [
     "compute_cds",
     "compute_cds_aggregate",
     "evaluate_abcd",
+    # Agent
+    "SkillSelectingAgent",
+    "compute_selection_accuracy",
 ]
