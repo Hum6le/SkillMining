@@ -86,12 +86,12 @@ class PipelineConfig:
     model: str = "deepseek-chat"
     api_key: str | None = None  # None = resolve from config / env
     base_url: str | None = None  # None = resolve from config / env
-    max_turns: int = 6
+    max_turns: int = 3
     workers_agent: int = 1
     workers_analysis: int = 4
 
-    # LLM Judge
-    llm_judge: bool = True
+    # LLM Judge — disabled by default; use text metrics (ROUGE/BLEU/BERT) instead
+    llm_judge: bool = False
     llm_judge_sample: int = 50  # per-split default
 
     # Evolution

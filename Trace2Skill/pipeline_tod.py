@@ -60,7 +60,7 @@ Examples:
     ap.add_argument("--judge-sample", type=int, default=50)
     ap.add_argument("--output-dir", default="outputs/tod_pipeline")
     ap.add_argument("--data-path", default=None)
-    ap.add_argument("--max-turns", type=int, default=6)
+    ap.add_argument("--max-turns", type=int, default=3)
     ap.add_argument("--batch-training", action="store_true")
     ap.add_argument("--batch-size", type=int, default=50)
     ap.add_argument("--checkpoint-every", type=int, default=None)
