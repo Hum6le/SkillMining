@@ -178,6 +178,107 @@ class ABCDAgent(AbstractTodAgent):
             response_text=response_text,
         )
 
+    def predict_all_turns(
+        self, conversation: dict[str, Any], verbose: bool = False,
+    ) -> list[dict]:
+        """Predict EVERY agent turn in a conversation, not just the last.
+
+        For each agent turn, builds context from all preceding turns,
+        generates prediction, and returns all turn-level results.
+
+        Returns:
+            List of dicts with keys: turn_index, context, reference, prediction.
+        """
+        convo_id = str(conversation.get("convo_id", "?"))
+        scenario = conversation.get("scenario", {})
+        delexed = conversation.get("delexed", [])
+
+        system = self._build_system_prompt(scenario)
+        results: list[dict] = []
+
+        # Find all agent turn indices
+        agent_indices = [
+            i for i, t in enumerate(delexed)
+            if t.get("speaker") == "agent" and t.get("text", "").strip()
+        ]
+
+        for agent_num, turn_idx in enumerate(agent_indices, 1):
+            # Build context: all turns before this one
+            context_lines: list[str] = []
+            for i in range(turn_idx):
+                t = delexed[i]
+                spk = t.get("speaker", "unknown")
+                txt = t.get("text", "").strip()
+                if not txt:
+                    continue
+                label_map = {"agent": "Agent", "customer": "Customer", "action": "System"}
+                context_lines.append(f"[{label_map.get(spk, spk)}] {txt}")
+
+            context = "\n".join(context_lines)
+            reference = str(delexed[turn_idx].get("text", "")).strip()
+
+            if not context or not reference:
+                continue
+
+            from llm import chat
+            messages = [
+                {"role": "system", "content": system},
+                {"role": "user", "content": _TASK_PROMPT.format(context=context)},
+            ]
+
+            pred_text = ""
+            try:
+                pred_text = chat(
+                    messages, model=self.model, api_key=self.api_key,
+                    base_url=self.base_url, temperature=0.7, max_tokens=256,
+                    response_logger=self._response_logger,
+                ).strip().strip('"').strip("'")
+            except Exception as exc:
+                if verbose:
+                    print(f"    LLM error convo={convo_id} turn={turn_idx}: {exc}")
+
+            results.append({
+                "convo_id": convo_id,
+                "turn_index": turn_idx,
+                "agent_turn_num": agent_num,
+                "total_agent_turns": len(agent_indices),
+                "subflow": str(scenario.get("subflow", "")),
+                "flow": str(scenario.get("flow", "")),
+                "context": context,
+                "reference": reference,
+                "prediction": pred_text,
+            })
+
+        return results
+
+    def generate_all_turn_predictions(
+        self, conversations: list[dict[str, Any]], verbose: bool = True,
+    ) -> list[dict]:
+        """Generate turn-level predictions for all conversations.
+
+        Returns a flat list of all turn-level prediction dicts.
+        """
+        all_results: list[dict] = []
+        total = len(conversations)
+        for i, conv in enumerate(conversations):
+            convo_id = str(conv.get("convo_id", i))
+            flow = conv.get("scenario", {}).get("flow", "?")
+            subflow = conv.get("scenario", {}).get("subflow", "?")
+            if verbose:
+                print(f"  [{i+1}/{total}] convo={convo_id}  {flow}/{subflow}")
+
+            results = self.predict_all_turns(conv, verbose=verbose)
+            all_results.extend(results)
+
+            if verbose:
+                print(f"    {len(results)} agent turns predicted")
+
+            if i < total - 1:
+                import time
+                time.sleep(self.delay)
+
+        return all_results
+
     def _build_system_prompt(self, scenario: dict[str, Any]) -> str:
         """Build system prompt with scenario context + workflow + memory."""
         flow = scenario.get("flow", "unknown")
