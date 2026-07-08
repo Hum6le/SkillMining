@@ -131,12 +131,23 @@ def main():
         log.info(f"{'─'*40}")
         log.info(f"Batch {batch_idx}/{len(batches)}: {len(batch)} dialogues")
 
-        # 1. Run agent
-        preds = agent.generate_predictions(batch)
-
-        # 2. Induce workflow + update memory
-        from eval_tod.abcd.agent import compute_per_dialogue_ast
-        eval_dicts = compute_per_dialogue_ast(batch)
+        # 1. Run agent (turn-level) + compute real AST
+        from eval_tod.abcd.agent import compute_ast_from_turn_results
+        from eval_tod.schemas import Prediction
+        turn_results = agent.generate_all_turn_predictions(
+            batch, predict_actions=True, verbose=False)
+        eval_dicts = compute_ast_from_turn_results(batch, turn_results)
+        # Use last-turn predictions for induce
+        preds = []
+        for conv in batch:
+            cid = str(conv.get("convo_id", "?"))
+            conv_turns = [r for r in turn_results if r["convo_id"] == cid]
+            last = conv_turns[-1]["prediction"] if conv_turns else ""
+            preds.append(Prediction(
+                dialogue_id=f"abcd-{cid}",
+                inform_slots={}, request_slots={}, booking={},
+                response_text=last,
+            ))
         agent.induce(batch, preds, eval_dicts)
         agent.update_memory(batch, preds, eval_dicts)
 

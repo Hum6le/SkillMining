@@ -32,7 +32,7 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 
 from eval_tod.abcd.data import load_abcd_data
 from eval_tod.abcd.split import split_by_subflow, extract_all_agent_turns
-from eval_tod.abcd.agent import compute_per_dialogue_ast
+from eval_tod.abcd.agent import compute_ast_from_turn_results
 from eval_tod.text_eval import evaluate_responses
 
 ABCD_DIR = "data/eval/abcd/data"
@@ -280,11 +280,26 @@ def main():
 
             log.info(f"  Batch {batch_idx}/{len(batches)}: {len(batch)} dialogues")
 
-            # Run + induce (AST-based eval, not BERT)
-            preds = agent.generate_predictions(batch)
-            eval_dicts = compute_per_dialogue_ast(batch)
-            agent.induce(batch, preds, eval_dicts)
-            agent.update_memory(batch, preds, eval_dicts)
+            # Turn-level predictions with actions → real AST scores
+            turn_results = agent.generate_all_turn_predictions(
+                batch, predict_actions=True, verbose=False)
+            eval_dicts = compute_ast_from_turn_results(batch, turn_results)
+
+            # Build last-turn Predictions from turn_results for induce/update_memory
+            from eval_tod.schemas import Prediction
+            last_turn_preds = []
+            for conv in batch:
+                cid = str(conv.get("convo_id", "?"))
+                conv_turns = [r for r in turn_results if r["convo_id"] == cid]
+                last = conv_turns[-1]["prediction"] if conv_turns else ""
+                last_turn_preds.append(Prediction(
+                    dialogue_id=f"abcd-{cid}",
+                    inform_slots={}, request_slots={}, booking={},
+                    response_text=last,
+                ))
+
+            agent.induce(batch, last_turn_preds, eval_dicts)
+            agent.update_memory(batch, last_turn_preds, eval_dicts)
 
             # Checkpoint
             if batch_idx % CHECKPOINT_EVERY == 0:
