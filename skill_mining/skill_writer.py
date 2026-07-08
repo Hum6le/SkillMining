@@ -39,6 +39,14 @@ from eval_tod.abcd.data import load_abcd_data
 _OUTPUT_DIR = _PROJECT_ROOT / "outputs" / "skills"
 
 
+def _short_label(node_id: str) -> str:
+    """Extract short display label from full operator name."""
+    parts = node_id.split(":", 1)
+    if len(parts) >= 2:
+        return parts[1].split(":")[0] if ":" in parts[1] else parts[1]
+    return node_id
+
+
 # ═══════════════════════════════════════════════════════════════
 # Dialogue snippet extraction (no LLM needed for ABCD)
 # ═══════════════════════════════════════════════════════════════
@@ -149,24 +157,39 @@ def _format_turn(turn: dict) -> str:
 def build_reference_md(
     subflow: str,
     op_snippets: Dict[str, list[dict]],
+    max_snippets_per_op: int = 5,
 ) -> str:
-    """Generate reference.md content from operator→snippets mapping."""
+    """Generate reference.md from operator→snippets mapping.
+
+    Each operator gets up to ``max_snippets_per_op`` snippets, deduplicated
+    by snippet text.  Sections have HTML anchors so skill.md can link to them.
+    """
     lines: list[str] = []
     lines.append(f"# Reference: {subflow}")
     lines.append("")
-    lines.append(f"Dialogue snippets extracted from training data for the `{subflow}` skill.")
-    lines.append("Each section corresponds to one key operator (action).")
+    lines.append(f"Dialogue snippets for the `{subflow}` skill. "
+                 f"Each section shows one operator with example contexts.")
     lines.append("")
 
     for op, snippets in sorted(op_snippets.items()):
-        # Clean up operator name for display
         parts = op.split(":", 1)
         display_op = parts[1] if len(parts) == 2 else op
+        anchor = display_op.replace(":", "-").replace(" ", "-").lower()
 
+        lines.append(f'<a id="operator-{anchor}"></a>')
         lines.append(f"## {display_op}")
         lines.append("")
 
-        for i, snip in enumerate(snippets, 1):
+        # Deduplicate by snippet text, keep most diverse
+        seen_texts: set[str] = set()
+        unique_snippets = []
+        for snip in snippets:
+            key = snip["snippet_text"][:100].strip()
+            if key not in seen_texts:
+                seen_texts.add(key)
+                unique_snippets.append(snip)
+
+        for i, snip in enumerate(unique_snippets[:max_snippets_per_op], 1):
             lines.append(f"### Example {i} (convo={snip['convo_id']}, turn={snip['turn_index']})")
             lines.append("")
             lines.append("```text")
@@ -174,11 +197,244 @@ def build_reference_md(
             lines.append("```")
             lines.append("")
 
+        if len(unique_snippets) > max_snippets_per_op:
+            lines.append(f"*({len(unique_snippets) - max_snippets_per_op} more snippets not shown)*")
+            lines.append("")
+
     return "\n".join(lines)
 
 
 # ═══════════════════════════════════════════════════════════════
-# Skill.md generation (LLM summary)
+# Skill.md generation from subgraph (with pathways + branches)
+# ═══════════════════════════════════════════════════════════════
+
+def build_skill_md_from_subgraph(
+    subflow: str,
+    subgraph: dict,
+    op_snippets: Dict[str, list[dict]],
+    use_llm: bool = True,
+) -> str:
+    """Generate skill.md from subgraph (pathways, branches, edges).
+
+    Unlike the flat vertex-list approach, this uses the subgraph structure
+    to describe the action flow with branching conditions.
+    """
+    nodes = subgraph.get("nodes", [])
+    edges = subgraph.get("edges", [])
+    pathways = subgraph.get("pathways", [])
+    branches = subgraph.get("branch_points", [])
+    coverage_pct = subgraph.get("coverage_pct", 0)
+    num_sessions = subgraph.get("n_sessions", 0)
+
+    if use_llm:
+        prompt = _build_subgraph_skill_prompt(
+            subflow, nodes, edges, pathways, branches, op_snippets,
+            coverage_pct, num_sessions,
+        )
+        try:
+            from llm_utils import ds_api_retry
+            raw = ds_api_retry(prompt)
+            text = raw.get("data", {}).get("text", "") if isinstance(raw, dict) else str(raw)
+            text = text.strip()
+            if text.startswith("```markdown"):
+                text = text[len("```markdown"):].strip()
+            if text.startswith("```"):
+                text = text[3:].strip()
+            if text.endswith("```"):
+                text = text[:-3].strip()
+            if text:
+                return text
+        except Exception as e:
+            print(f"  LLM error for {subflow}: {e}")
+
+    return _build_skill_md_from_subgraph_fallback(
+        subflow, nodes, edges, pathways, branches, op_snippets,
+        coverage_pct, num_sessions,
+    )
+
+
+def _build_subgraph_skill_prompt(
+    subflow: str,
+    nodes: list,
+    edges: list,
+    pathways: list,
+    branches: list,
+    op_snippets: Dict[str, list[dict]],
+    coverage_pct: float,
+    num_sessions: int,
+) -> str:
+    """Build LLM prompt from subgraph structure."""
+    # Node list
+    node_lines = []
+    for n in nodes[:20]:
+        node_lines.append(f"  - `{n['id']}` (freq={n['frequency']})")
+
+    # Edge list
+    edge_lines = []
+    for e in edges[:30]:
+        edge_lines.append(f"  - `{e['source']}` → `{e['target']}` (weight={e['weight']})")
+
+    # Main pathway
+    path_lines = []
+    for i, p in enumerate(pathways[:2]):
+        steps_str = " → ".join(
+            s.get("next", s["node"]) if "next" in s else s["node"]
+            for s in p["steps"]
+        )
+        path_lines.append(f"  Pathway {i+1} (weight={p['total_weight']}): {steps_str}")
+
+    # Branch points
+    branch_lines = []
+    for bp in branches[:5]:
+        targets = []
+        for b in bp["branches"]:
+            targets.append(f"`{b['target']}` (weight={b['weight']})")
+        branch_lines.append(f"  At `{bp['node']}`: go to {' or '.join(targets)}")
+
+    # Snippet examples
+    snippet_text = ""
+    if op_snippets:
+        sample_ops = list(op_snippets.keys())[:3]
+        parts = []
+        for op in sample_ops:
+            snips = op_snippets[op][:1]
+            if snips:
+                parts.append(f"**{op}**:\n```\n{snips[0]['snippet_text'][:250]}\n```")
+        snippet_text = "\n\n".join(parts) if parts else ""
+
+    return f"""You are documenting a customer service skill from a weighted action graph.
+Write a skill card in Markdown that an AI agent can follow.
+
+## Skill Context
+- **Skill ID**: `{subflow}`
+- **Coverage**: {coverage_pct:.0f}% ({num_sessions} sessions)
+
+## Action Graph
+### Nodes (operators)
+{chr(10).join(node_lines) if node_lines else "(none)"}
+
+### Edges (transitions, weight = occurrence count)
+{chr(10).join(edge_lines) if edge_lines else "(none)"}
+
+### Main Pathway (highest-weight path)
+{chr(10).join(path_lines) if path_lines else "(none)"}
+
+### Branch Points (decision points with multiple outgoing paths)
+{chr(10).join(branch_lines) if branch_lines else "(none)"}
+
+## Example Dialogue Snippets
+{snippet_text or '(see reference.md)'}
+
+## Output Format
+Write a Markdown document with this structure:
+
+```markdown
+# Skill: {subflow}
+
+## Intent
+[1-2 sentences describing the customer need]
+
+## Triggers
+- keyword/phrases the customer might say
+
+## Workflow
+### Main Path
+[Step-by-step description of the main pathway through the graph]
+
+### Branch: [condition A]
+[When condition A is met, take this path. Describe transitions between operators.]
+**Transitions**: `op1` → `op2` → `op3`
+
+### Branch: [condition B]
+...
+
+## Decision Points
+[For each branch point, describe WHEN to choose which path. Use edge weights
+as indicators of how common each path is.]
+
+## Operator Reference
+[Link each operator to its reference snippet. Format:]
+- `op_name` — [brief description]. See [reference.md#op-name](reference.md#op-name)
+```
+
+## Important
+- Derive branching CONDITIONS from operator names, edge patterns, and snippet context.
+- Higher edge weight = more common transition. Use this to prioritise the main path.
+- Write ONLY the Markdown document, no extra commentary."""
+
+
+def _build_skill_md_from_subgraph_fallback(
+    subflow: str,
+    nodes: list,
+    edges: list,
+    pathways: list,
+    branches: list,
+    op_snippets: Dict[str, list[dict]],
+    coverage_pct: float,
+    num_sessions: int,
+) -> str:
+    """Template-based skill.md from subgraph (no LLM)."""
+    lines = [f"# Skill: {subflow}", "", f"*Coverage: {coverage_pct:.0f}% ({num_sessions} sessions)*", ""]
+
+    # Intent
+    lines.extend(["## Intent", "",
+                  f"Handle customer requests related to `{subflow}`.", ""])
+
+    # Workflow — main pathway
+    lines.append("## Workflow")
+    lines.append("")
+    if pathways:
+        lines.append("### Main Path")
+        lines.append("")
+        p = pathways[0]
+        for i, step in enumerate(p["steps"], 1):
+            node_label = step.get("label", step["node"])
+            nxt = step.get("next", "")
+            nxt_label = ""
+            if nxt:
+                for n in nodes:
+                    if n["id"] == nxt:
+                        nxt_label = n.get("label", nxt)
+                        break
+            arrow = f" → `{nxt_label}`" if nxt_label else ""
+            lines.append(f"{i}. **`{node_label}`**{arrow}")
+        lines.append("")
+
+    # Branch points
+    if branches:
+        lines.append("### Decision Points")
+        lines.append("")
+        for bp in branches[:8]:
+            lines.append(f"At **`{bp['label']}`**:")
+            for b in bp["branches"]:
+                lines.append(f"- → `{b['label']}` (weight={b['weight']})")
+            lines.append("")
+
+    # Edges summary
+    if edges:
+        lines.append("### All Transitions")
+        lines.append("")
+        for e in edges[:20]:
+            lines.append(f"- `{_short_label(e['source'])}` → `{_short_label(e['target'])}` (w={e['weight']})")
+        lines.append("")
+
+    # Operator reference
+    lines.append("## Operator Reference")
+    lines.append("")
+    for n in nodes[:20]:
+        nid = n["id"]
+        label = n.get("label", nid)
+        anchor = label.replace(":", "-").replace(" ", "-").lower()
+        has_snippets = "yes" if nid in op_snippets and op_snippets[nid] else "no"
+        lines.append(f"- **`{label}`** — freq={n['frequency']}. "
+                     f"[See snippets →](reference.md#{"operator-" + anchor}) "
+                     f"({has_snippets} snippets)")
+
+    return "\n".join(lines)
+
+
+# ═══════════════════════════════════════════════════════════════
+# Skill.md generation (legacy — flat vertex list)
 # ═══════════════════════════════════════════════════════════════
 
 def build_skill_md_prompt(
@@ -188,18 +444,16 @@ def build_skill_md_prompt(
     coverage_pct: float,
     num_sessions: int,
 ) -> str:
-    """Build prompt for LLM to generate skill.md."""
+    """Build prompt for LLM to generate skill.md (flat list version)."""
     ops_clean = []
     for op in operators:
         parts = op.split(":", 1)
         ops_clean.append(parts[1] if len(parts) == 2 else op)
 
-    # Collect a few example snippets
     snippet_examples = []
     for op, snippets in list(op_snippets.items())[:5]:
         if snippets:
             snippet_examples.append(f"**{op}**:\n```\n{snippets[0]['snippet_text'][:300]}\n```")
-
     snippets_text = "\n\n".join(snippet_examples) if snippet_examples else "(no snippets available)"
 
     return f"""You are documenting a customer service skill for an AI agent. Write a skill card in Markdown.
@@ -213,30 +467,18 @@ def build_skill_md_prompt(
 {snippets_text}
 
 ## Output Format
-Write a Markdown document with this EXACT structure:
-
 ```markdown
 # Skill: {subflow}
-
 ## Intent
-[A 1-2 sentence description of what the customer needs]
-
+[1-2 sentence description]
 ## Triggers
-- [keyword/phrase 1]
-- [keyword/phrase 2]
-- [keyword/phrase 3]
-
+- keyword 1
 ## Actions
-[Ordered list of actions the agent should take, with brief descriptions]
-1. **action_name** — what this step does
-2. **action_name** — what this step does
-...
-
+1. **action** — description
 ## Strategy
-[2-3 sentences on how to handle this request type effectively]
-
+[2-3 sentences]
 ## Expected Outcome
-[What the customer should receive by the end]
+[what customer gets]
 ```
 
 Write ONLY the Markdown, no extra commentary."""
@@ -249,15 +491,12 @@ def generate_skill_md_llm(
     coverage_pct: float,
     num_sessions: int,
 ) -> str:
-    """Use LLM to generate skill.md content."""
-    prompt = build_skill_md_prompt(
-        subflow, operators, op_snippets, coverage_pct, num_sessions,
-    )
+    """Use LLM to generate skill.md content (legacy flat version)."""
+    prompt = build_skill_md_prompt(subflow, operators, op_snippets, coverage_pct, num_sessions)
     try:
         from llm_utils import ds_api_retry
         raw = ds_api_retry(prompt)
         text = raw.get("data", {}).get("text", "") if isinstance(raw, dict) else str(raw)
-        # Clean up markdown code fences
         text = text.strip()
         if text.startswith("```markdown"):
             text = text[len("```markdown"):].strip()
@@ -285,33 +524,22 @@ def build_skill_md_fallback(
         ops_clean.append(parts[1] if len(parts) == 2 else op)
 
     lines = [
-        f"# Skill: {subflow}",
-        "",
+        f"# Skill: {subflow}", "",
         "## Intent",
-        f"Handle customer requests related to `{subflow}`.",
-        "",
+        f"Handle customer requests related to `{subflow}`.", "",
         "## Triggers",
     ]
-    # Basic triggers from the subflow name
     name_parts = subflow.replace("_", " ").split()
     for p in name_parts[:5]:
         lines.append(f"- customer mentions \"{p}\"")
-
-    lines.extend([
-        "",
-        "## Actions",
-    ])
+    lines.extend(["", "## Actions"])
     for i, op in enumerate(ops_clean[:15], 1):
         lines.append(f"{i}. **{op}**")
-
     lines.extend([
-        "",
-        "## Strategy",
-        f"Follow the action sequence above. Refer to `reference.md` for example dialogue snippets.",
-        "",
-        "## Expected Outcome",
-        f"Customer's `{subflow}` request is resolved.",
-        "",
+        "", "## Strategy",
+        f"Follow the action sequence above. Refer to `reference.md` for snippets.",
+        "", "## Expected Outcome",
+        f"Customer's `{subflow}` request is resolved.", "",
         f"---",
         f"*Coverage: {coverage_pct:.0f}% ({num_sessions} sessions)*",
     ])
@@ -328,17 +556,20 @@ def write_skill_and_reference(
     conversations: list[dict],
     output_dir: Path,
     use_llm: bool = True,
+    subgraph: dict | None = None,
 ) -> Tuple[Path, Path]:
     """Generate skill.md and reference.md for one subflow.
 
-    Returns:
-        (skill_md_path, reference_md_path)
+    If ``subgraph`` is provided, uses pathways + branches + edges to generate
+    a richer skill.md with branching conditions.
     """
     operators = skill_info.get("selected_vertices", [])
-    coverage_pct = skill_info.get("coverage_pct", 0)
-    num_sessions = skill_info.get("num_sessions", 0)
+    # If subgraph provided, extract operators from subgraph nodes
+    if not operators and subgraph:
+        operators = [n["id"] for n in subgraph.get("nodes", [])]
+    coverage_pct = skill_info.get("coverage_pct", subgraph.get("coverage_pct", 0) if subgraph else 0)
+    num_sessions = skill_info.get("num_sessions", subgraph.get("n_sessions", 0) if subgraph else 0)
 
-    # Safe directory name
     safe_name = subflow.replace("/", "_").replace("\\", "_").replace(":", "_")[:50]
     intent_dir = output_dir / safe_name
     intent_dir.mkdir(parents=True, exist_ok=True)
@@ -346,8 +577,12 @@ def write_skill_and_reference(
     # Extract dialogue snippets
     op_snippets = _find_operator_snippets(conversations, subflow, operators)
 
-    # Generate skill.md
-    if use_llm:
+    # Generate skill.md — use subgraph if available
+    if subgraph and (subgraph.get("pathways") or subgraph.get("edges")):
+        skill_md = build_skill_md_from_subgraph(
+            subflow, subgraph, op_snippets, use_llm=use_llm,
+        )
+    elif use_llm:
         skill_md = generate_skill_md_llm(
             subflow, operators, op_snippets, coverage_pct, num_sessions,
         )
@@ -363,14 +598,14 @@ def write_skill_and_reference(
     skill_path = intent_dir / "skill.md"
     skill_path.write_text(skill_md, encoding="utf-8")
 
-    # Generate reference.md
-    reference_md = build_reference_md(subflow, op_snippets)
+    # Generate reference.md (max 5 diverse snippets per operator)
+    reference_md = build_reference_md(subflow, op_snippets, max_snippets_per_op=5)
     ref_path = intent_dir / "reference.md"
     ref_path.write_text(reference_md, encoding="utf-8")
 
-    # Summary
     n_ops_with_snippets = sum(1 for s in op_snippets.values() if s)
-    print(f"  {subflow}: {len(operators)} ops, {n_ops_with_snippets} with snippets")
+    has_subgraph = "subgraph" if subgraph and subgraph.get("edges") else "flat"
+    print(f"  {subflow}: {len(operators)} ops ({has_subgraph}), {n_ops_with_snippets} with snippets")
 
     return skill_path, ref_path
 
@@ -395,6 +630,9 @@ def main():
                         help="Skip LLM summary, use fallback template for skill.md")
     parser.add_argument("--max-intents", type=int, default=None,
                         help="Limit number of intents to process")
+    parser.add_argument("--subgraph", default=None,
+                        help="per_subflow_subgraphs.json from subgraph_mining.py "
+                             "(enables pathway-based skill.md with branching)")
     args = parser.parse_args()
 
     skills_path = Path(args.skills)
@@ -429,14 +667,25 @@ def main():
     if args.max_intents:
         intents = intents[:args.max_intents]
 
+    # Load subgraphs if provided
+    subgraphs: dict[str, dict] = {}
+    if args.subgraph:
+        sg_path = Path(args.subgraph)
+        if sg_path.exists():
+            subgraphs = json.loads(sg_path.read_text(encoding="utf-8"))
+            print(f"Loaded {len(subgraphs)} subgraphs from {sg_path}")
+
     use_llm = not args.no_llm
     print(f"\nGenerating skill.md + reference.md for {len(intents)} intents "
-          f"({'LLM' if use_llm else 'template'} mode)...")
+          f"({'LLM' if use_llm else 'template'} mode, "
+          f"subgraph={'yes' if subgraphs else 'no'})...")
 
     generated: list[dict] = []
     for subflow, skill_info in intents:
+        sg = subgraphs.get(subflow)
         skill_path, ref_path = write_skill_and_reference(
-            subflow, skill_info, conversations, out_dir, use_llm=use_llm,
+            subflow, skill_info, conversations, out_dir,
+            use_llm=use_llm, subgraph=sg,
         )
         generated.append({
             "subflow": subflow,
