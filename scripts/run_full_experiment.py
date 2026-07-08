@@ -105,6 +105,10 @@ def main():
     parser.add_argument("--max-train-convs", type=int, default=None)
     parser.add_argument("--max-test-convs", type=int, default=None)
     parser.add_argument("--train-frac", type=float, default=TRAIN_FRAC)
+    parser.add_argument("--train-file", type=str, default=None,
+                        help="Pre-split train convs JSON (from split_abcd_by_intent.py)")
+    parser.add_argument("--test-file", type=str, default=None,
+                        help="Pre-split test convs JSON (from split_abcd_by_intent.py)")
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
     parser.add_argument("--max-batches", type=int, default=MAX_BATCHES)
     parser.add_argument("--model", default=MODEL)
@@ -121,12 +125,20 @@ def main():
     # ═══════════════════════════════════════════════════════════
     # 1. Load + Split data
     # ═══════════════════════════════════════════════════════════
-    log.info("\n[1/5] Loading ABCD dataset...")
-    all_convs = load_abcd_data("train", ABCD_DIR)  # use train split for training
-    log.info(f"  {len(all_convs)} conversations loaded")
+    if args.train_file and args.test_file:
+        log.info("\n[1/5] Loading pre-split data...")
+        train_convs = json.loads(Path(args.train_file).read_text(encoding="utf-8"))
+        test_convs = json.loads(Path(args.test_file).read_text(encoding="utf-8"))
+        log.info(f"  Train: {len(train_convs)} convs (from {args.train_file})")
+        log.info(f"  Test:  {len(test_convs)} convs (from {args.test_file})")
+    else:
+        log.info("\n[1/5] Loading ABCD dataset...")
+        all_convs = load_abcd_data("train", ABCD_DIR)
+        log.info(f"  {len(all_convs)} conversations loaded")
 
-    log.info("\n[2/5] Splitting by subflow (train_frac=%.1f)...", args.train_frac)
-    train_convs, test_convs = split_by_subflow(all_convs, args.train_frac, args.seed)
+        log.info("\n[2/5] Splitting by subflow (train_frac=%.1f)...", args.train_frac)
+        train_convs, test_convs = split_by_subflow(all_convs, args.train_frac, args.seed)
+
     if args.max_train_convs:
         train_convs = train_convs[:args.max_train_convs]
     if args.max_test_convs:
@@ -151,7 +163,7 @@ def main():
     # ═══════════════════════════════════════════════════════════
     seed_results = None
     if not args.skip_seed:
-        log.info("\n[3/5] Seed Baseline (no workflow, no memory)...")
+        log.info("\n[2/4] Seed Baseline (no workflow, no memory)...")
         from eval_tod.abcd.agent import ABCDAgent
         from awm import MemoryStore, WorkflowStore
 
@@ -176,7 +188,7 @@ def main():
     # ═══════════════════════════════════════════════════════════
     trained_results = None
     if not args.skip_training:
-        log.info("\n[4/5] AWM Batch Training...")
+        log.info("\n[3/4] AWM Batch Training...")
         from eval_tod.abcd.agent import ABCDAgent
         from eval_tod.response_logger import ResponseLogger
         from awm import MemoryStore, WorkflowStore
@@ -250,7 +262,7 @@ def main():
         # ═══════════════════════════════════════════════════════
         # 4. Trained Evaluation
         # ═══════════════════════════════════════════════════════
-        log.info("\n[5/5] Trained Evaluation (with workflow + memory)...")
+        log.info("\n[4/4] Trained Evaluation (with workflow + memory)...")
         trained_turns = agent.generate_all_turn_predictions(test_convs)
         trained_results = evaluate_turn_results(trained_turns, "trained")
 
