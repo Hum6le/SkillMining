@@ -559,33 +559,39 @@ def turn_results_to_abcd_predictions(
         delexed = conv.get("delexed", [])
         turn_preds: list[ABCDTurnPrediction] = []
 
-        # Collect ALL predicted actions across all agent turns, in order
-        all_pred_actions: list[str] = []
-        all_pred_slots: list[list[str]] = []
+        # Each agent turn predicts actions that follow until the next agent turn.
+        # Action turns between agent A and agent B all get A's prediction.
+        agent_preds: dict[int, str] = {}
+        agent_slots: dict[int, str] = {}
         for r in sorted(turns, key=lambda x: x["turn_index"]):
-            # Each agent turn may predict ONE action; collect them all
             pa = r.get("predicted_action", "")
             ps = r.get("predicted_slots", [])
             if pa:
-                all_pred_actions.append(pa)
-                all_pred_slots.append(ps)
+                agent_preds[r["turn_index"]] = pa
+                agent_slots[r["turn_index"]] = ps
 
-        # Align by order: the i-th action turn gets the i-th predicted action
-        pred_idx = 0
+        agent_indices = sorted(agent_preds.keys())
+
         for turn_idx, turn in enumerate(delexed):
             targets = turn.get("targets", [])
             if len(targets) < 3 or targets[1] != "take_action":
                 continue
 
-            pred_action = all_pred_actions[pred_idx] if pred_idx < len(all_pred_actions) else ""
-            pred_slots = all_pred_slots[pred_idx] if pred_idx < len(all_pred_slots) else []
-            pred_idx += 1
+            # Nearest preceding agent turn's prediction applies here
+            pred_action = ""
+            pred_slots: list[str] = []
+            for ai in agent_indices:
+                if ai < turn_idx:
+                    pred_action = agent_preds[ai]
+                    pred_slots = agent_slots[ai]
+                else:
+                    break  # agent_indices is sorted, stop once ai >= turn_idx
 
             turn_preds.append(ABCDTurnPrediction(
                 turn_index=turn_idx,
                 turn_type="action",
                 predicted_action=pred_action if pred_action else None,
-                predicted_slots=pred_slots if pred_slots else None,
+                predicted_slots=list(pred_slots) if pred_slots else None,
             ))
 
         predictions.append(ABCDPrediction(

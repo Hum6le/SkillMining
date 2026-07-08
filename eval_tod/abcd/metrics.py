@@ -228,15 +228,15 @@ class CDSAggregate:
 def _turn_match(
     gt: ABCDGroundTruth,
     pred: ABCDTurnPrediction | None,
-) -> bool:
+) -> bool | None:
     """Check if a single turn prediction matches ground truth.
 
-    For ``utterance`` turns: checks ``predicted_utterance_id``.
-    For ``action`` turns: checks ``predicted_action`` + ``predicted_slots``.
-    For ``customer`` turns: always matches (no prediction target).
+    Returns:
+        ``True`` if correct, ``False`` if wrong, ``None`` if this turn
+        should be excluded from scoring (e.g. customer turns).
     """
     if gt.turn_type == "customer":
-        return True  # customer turns require no prediction
+        return None  # excluded — no prediction target, so don't count
 
     if pred is None:
         return False
@@ -257,25 +257,14 @@ def compute_cds(
     prediction: ABCDPrediction,
     conversation_id: str = "",
 ) -> CDSResult:
-    """Compute CDS for one dialogue.
+    """Compute CDS for one dialogue — only scores actionable turns.
 
-    For each starting turn *i*, the cascade walks forward from *i* to the
-    end.  It counts consecutive correct predictions and stops at the first
-    error.  The score from position *i* is:
+    Customer turns are excluded (skipped over) — they neither help nor hurt
+    the cascade.  The cascade walks forward, counting consecutive correct
+    predictions on *utterance* and *action* turns until the first error.
 
-        score_i = steps_correct / (L - i)
-
-    where ``steps_correct`` is the number of turns (starting from *i*)
-    predicted correctly *before* the first mistake, and ``L - i`` is the
-    number of remaining turns.
-
-    Args:
-        ground_truths: Extracted ground truth, one per turn.
-        prediction: Model predictions for the same dialogue.
-        conversation_id: Identifier for the result.
-
-    Returns:
-        ``CDSResult`` with per-position cascade scores.
+    For a dialogue with L total turns where K are actionable (non-customer):
+        score_i = steps_correct / K_remaining
     """
     L = len(ground_truths)
     if L == 0:
@@ -285,19 +274,35 @@ def compute_cds(
         p.turn_index: p for p in prediction.turns
     }
 
+    # Pre-compute: which positions are actionable (non-customer)
+    actionable = [gt.turn_type != "customer" for gt in ground_truths]
+    total_actionable = sum(actionable)
+    if total_actionable == 0:
+        return CDSResult(conversation_id=conversation_id, cascade_scores=[1.0] * L)
+
     scores: list[float] = []
     for start in range(L):
-        remaining = L - start
+        # Count remaining actionable turns from this position
+        remaining_actionable = sum(actionable[start:])
+        if remaining_actionable == 0:
+            scores.append(1.0)
+            continue
+
         steps_correct = 0
-        for offset in range(remaining):
+        examined = 0
+        for offset in range(L - start):
             t = start + offset
             gt = ground_truths[t]
             pred = pred_by_idx.get(t)
-            if _turn_match(gt, pred):
+            match = _turn_match(gt, pred)
+            if match is None:
+                continue  # skip customer turns — don't break cascade
+            examined += 1
+            if match:
                 steps_correct += 1
             else:
-                break  # cascade stops at first error
-        scores.append(steps_correct / remaining)
+                break  # cascade stops at first error on an actionable turn
+        scores.append(steps_correct / remaining_actionable)
 
     return CDSResult(
         conversation_id=conversation_id,
