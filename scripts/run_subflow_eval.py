@@ -119,27 +119,37 @@ def mine_subflow_skill(subflow: str, train_convs: list) -> dict:
     }
 
     # Generate reference.md (operator → dialogue snippets)
-    from skill_mining.skill_writer import _find_operator_snippets, build_reference_md
+    from skill_mining.skill_writer import (
+        _find_operator_snippets, build_reference_md,
+        build_skill_md_from_subgraph,
+    )
     operators = skill_info["selected_vertices"]
     op_snippets = _find_operator_snippets(train_convs, subflow, operators)
     reference_md = build_reference_md(subflow, op_snippets, max_snippets_per_op=5)
 
+    # Generate skill.md — LLM compile with fallback
+    log.info("  Compiling skill.md via LLM...")
+    skill_md = build_skill_md_from_subgraph(subflow, subgraph, op_snippets, use_llm=True)
+
     return {"skill_info": skill_info, "subgraph": subgraph,
-            "operator_results": op_results, "reference_md": reference_md}
-
-
-def build_workflow_from_skill(subflow: str, skill_info: dict, subgraph: dict) -> str:
-    """Build workflow text from mined skill (use skill.md format)."""
-    from skill_mining.skill_writer import build_skill_md_from_subgraph
-    return build_skill_md_from_subgraph(subflow, subgraph, {}, use_llm=False)
+            "operator_results": op_results,
+            "reference_md": reference_md, "skill_md": skill_md}
 
 
 def evaluate_agent_on_subflow(
-    agent, test_convs: list, label: str,
+    agent, test_convs: list, label: str, subflow: str = "",
 ) -> dict:
-    """Run turn-level predictions + evaluation."""
-    turn_results = agent.generate_all_turn_predictions(
-        test_convs, predict_actions=True, verbose=False)
+    """Run turn-level predictions + evaluation (with progress)."""
+    total = len(test_convs)
+    all_turn_results: list[dict] = []
+    for i, conv in enumerate(test_convs):
+        cid = conv.get("convo_id", "?")
+        print(f"  [{label}] [{i+1}/{total}] convo={cid}  {subflow}", end="\r")
+        results = agent.predict_all_turns(conv, predict_actions=True, verbose=False)
+        all_turn_results.extend(results)
+    print(f"  [{label}] Done: {total} convs, {len(all_turn_results)} turns")
+
+    turn_results = all_turn_results
     preds = [r["prediction"] for r in turn_results]
     refs = [r["reference"] for r in turn_results]
     text_result = evaluate_responses(preds, refs)
@@ -229,13 +239,17 @@ def main():
             skill_text = ""
             if args.skill_path:
                 skill_text = Path(args.skill_path).read_text(encoding="utf-8")
+            else:
+                sf_skill = OUT_DIR / subflow / "skill.md"
+                if sf_skill.exists():
+                    skill_text = sf_skill.read_text(encoding="utf-8")
             skill_info = {"selected_vertices": [], "coverage_pct": 0, "num_sessions": 0}
         else:
             mined = mine_subflow_skill(subflow, train_convs)
             skill_info = mined["skill_info"]
-            skill_text = build_workflow_from_skill(subflow, skill_info, mined["subgraph"])
+            skill_text = mined.get("skill_md", "")
 
-            # Save
+            # Save skill.md + reference.md + subgraph
             sf_out = OUT_DIR / subflow
             sf_out.mkdir(parents=True, exist_ok=True)
             (sf_out / "skill.md").write_text(skill_text, encoding="utf-8")
@@ -246,9 +260,8 @@ def main():
                 encoding="utf-8")
             n_snippets = sum(1 for v in mined.get("reference_md", "").split("\n")
                             if v.startswith("```text"))
-            log.info(f"  Mined: {skill_info['num_selected']} vertices, "
-                     f"{skill_info['coverage_pct']:.0f}% coverage, "
-                     f"{n_snippets} reference snippets")
+            log.info(f"  Saved: skill.md ({len(skill_text.splitlines())} lines), "
+                     f"reference.md ({n_snippets} snippets), subgraph.json")
 
         # ── 3. Seed Baseline (optional) ───────────────────────
         from eval_tod.abcd.agent import ABCDAgent
@@ -259,7 +272,7 @@ def main():
             log.info("  Seed baseline...")
             seed_agent = ABCDAgent(
                 model=args.model, workflow=WorkflowStore(), memory=MemoryStore())
-            seed_result = evaluate_agent_on_subflow(seed_agent, test_convs, "seed")
+            seed_result = evaluate_agent_on_subflow(seed_agent, test_convs, "seed", subflow)
             log.info(f"    BERT={seed_result['text']['bert_f1']:.4f}  "
                      f"BLEU-4={seed_result['text']['bleu_4']:.1f}  AST={seed_result['ast_mean']:.4f}")
 
@@ -270,7 +283,7 @@ def main():
             wf.update(skill_text)
         mined_agent = ABCDAgent(
             model=args.model, workflow=wf, memory=MemoryStore())
-        mined_result = evaluate_agent_on_subflow(mined_agent, test_convs, "mined")
+        mined_result = evaluate_agent_on_subflow(mined_agent, test_convs, "mined", subflow)
         log.info(f"    BERT={mined_result['text']['bert_f1']:.4f}  "
                  f"BLEU-4={mined_result['text']['bleu_4']:.1f}  AST={mined_result['ast_mean']:.4f}")
 
