@@ -56,6 +56,24 @@ _TASK_PROMPT = """## Conversation So Far
 ## Instruction
 Generate the next agent response.  Reply with ONLY the response text, nothing else."""
 
+_TASK_PROMPT_WITH_ACTION = """## Conversation So Far
+{context}
+
+## Instruction
+First identify what system action should be taken, then generate the agent response.
+
+Output format:
+```
+ACTION: <action_name>
+SLOTS: <slot1>, <slot2>
+RESPONSE: <the agent response text>
+```
+
+- ACTION: the name of the system action to take (e.g. pull-up-account, verify-identity, send-link).
+  If no action is needed, write "none".
+- SLOTS: comma-separated slot values for the action. If no slots, write "none".
+- RESPONSE: the natural language agent utterance (1-3 sentences)."""
+
 
 # ── Agent ──────────────────────────────────────────────────────
 
@@ -180,30 +198,33 @@ class ABCDAgent(AbstractTodAgent):
 
     def predict_all_turns(
         self, conversation: dict[str, Any], verbose: bool = False,
+        predict_actions: bool = False,
     ) -> list[dict]:
         """Predict EVERY agent turn in a conversation, not just the last.
 
-        For each agent turn, builds context from all preceding turns,
-        generates prediction, and returns all turn-level results.
+        Args:
+            predict_actions: If True, also predict system actions + slots
+                for AST/CDS evaluation.  The output format changes to
+                ``ACTION: ...\\nSLOTS: ...\\nRESPONSE: ...``.
 
         Returns:
-            List of dicts with keys: turn_index, context, reference, prediction.
+            List of dicts with keys: turn_index, context, reference, prediction,
+            (and predicted_action, predicted_slots if predict_actions=True).
         """
         convo_id = str(conversation.get("convo_id", "?"))
         scenario = conversation.get("scenario", {})
         delexed = conversation.get("delexed", [])
-
         system = self._build_system_prompt(scenario)
         results: list[dict] = []
 
-        # Find all agent turn indices
         agent_indices = [
             i for i, t in enumerate(delexed)
             if t.get("speaker") == "agent" and t.get("text", "").strip()
         ]
 
+        task_template = _TASK_PROMPT_WITH_ACTION if predict_actions else _TASK_PROMPT
+
         for agent_num, turn_idx in enumerate(agent_indices, 1):
-            # Build context: all turns before this one
             context_lines: list[str] = []
             for i in range(turn_idx):
                 t = delexed[i]
@@ -216,28 +237,27 @@ class ABCDAgent(AbstractTodAgent):
 
             context = "\n".join(context_lines)
             reference = str(delexed[turn_idx].get("text", "")).strip()
-
             if not context or not reference:
                 continue
 
             from llm import chat
             messages = [
                 {"role": "system", "content": system},
-                {"role": "user", "content": _TASK_PROMPT.format(context=context)},
+                {"role": "user", "content": task_template.format(context=context)},
             ]
 
-            pred_text = ""
+            raw_output = ""
             try:
-                pred_text = chat(
+                raw_output = chat(
                     messages, model=self.model, api_key=self.api_key,
-                    base_url=self.base_url, temperature=0.7, max_tokens=256,
+                    base_url=self.base_url, temperature=0.7, max_tokens=384,
                     response_logger=self._response_logger,
-                ).strip().strip('"').strip("'")
+                ).strip()
             except Exception as exc:
                 if verbose:
                     print(f"    LLM error convo={convo_id} turn={turn_idx}: {exc}")
 
-            results.append({
+            entry = {
                 "convo_id": convo_id,
                 "turn_index": turn_idx,
                 "agent_turn_num": agent_num,
@@ -246,15 +266,29 @@ class ABCDAgent(AbstractTodAgent):
                 "flow": str(scenario.get("flow", "")),
                 "context": context,
                 "reference": reference,
-                "prediction": pred_text,
-            })
+                "prediction": raw_output,
+            }
+
+            if predict_actions:
+                action, slots, resp = _parse_action_response(raw_output)
+                entry["predicted_action"] = action
+                entry["predicted_slots"] = slots
+                entry["prediction"] = resp
+            else:
+                entry["prediction"] = raw_output.strip().strip('"').strip("'")
+
+            results.append(entry)
 
         return results
 
     def generate_all_turn_predictions(
         self, conversations: list[dict[str, Any]], verbose: bool = True,
+        predict_actions: bool = False,
     ) -> list[dict]:
         """Generate turn-level predictions for all conversations.
+
+        Args:
+            predict_actions: If True, each turn also predicts action+slots.
 
         Returns a flat list of all turn-level prediction dicts.
         """
@@ -267,7 +301,8 @@ class ABCDAgent(AbstractTodAgent):
             if verbose:
                 print(f"  [{i+1}/{total}] convo={convo_id}  {flow}/{subflow}")
 
-            results = self.predict_all_turns(conv, verbose=verbose)
+            results = self.predict_all_turns(conv, verbose=verbose,
+                                              predict_actions=predict_actions)
             all_results.extend(results)
 
             if verbose:
@@ -432,3 +467,96 @@ class ABCDAgent(AbstractTodAgent):
 
     def load_workflow(self, path: str):
         self.workflow.load(path)
+
+
+# ── Output parsing helpers ────────────────────────────────────
+
+def _parse_action_response(raw: str) -> tuple[str, list[str], str]:
+    """Parse ``ACTION: ...\\nSLOTS: ...\\nRESPONSE: ...`` output.
+
+    Returns (action_name, slot_list, response_text).
+    """
+    import re
+    action = ""
+    slots: list[str] = []
+    response = raw  # fallback: whole text
+
+    m = re.search(r"ACTION:\s*(.+)", raw)
+    if m:
+        action = m.group(1).strip()
+        if action.lower() == "none":
+            action = ""
+
+    m = re.search(r"SLOTS:\s*(.+)", raw)
+    if m:
+        slots_text = m.group(1).strip()
+        if slots_text.lower() != "none":
+            slots = [s.strip() for s in slots_text.split(",") if s.strip()]
+
+    m = re.search(r"RESPONSE:\s*\n?(.*?)$", raw, re.DOTALL)
+    if m:
+        response = m.group(1).strip().strip('"').strip("'")
+
+    return action, slots, response
+
+
+def turn_results_to_abcd_predictions(
+    turn_results: list[dict],
+    conversations: list[dict],
+) -> list:
+    """Convert turn-level prediction dicts to ABCDPrediction objects for AST/CDS.
+
+    Groups per-turn action predictions back into per-conversation
+    ABCDPrediction objects that ``evaluate_abcd()`` expects.
+    """
+    from .schemas import ABCDPrediction, ABCDTurnPrediction
+
+    # Index conversations by convo_id
+    conv_index: dict[str, dict] = {}
+    for conv in conversations:
+        cid = str(conv.get("convo_id", "?"))
+        conv_index[cid] = conv
+
+    # Group turn results by convo_id
+    by_convo: dict[str, list[dict]] = {}
+    for r in turn_results:
+        cid = r["convo_id"]
+        by_convo.setdefault(cid, []).append(r)
+
+    predictions: list[ABCDPrediction] = []
+    for cid, turns in by_convo.items():
+        conv = conv_index.get(cid)
+        if conv is None:
+            continue
+
+        delexed = conv.get("delexed", [])
+        turn_preds: list[ABCDTurnPrediction] = []
+
+        # Map predicted actions back to action turns
+        for turn_idx, turn in enumerate(delexed):
+            targets = turn.get("targets", [])
+            if len(targets) < 3 or targets[1] != "take_action":
+                continue
+
+            # Find the closest preceding agent turn prediction
+            best = None
+            for r in turns:
+                if r["turn_index"] < turn_idx:
+                    best = r
+
+            pred_action = best.get("predicted_action", "") if best else ""
+            pred_slots = best.get("predicted_slots", []) if best else []
+
+            turn_preds.append(ABCDTurnPrediction(
+                turn_index=turn_idx,
+                turn_type="action",
+                predicted_action=pred_action if pred_action else None,
+                predicted_slots=pred_slots if pred_slots else None,
+            ))
+
+        predictions.append(ABCDPrediction(
+            conversation_id=cid,
+            turns=turn_preds,
+        ))
+
+    return predictions

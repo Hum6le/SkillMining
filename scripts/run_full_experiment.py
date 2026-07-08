@@ -62,13 +62,18 @@ log = logging.getLogger(__name__)
 # Evaluation helpers
 # ═══════════════════════════════════════════════════════════════
 
-def evaluate_turn_results(turn_results: list[dict], label: str) -> dict:
-    """Run text metrics on turn-level predictions."""
+def evaluate_turn_results(
+    turn_results: list[dict],
+    conversations: list[dict],
+    label: str,
+) -> dict:
+    """Run text + AST/CDS metrics on turn-level predictions."""
+    # ── Text metrics ──
     preds = [r["prediction"] for r in turn_results]
     refs = [r["reference"] for r in turn_results]
-    result = evaluate_responses(preds, refs)
+    text_result = evaluate_responses(preds, refs)
 
-    # Per-subflow
+    # Per-subflow text
     by_sf: dict[str, dict[str, list]] = defaultdict(lambda: {"preds": [], "refs": []})
     for r in turn_results:
         sf = r.get("subflow", "unknown")
@@ -83,16 +88,41 @@ def evaluate_turn_results(turn_results: list[dict], label: str) -> dict:
         per_subflow[sf] = {"n": len(d["preds"]), "bert_f1": round(r.bert_f1, 4),
                            "bleu_4": round(r.bleu_4, 1), "rouge_l": round(r.rouge_l, 4)}
 
-    return {
+    result = {
         "label": label,
         "n": len(preds),
-        "bert_f1": round(result.bert_f1, 4),
-        "bleu_1": round(result.bleu_1, 1),
-        "bleu_4": round(result.bleu_4, 1),
-        "rouge_1": round(result.rouge_1, 4),
-        "rouge_l": round(result.rouge_l, 4),
+        "text": {
+            "bert_f1": round(text_result.bert_f1, 4),
+            "bleu_1": round(text_result.bleu_1, 1),
+            "bleu_4": round(text_result.bleu_4, 1),
+            "rouge_1": round(text_result.rouge_1, 4),
+            "rouge_l": round(text_result.rouge_l, 4),
+        },
         "per_subflow": per_subflow,
     }
+
+    # ── AST / CDS (if action predictions available) ──
+    if any("predicted_action" in r for r in turn_results):
+        try:
+            from eval_tod.abcd.agent import turn_results_to_abcd_predictions
+            from eval_tod.abcd.data import extract_ground_truth
+            from eval_tod.abcd.metrics import evaluate_abcd
+
+            abcd_preds = turn_results_to_abcd_predictions(turn_results, conversations)
+            all_gt = [extract_ground_truth(c) for c in conversations]
+            abcd_eval = evaluate_abcd(all_gt, abcd_preds)
+
+            result["ast_cds"] = {
+                "ast_joint": round(abcd_eval.ast.joint_accuracy, 4),
+                "ast_action_name": round(abcd_eval.ast.action_name_accuracy, 4),
+                "ast_slot_value": round(abcd_eval.ast.slot_value_accuracy, 4),
+                "cds_overall": round(abcd_eval.cds.overall_cds, 4),
+                "num_action_turns": abcd_eval.ast.total_action_turns,
+            }
+        except Exception as e:
+            result["ast_cds"] = {"error": str(e)}
+
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -178,11 +208,15 @@ def main():
             model=args.model,
             workflow=WorkflowStore(), memory=MemoryStore(),
         )
-        seed_turns = seed_agent.generate_all_turn_predictions(test_convs)
-        seed_results = evaluate_turn_results(seed_turns, "seed")
+        seed_turns = seed_agent.generate_all_turn_predictions(
+            test_convs, predict_actions=True)
+        seed_results = evaluate_turn_results(seed_turns, test_convs, "seed")
 
-        log.info(f"  Seed: BERT-F1={seed_results['bert_f1']:.4f}  "
-                 f"BLEU-4={seed_results['bleu_4']:.1f}  ROUGE-L={seed_results['rouge_l']:.4f}")
+        _s = seed_results
+        log.info(f"  Seed: BERT-F1={_s['text']['bert_f1']:.4f}  BLEU-4={_s['text']['bleu_4']:.1f}  "
+                 f"ROUGE-L={_s['text']['rouge_l']:.4f}"
+                 + (f"  AST={_s['ast_cds']['ast_joint']:.4f}  CDS={_s['ast_cds']['cds_overall']:.4f}"
+                    if 'ast_cds' in _s and 'error' not in _s['ast_cds'] else ""))
 
         # Save
         (OUT_DIR / "seed_predictions.json").write_text(
@@ -270,11 +304,15 @@ def main():
         # 4. Trained Evaluation
         # ═══════════════════════════════════════════════════════
         log.info("\n[4/4] Trained Evaluation (with workflow + memory)...")
-        trained_turns = agent.generate_all_turn_predictions(test_convs)
-        trained_results = evaluate_turn_results(trained_turns, "trained")
+        trained_turns = agent.generate_all_turn_predictions(
+            test_convs, predict_actions=True)
+        trained_results = evaluate_turn_results(trained_turns, test_convs, "trained")
 
-        log.info(f"  Trained: BERT-F1={trained_results['bert_f1']:.4f}  "
-                 f"BLEU-4={trained_results['bleu_4']:.1f}  ROUGE-L={trained_results['rouge_l']:.4f}")
+        _t = trained_results
+        log.info(f"  Trained: BERT-F1={_t['text']['bert_f1']:.4f}  BLEU-4={_t['text']['bleu_4']:.1f}  "
+                 f"ROUGE-L={_t['text']['rouge_l']:.4f}"
+                 + (f"  AST={_t['ast_cds']['ast_joint']:.4f}  CDS={_t['ast_cds']['cds_overall']:.4f}"
+                    if 'ast_cds' in _t and 'error' not in _t['ast_cds'] else ""))
 
         (OUT_DIR / "trained_predictions.json").write_text(
             json.dumps(trained_turns, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -289,25 +327,40 @@ def main():
     print(f"{'='*55}")
 
     if seed_results:
+        st = seed_results["text"]
         print(f"\n  Seed Baseline (no training):")
-        print(f"    BERT-F1:  {seed_results['bert_f1']:.4f}")
-        print(f"    BLEU-4:   {seed_results['bleu_4']:.1f}")
-        print(f"    ROUGE-L:  {seed_results['rouge_l']:.4f}")
+        print(f"    BERT-F1:  {st['bert_f1']:.4f}")
+        print(f"    BLEU-4:   {st['bleu_4']:.1f}")
+        print(f"    ROUGE-L:  {st['rouge_l']:.4f}")
+        if "ast_cds" in seed_results and "error" not in seed_results["ast_cds"]:
+            ac = seed_results["ast_cds"]
+            print(f"    AST:      {ac['ast_joint']:.4f}")
+            print(f"    CDS:      {ac['cds_overall']:.4f}")
 
     if trained_results:
+        tt = trained_results["text"]
         print(f"\n  After Training:")
-        print(f"    BERT-F1:  {trained_results['bert_f1']:.4f}")
-        print(f"    BLEU-4:   {trained_results['bleu_4']:.1f}")
-        print(f"    ROUGE-L:  {trained_results['rouge_l']:.4f}")
+        print(f"    BERT-F1:  {tt['bert_f1']:.4f}")
+        print(f"    BLEU-4:   {tt['bleu_4']:.1f}")
+        print(f"    ROUGE-L:  {tt['rouge_l']:.4f}")
+        if "ast_cds" in trained_results and "error" not in trained_results["ast_cds"]:
+            ac = trained_results["ast_cds"]
+            print(f"    AST:      {ac['ast_joint']:.4f}")
+            print(f"    CDS:      {ac['cds_overall']:.4f}")
 
     if seed_results and trained_results:
-        delta_bert = trained_results['bert_f1'] - seed_results['bert_f1']
-        delta_bleu = trained_results['bleu_4'] - seed_results['bleu_4']
-        delta_rouge = trained_results['rouge_l'] - seed_results['rouge_l']
+        delta_bert = trained_results["text"]['bert_f1'] - seed_results["text"]['bert_f1']
+        delta_bleu = trained_results["text"]['bleu_4'] - seed_results["text"]['bleu_4']
+        delta_rouge = trained_results["text"]['rouge_l'] - seed_results["text"]['rouge_l']
         print(f"\n  Δ (Trained - Seed):")
         print(f"    BERT-F1:  {delta_bert:+.4f}")
         print(f"    BLEU-4:   {delta_bleu:+.1f}")
         print(f"    ROUGE-L:  {delta_rouge:+.4f}")
+        if "ast_cds" in seed_results and "ast_cds" in trained_results:
+            sa = seed_results["ast_cds"]; ta = trained_results["ast_cds"]
+            if "error" not in sa and "error" not in ta:
+                print(f"    AST:      {ta['ast_joint'] - sa['ast_joint']:+.4f}")
+                print(f"    CDS:      {ta['cds_overall'] - sa['cds_overall']:+.4f}")
 
     # Per-subflow comparison
     if seed_results and trained_results:
@@ -315,8 +368,8 @@ def main():
         print(f"\n  Per-Subflow Δ BERT-F1:")
         sf_deltas = []
         for sf in sorted(all_sf):
-            seed_bert = seed_results["per_subflow"].get(sf, {}).get("bert_f1", 0)
-            train_bert = trained_results["per_subflow"].get(sf, {}).get("bert_f1", 0)
+            seed_bert = seed_results.get("per_subflow", {}).get(sf, {}).get("bert_f1", 0)
+            train_bert = trained_results.get("per_subflow", {}).get(sf, {}).get("bert_f1", 0)
             if seed_bert > 0 and train_bert > 0:
                 sf_deltas.append((sf, seed_bert, train_bert, train_bert - seed_bert))
         sf_deltas.sort(key=lambda x: -x[3])
