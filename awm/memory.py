@@ -145,6 +145,10 @@ class WorkflowStore:
         else:
             self._text = new
 
+    def replace(self, workflow: str):
+        """Replace the entire workflow text (used by LLM-managed update)."""
+        self._text = workflow.strip()
+
     def format_prompt(self) -> str:
         """Format workflow for prompt injection — mirrors the user message in get_exemplars."""
         if not self._text:

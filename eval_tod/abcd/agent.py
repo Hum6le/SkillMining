@@ -342,15 +342,16 @@ class ABCDAgent(AbstractTodAgent):
         predictions,
         eval_results: list[dict],
     ) -> str:
-        """Induce workflow patterns from a batch of ABCD dialogues.
+        """Induce workflow patterns with LLM-managed update (add/delete/refine/merge).
 
-        LLM analyzes the generated responses alongside scenario context to
-        extract reusable patterns for each flow/subflow.
+        The LLM receives the existing workflow + new batch summary, then outputs
+        the COMPLETE updated workflow.  Old workflow is replaced (not appended),
+        so the workflow stays concise and deduplicated over time.
         """
         from llm import chat
 
-        # Build a summary of this batch for the LLM
-        lines = ["## Batch Summary"]
+        # Build batch summary
+        lines = ["## New Batch Summary"]
         for conv, pred, metrics in zip(dialogues, predictions, eval_results):
             scenario = conv.get("scenario", {})
             flow = scenario.get("flow", "?")
@@ -362,38 +363,51 @@ class ABCDAgent(AbstractTodAgent):
                 f"gen={pred.response_text[:120] if pred.response_text else '(empty)'}"
             )
 
+        existing = self.workflow.text if self.workflow else "(empty — first batch)"
+
         prompt = (
-            "You are analyzing customer service agent responses across multiple dialogues. "
-            "Identify reusable workflow patterns that lead to good responses.\n\n"
-            + "\n".join(lines[:60])  # limit to 60 items
-            + "\n\n## Existing Workflow (update with new insights)\n"
-            + (self.workflow.text if self.workflow else "(none)")
-            + "\n\n## Output Format\n"
+            "You maintain a living knowledge base of customer service workflow patterns. "
+            "Given the existing workflow and a new batch of agent responses, produce "
+            "the UPDATED workflow.\n\n"
+            "## Update Rules\n"
+            "- **Add** new patterns discovered in this batch that are not yet covered.\n"
+            "- **Refine** existing patterns if this batch reveals better strategies.\n"
+            "- **Merge** patterns that are duplicates or very similar.\n"
+            "- **Delete** patterns that are proven wrong or no longer relevant.\n"
+            "- Keep the workflow concise and actionable (aim for 10-20 patterns max).\n"
+            "- Preserve patterns that are still valid even if not seen in this batch.\n\n"
+            + "\n".join(lines[:60])
+            + "\n\n## Existing Workflow\n"
+            + existing
+            + "\n\n## Output: Updated Workflow\n"
+            "Output the COMPLETE updated workflow (not a diff). Use this format:\n\n"
             "### [Flow/Subflow] - [Pattern Name]\n"
-            "**When**: [condition]\n"
-            "**Do**: [strategy for generating a good response]\n"
-            "**Avoid**: [common mistakes]\n"
+            "**When**: [condition that triggers this pattern]\n"
+            "**Do**: [concrete strategy — what actions to take, what to say]\n"
+            "**Avoid**: [common mistakes to avoid]\n"
         )
 
-        pattern = ""
+        updated = ""
         try:
-            pattern = chat(
+            updated = chat(
                 prompt,
                 model=self.model,
                 api_key=self.api_key,
                 base_url=self.base_url,
                 temperature=0.0,
-                max_tokens=2048,
+                max_tokens=3072,
             ).strip()
         except Exception as exc:
             print(f"  [ABCD induce] LLM error: {exc}")
+            return ""
 
-        if pattern.strip():
-            self.workflow.update(pattern)
-            n_lines = len(pattern.splitlines())
-            print(f"  [AWM] Induced workflow: {n_lines} lines")
+        if updated.strip():
+            old_lines = len(existing.splitlines()) if existing and existing != "(empty — first batch)" else 0
+            self.workflow.replace(updated)
+            n_lines = len(updated.splitlines())
+            print(f"  [AWM] Workflow updated: {n_lines} lines (was {old_lines})")
 
-        return pattern
+        return updated
 
     def update_memory(self, dialogues, predictions, eval_results: list[dict]):
         """Store successful dialogues as exemplars (for AWM)."""
