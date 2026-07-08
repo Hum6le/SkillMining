@@ -16,6 +16,7 @@ What it does:
 import json
 import logging
 import os
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -60,6 +61,12 @@ def _build_batches(items: list, size: int, max_batches: int | None = None) -> li
 
 
 def main():
+    import argparse as _ap
+    _parser = _ap.ArgumentParser(description="AWM training on ABCD")
+    _parser.add_argument("--resume-from", type=str, default=None,
+                         help="Resume from a checkpoint directory (e.g. outputs/awm_abcd_xxx/checkpoints/batch_0050)")
+    _args, _unknown = _parser.parse_known_args()
+
     from eval_tod.abcd.data import load_abcd_data
     from eval_tod.abcd.agent import ABCDAgent
     from eval_tod.response_logger import ResponseLogger
@@ -81,6 +88,35 @@ def main():
     workflow = WorkflowStore()
     memory = MemoryStore()
 
+    # ── Resume from checkpoint ────────────────────────────────
+    start_batch = 1
+    if _args.resume_from:
+        ckpt_dir = Path(_args.resume_from)
+        if not ckpt_dir.exists():
+            log.error(f"Checkpoint not found: {ckpt_dir}")
+            sys.exit(1)
+
+        # Load state
+        state_path = ckpt_dir / "state.json"
+        if state_path.exists():
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            start_batch = state.get("next_batch", 1)
+        else:
+            # Infer from directory name: batch_0050 → 50
+            m = re.search(r"batch_(\d+)", ckpt_dir.name)
+            start_batch = int(m.group(1)) + 1 if m else 1
+
+        # Load workflow + memory
+        wf_path = ckpt_dir / "workflow.txt"
+        if wf_path.exists():
+            workflow.load(str(wf_path))
+        mem_path = ckpt_dir / "exemplars.json"
+        if mem_path.exists():
+            memory.load(str(mem_path))
+
+        log.info(f"Resumed from {ckpt_dir}: batch {start_batch}/{len(batches)}, "
+                 f"workflow={len(workflow)} lines, memory={len(memory)} exemplars")
+
     agent = ABCDAgent(
         model=MODEL, workflow=workflow, memory=memory,
         response_logger=logger,
@@ -89,23 +125,29 @@ def main():
     # ── Batch training loop ───────────────────────────────────
 
     for batch_idx, batch in enumerate(batches, start=1):
+        if batch_idx < start_batch:
+            continue  # skip already processed batches
+
         log.info(f"{'─'*40}")
         log.info(f"Batch {batch_idx}/{len(batches)}: {len(batch)} dialogues")
 
         # 1. Run agent
         preds = agent.generate_predictions(batch)
 
-        # 2. Induce workflow + update memory (no per-batch eval)
+        # 2. Induce workflow + update memory
         eval_dicts = [{"bert_f1": 0.0} for _ in batch]
         agent.induce(batch, preds, eval_dicts)
         agent.update_memory(batch, preds, eval_dicts)
 
-        # 3. Checkpoint
+        # 3. Checkpoint (with state for resume)
         if batch_idx % CHECKPOINT_EVERY == 0:
             ckpt_dir = OUT_DIR / "checkpoints" / f"batch_{batch_idx:04d}"
             ckpt_dir.mkdir(parents=True, exist_ok=True)
             agent.save_workflow(str(ckpt_dir / "workflow.txt"))
             agent.save_memory(str(ckpt_dir / "exemplars.json"))
+            (ckpt_dir / "state.json").write_text(
+                json.dumps({"next_batch": batch_idx + 1, "total_batches": len(batches)}),
+                encoding="utf-8")
             log.info(f"  Checkpoint saved: {ckpt_dir}")
 
     # ── Final test evaluation ──────────────────────────────────
