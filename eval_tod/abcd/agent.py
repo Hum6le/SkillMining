@@ -559,20 +559,27 @@ def turn_results_to_abcd_predictions(
         delexed = conv.get("delexed", [])
         turn_preds: list[ABCDTurnPrediction] = []
 
-        # Map predicted actions back to action turns
+        # Collect ALL predicted actions across all agent turns, in order
+        all_pred_actions: list[str] = []
+        all_pred_slots: list[list[str]] = []
+        for r in sorted(turns, key=lambda x: x["turn_index"]):
+            # Each agent turn may predict ONE action; collect them all
+            pa = r.get("predicted_action", "")
+            ps = r.get("predicted_slots", [])
+            if pa:
+                all_pred_actions.append(pa)
+                all_pred_slots.append(ps)
+
+        # Align by order: the i-th action turn gets the i-th predicted action
+        pred_idx = 0
         for turn_idx, turn in enumerate(delexed):
             targets = turn.get("targets", [])
             if len(targets) < 3 or targets[1] != "take_action":
                 continue
 
-            # Find the closest preceding agent turn prediction
-            best = None
-            for r in turns:
-                if r["turn_index"] < turn_idx:
-                    best = r
-
-            pred_action = best.get("predicted_action", "") if best else ""
-            pred_slots = best.get("predicted_slots", []) if best else []
+            pred_action = all_pred_actions[pred_idx] if pred_idx < len(all_pred_actions) else ""
+            pred_slots = all_pred_slots[pred_idx] if pred_idx < len(all_pred_slots) else []
+            pred_idx += 1
 
             turn_preds.append(ABCDTurnPrediction(
                 turn_index=turn_idx,
