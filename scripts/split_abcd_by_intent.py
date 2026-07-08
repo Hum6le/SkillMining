@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
-r"""ABCD 按 subflow 整理数据 — 不改官方 train/dev/test 划分，只按意图统计。
+r"""ABCD 按 subflow 独立划分 train/test。
+
+每个 subflow 的所有对话按比例分入 train/test，产出：
+  data/eval/abcd/splits/{subflow}/
+    ├── train.json    (该 subflow 的训练对话)
+    └── test.json     (该 subflow 的测试对话)
 
 用法：
-  python scripts/split_abcd_by_intent.py --split train   # 整理 train
-  python scripts/split_abcd_by_intent.py --split test    # 整理 test
-  python scripts/split_abcd_by_intent.py --all            # 全部三个 split
-
-输出 data/eval/abcd/splits/：
-  {split}_convs.json     — 完整的 conversation 列表
-  {split}_by_subflow.json — {subflow: [convo_ids]}
-  split_summary.json      — 统计汇总
+  python scripts/split_abcd_by_intent.py --train-frac 0.8
+  python scripts/split_abcd_by_intent.py --train-frac 0.8 --min-sessions 10
+  python scripts/split_abcd_by_intent.py --output-dir outputs/my_splits
 """
 
 from __future__ import annotations
 
 import json
+import random
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -27,77 +28,87 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 from eval_tod.abcd.data import load_abcd_data
 
 ABCD_DIR = "data/eval/abcd/data"
-OUT_DIR = Path("data/eval/abcd/splits")
+DEFAULT_OUT = Path("data/eval/abcd/splits")
 
 
-def organize_by_subflow(conversations: list[dict]) -> dict:
-    """按 subflow 分组，返回 {subflow: [convo_id, ...]} 和统计。"""
-    by_sf: dict[str, list[str]] = defaultdict(list)
-    for conv in conversations:
-        sf = str(conv.get("scenario", {}).get("subflow", "unknown"))
-        cid = str(conv.get("convo_id", "?"))
-        by_sf[sf].append(cid)
-    return dict(by_sf)
-
-
-def process_split(split_name: str):
-    """Load one ABCD split, organize by subflow, save."""
-    convs = load_abcd_data(split_name, ABCD_DIR)
-    by_sf = organize_by_subflow(convs)
-
-    # Save full conversations
-    convs_path = OUT_DIR / f"{split_name}_convs.json"
-    convs_path.write_text(
-        json.dumps(convs, indent=2, ensure_ascii=False, default=str),
-        encoding="utf-8")
-
-    # Save subflow index
-    index_path = OUT_DIR / f"{split_name}_by_subflow.json"
-    index_path.write_text(json.dumps(by_sf, indent=2, ensure_ascii=False), encoding="utf-8")
-
-    n_convs = len(convs)
-    n_subflows = len(by_sf)
-    print(f"  {split_name:6s}: {n_convs:5d} convs, {n_subflows:3d} subflows  "
-          f"→ {convs_path.name}, {index_path.name}")
-
-    return {"split": split_name, "n_convs": n_convs, "n_subflows": n_subflows,
-            "subflows": {sf: len(ids) for sf, ids in sorted(by_sf.items())}}
+def split_subflow_convs(
+    convs: list[dict],
+    train_frac: float = 0.8,
+    seed: int = 42,
+) -> tuple[list[dict], list[dict]]:
+    """Split a single subflow's conversations into train/test."""
+    rng = random.Random(seed)
+    shuffled = list(convs)
+    rng.shuffle(shuffled)
+    n_train = max(1, min(int(len(shuffled) * train_frac), len(shuffled) - 1))
+    return shuffled[:n_train], shuffled[n_train:]
 
 
 def main():
     import argparse
     parser = argparse.ArgumentParser(
-        description="Organize ABCD by subflow (no re-splitting)")
-    parser.add_argument("--split", default=None,
-                        choices=["train", "dev", "test"],
-                        help="Single split to process")
-    parser.add_argument("--all", action="store_true",
-                        help="Process all three splits")
-    parser.add_argument("--out-dir", default=str(OUT_DIR))
+        description="Split ABCD by subflow — each subflow gets its own train/test")
+    parser.add_argument("--train-frac", type=float, default=0.8)
+    parser.add_argument("--min-sessions", type=int, default=2,
+                        help="Skip subflows with fewer total sessions")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--output-dir", default=str(DEFAULT_OUT))
     args = parser.parse_args()
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    out_dir = Path(args.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    if args.all:
-        splits = ["train", "dev", "test"]
-    elif args.split:
-        splits = [args.split]
-    else:
-        print("Use --split <name> or --all")
-        sys.exit(1)
+    # Load all data
+    print("Loading ABCD all splits...")
+    all_convs = (load_abcd_data("train", ABCD_DIR) +
+                 load_abcd_data("dev", ABCD_DIR) +
+                 load_abcd_data("test", ABCD_DIR))
+    print(f"  {len(all_convs)} total conversations")
 
-    summaries = {}
-    print(f"Organizing ABCD by subflow...\n")
-    for s in splits:
-        summaries[s] = process_split(s)
+    # Group by subflow
+    by_subflow: dict[str, list[dict]] = defaultdict(list)
+    for conv in all_convs:
+        sf = str(conv.get("scenario", {}).get("subflow", "unknown"))
+        by_subflow[sf].append(conv)
 
-    # Save summary
-    summary_path = OUT_DIR / "split_summary.json"
-    summary_path.write_text(json.dumps(summaries, indent=2, ensure_ascii=False), encoding="utf-8")
+    # Split each subflow
+    summary = {}
+    total_train, total_test = 0, 0
 
-    print(f"\nSummary → {summary_path}")
-    for s, info in summaries.items():
-        print(f"  {s}: {info['n_convs']} convs, {info['n_subflows']} subflows")
+    for sf, convs in sorted(by_subflow.items()):
+        if len(convs) < args.min_sessions:
+            continue
+
+        train, test = split_subflow_convs(convs, args.train_frac, args.seed)
+
+        sf_dir = out_dir / sf
+        sf_dir.mkdir(parents=True, exist_ok=True)
+
+        (sf_dir / "train.json").write_text(
+            json.dumps(train, indent=2, ensure_ascii=False, default=str),
+            encoding="utf-8")
+        (sf_dir / "test.json").write_text(
+            json.dumps(test, indent=2, ensure_ascii=False, default=str),
+            encoding="utf-8")
+
+        summary[sf] = {"train": len(train), "test": len(test), "total": len(convs)}
+        total_train += len(train)
+        total_test += len(test)
+
+    # Save index
+    (out_dir / "INDEX.json").write_text(
+        json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    n = len(summary)
+    print(f"\nSplit complete: {n} subflows")
+    print(f"  Total train: {total_train}, Total test: {total_test}")
+    print(f"\n{'Subflow':35s} {'Train':>6s} {'Test':>6s} {'Total':>6s}")
+    print("-" * 55)
+    for sf, counts in sorted(summary.items(), key=lambda x: -x[1]["total"]):
+        print(f"{sf:35s} {counts['train']:6d} {counts['test']:6d} {counts['total']:6d}")
+    print(f"\nOutput: {out_dir}")
+    print(f"  INDEX.json  — all subflows + counts")
+    print(f"  {{subflow}}/train.json, test.json")
 
 
 if __name__ == "__main__":
