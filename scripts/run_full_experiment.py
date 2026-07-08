@@ -126,18 +126,16 @@ def main():
     # 1. Load + Split data
     # ═══════════════════════════════════════════════════════════
     if args.train_file and args.test_file:
-        log.info("\n[1/5] Loading pre-split data...")
+        log.info("\n[1/4] Loading pre-split data...")
         train_convs = json.loads(Path(args.train_file).read_text(encoding="utf-8"))
         test_convs = json.loads(Path(args.test_file).read_text(encoding="utf-8"))
         log.info(f"  Train: {len(train_convs)} convs (from {args.train_file})")
         log.info(f"  Test:  {len(test_convs)} convs (from {args.test_file})")
     else:
-        log.info("\n[1/5] Loading ABCD dataset...")
-        all_convs = load_abcd_data("train", ABCD_DIR)
-        log.info(f"  {len(all_convs)} conversations loaded")
-
-        log.info("\n[2/5] Splitting by subflow (train_frac=%.1f)...", args.train_frac)
-        train_convs, test_convs = split_by_subflow(all_convs, args.train_frac, args.seed)
+        log.info("\n[1/4] Loading ABCD official splits...")
+        train_convs = load_abcd_data("train", ABCD_DIR)
+        test_convs = load_abcd_data("test", ABCD_DIR)
+        log.info(f"  Train: {len(train_convs)} convs, Test: {len(test_convs)} convs")
 
     if args.max_train_convs:
         train_convs = train_convs[:args.max_train_convs]
