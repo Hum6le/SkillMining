@@ -377,46 +377,47 @@ class ABCDAgent(AbstractTodAgent):
         predictions,
         eval_results: list[dict],
     ) -> str:
-        """Induce workflow patterns with LLM-managed update (add/delete/refine/merge).
+        """Induce workflow patterns with LLM-managed update.
 
-        Uses AST-based scores (action accuracy) instead of BERT-F1 to judge
-        whether the current workflow is producing correct actions.
+        Shows the LLM both the agent's generated response AND the ground-truth
+        action sequence, so it can learn what the correct action pattern is.
         """
         from llm import chat
 
-        # Build batch summary — key insight is whether actions matched
+        # Build batch summary with ground-truth actions
         lines = ["## New Batch Summary"]
         for conv, pred, metrics in zip(dialogues, predictions, eval_results):
             scenario = conv.get("scenario", {})
             flow = scenario.get("flow", "?")
             subflow = scenario.get("subflow", "?")
-            ast_score = metrics.get("ast_score", metrics.get("bert_f1", 0))
-            action_ok = metrics.get("action_correct", 0)
-            action_total = metrics.get("action_total", 0)
-            ast_detail = ""
-            if action_total > 0:
-                ast_detail = f"  actions={action_ok}/{action_total}"
+            convo_id = conv.get("convo_id", "?")
+
+            # Extract ground-truth action sequence
+            gt_actions = _extract_action_sequence(conv)
+            gt_str = " → ".join(gt_actions) if gt_actions else "(no actions)"
+
             lines.append(
-                f"- {flow}/{subflow} (convo={conv.get('convo_id','?')}): "
-                f"ast={ast_score:.3f}{ast_detail}  "
-                f"gen={pred.response_text[:120] if pred.response_text else '(empty)'}"
+                f"### {flow}/{subflow} (convo={convo_id})\n"
+                f"- Ground Truth Actions: {gt_str}\n"
+                f"- Agent Generated: {pred.response_text[:200] if pred.response_text else '(empty)'}\n"
             )
 
         existing = self.workflow.text if self.workflow else "(empty — first batch)"
 
         prompt = (
             "You maintain a living knowledge base of customer service workflow patterns. "
-            "Given the existing workflow and a new batch of agent responses with AST "
-            "(Action State Tracking) scores, produce the UPDATED workflow.\n\n"
-            "## Reading the Scores\n"
-            "- ``ast`` = fraction of system actions the agent got right.\n"
-            "- Low ast means the workflow is NOT helping for this dialogue type — fix it.\n"
-            "- High ast with ``actions=0`` means no actions were needed (utterance-only turn).\n\n"
+            "Given the existing workflow and a new batch with ground-truth action sequences "
+            "and agent responses, produce the UPDATED workflow.\n\n"
+            "## How to Use the Data\n"
+            "- **Ground Truth Actions**: the CORRECT sequence of system actions for this dialogue. "
+            "Use these to learn what the proper workflow should be.\n"
+            "- **Agent Generated**: what the agent actually said. Compare against ground truth "
+            "to identify gaps — does the agent's response align with the correct actions?\n\n"
             "## Update Rules\n"
-            "- **Add** new patterns for dialogues where the agent had wrong actions (low ast).\n"
-            "- **Refine** patterns if similar dialogues show inconsistent action accuracy.\n"
+            "- **Add** patterns from ground-truth action sequences that are not yet covered.\n"
+            "- **Refine** patterns if the agent's response doesn't align with correct actions.\n"
             "- **Merge** patterns that are duplicates or very similar.\n"
-            "- **Delete** patterns that consistently lead to wrong actions.\n"
+            "- **Delete** patterns that consistently don't match the ground truth.\n"
             "- Keep the workflow concise and actionable (aim for 10-20 patterns max).\n"
             "- Preserve patterns that are still valid even if not seen in this batch.\n\n"
             + "\n".join(lines[:60])
@@ -479,6 +480,23 @@ class ABCDAgent(AbstractTodAgent):
 
 
 # ── Output parsing helpers ────────────────────────────────────
+
+def _extract_action_sequence(conv: dict) -> list[str]:
+    """Extract ground-truth action sequence from an ABCD conversation.
+
+    Returns list of action names (e.g. ``['pull-up-account', 'verify-identity', 'send-link']``).
+    """
+    actions: list[str] = []
+    for turn in conv.get("delexed", []):
+        targets = turn.get("targets", [])
+        if len(targets) >= 3 and targets[1] == "take_action" and targets[2]:
+            action_name = str(targets[2])
+            slots = targets[3] if len(targets) > 3 else []
+            if slots and isinstance(slots, list) and len(slots) > 0:
+                action_name += ":" + ",".join(str(s)[:20] for s in slots)
+            actions.append(action_name)
+    return actions
+
 
 def _parse_action_response(raw: str) -> tuple[str, list[str], str]:
     """Parse ``ACTION: ...\\nSLOTS: ...\\nRESPONSE: ...`` output.
