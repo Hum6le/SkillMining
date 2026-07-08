@@ -232,10 +232,8 @@ def build_skill_md_from_subgraph(
             coverage_pct, num_sessions,
         )
         try:
-            from llm_utils import ds_api_retry
-            raw = ds_api_retry(prompt)
-            text = raw.get("data", {}).get("text", "") if isinstance(raw, dict) else str(raw)
-            text = text.strip()
+            from llm import chat
+            text = chat(prompt, temperature=0.0, max_tokens=3072).strip()
             if text.startswith("```markdown"):
                 text = text[len("```markdown"):].strip()
             if text.startswith("```"):
@@ -495,10 +493,8 @@ def generate_skill_md_llm(
     """Use LLM to generate skill.md content (legacy flat version)."""
     prompt = build_skill_md_prompt(subflow, operators, op_snippets, coverage_pct, num_sessions)
     try:
-        from llm_utils import ds_api_retry
-        raw = ds_api_retry(prompt)
-        text = raw.get("data", {}).get("text", "") if isinstance(raw, dict) else str(raw)
-        text = text.strip()
+        from llm import chat
+        text = chat(prompt, temperature=0.0, max_tokens=2048).strip()
         if text.startswith("```markdown"):
             text = text[len("```markdown"):].strip()
         if text.startswith("```"):

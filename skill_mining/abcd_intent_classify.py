@@ -41,7 +41,7 @@ if str(_SKILL_DIR) in sys.path:
 sys.path.insert(0, str(_SKILL_DIR))
 
 from eval_tod.abcd.data import load_abcd_data
-from llm_utils import ds_api_retry
+from llm import chat as _chat
 
 _OUTPUT_DIR = _SKILL_DIR / "output" / "abcd_intent"
 BATCH_SIZE = 10
@@ -215,27 +215,9 @@ def build_classify_prompt(
 
 # ── LLM 调用与解析 ─────────────────────────────────────────────
 
-def extract_workflow_text(res: Any) -> str:
-    """从 API 响应中提取文本。"""
-    data = res.get("data") if isinstance(res, dict) else res
-    if isinstance(data, dict):
-        for key in ("res", "output", "text", "result", "data"):
-            if key in data:
-                value = data[key]
-                if isinstance(value, str):
-                    return value
-                if isinstance(value, dict):
-                    for sk in ("res", "text", "output", "result"):
-                        if sk in value and isinstance(value[sk], str):
-                            return value[sk]
-        return json.dumps(data, ensure_ascii=False)
-    return str(data).strip()
-
-
 def call_llm(prompt: str) -> str:
-    """调用 DeepSeek API 并返回文本。"""
-    res = ds_api_retry(prompt)
-    return extract_workflow_text(res)
+    """调用 LLM API 并返回文本。"""
+    return _chat(prompt, temperature=0.0, max_tokens=3072)
 
 
 def parse_classify_output(text: str) -> Tuple[List[str], List[str]]:
