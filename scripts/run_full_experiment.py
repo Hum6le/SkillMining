@@ -1,0 +1,323 @@
+#!/usr/bin/env python3
+r"""ABCD 完整实验：意图划分 → Seed Baseline → 训练 → 逐轮评估 → 对比。
+
+流程：
+  1. 按 subflow 分层划分 train/test
+  2. Seed baseline：空 workflow，逐轮预测 + 评估
+  3. AWM 训练：batch 训练 + workflow induction
+  4. Trained 评估：用训练后的 workflow 逐轮预测 + 评估
+  5. 对比 seed vs trained
+
+用法：
+  python scripts/run_full_experiment.py                          # 完整实验
+  python scripts/run_full_experiment.py --max-train-convs 200    # 小规模验证
+  python scripts/run_full_experiment.py --skip-training           # 只看 seed baseline
+  python scripts/run_full_experiment.py --resume-from <checkpoint_dir>  # 从 checkpoint 续跑
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import sys
+from collections import defaultdict
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) in sys.path:
+    sys.path.remove(str(_PROJECT_ROOT))
+sys.path.insert(0, str(_PROJECT_ROOT))
+
+from eval_tod.abcd.data import load_abcd_data
+from eval_tod.abcd.split import split_by_subflow, extract_all_agent_turns
+from eval_tod.text_eval import evaluate_responses
+
+ABCD_DIR = "data/eval/abcd/data"
+BATCH_SIZE = 20
+MAX_BATCHES = None
+CHECKPOINT_EVERY = 10
+MODEL = "deepseek-chat"
+TRAIN_FRAC = 0.8
+SEED = 42
+
+_TIMESTAMP = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+OUT_DIR = Path(f"outputs/full_experiment_{_TIMESTAMP}")
+OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s: %(message)s",
+    datefmt="%H:%M:%S",
+    handlers=[
+        logging.FileHandler(OUT_DIR / "experiment.log"),
+        logging.StreamHandler(sys.stdout),
+    ],
+)
+log = logging.getLogger(__name__)
+
+
+# ═══════════════════════════════════════════════════════════════
+# Evaluation helpers
+# ═══════════════════════════════════════════════════════════════
+
+def evaluate_turn_results(turn_results: list[dict], label: str) -> dict:
+    """Run text metrics on turn-level predictions."""
+    preds = [r["prediction"] for r in turn_results]
+    refs = [r["reference"] for r in turn_results]
+    result = evaluate_responses(preds, refs)
+
+    # Per-subflow
+    by_sf: dict[str, dict[str, list]] = defaultdict(lambda: {"preds": [], "refs": []})
+    for r in turn_results:
+        sf = r.get("subflow", "unknown")
+        by_sf[sf]["preds"].append(r["prediction"])
+        by_sf[sf]["refs"].append(r["reference"])
+
+    per_subflow = {}
+    for sf, d in sorted(by_sf.items()):
+        if len(d["preds"]) < 2:
+            continue
+        r = evaluate_responses(d["preds"], d["refs"])
+        per_subflow[sf] = {"n": len(d["preds"]), "bert_f1": round(r.bert_f1, 4),
+                           "bleu_4": round(r.bleu_4, 1), "rouge_l": round(r.rouge_l, 4)}
+
+    return {
+        "label": label,
+        "n": len(preds),
+        "bert_f1": round(result.bert_f1, 4),
+        "bleu_1": round(result.bleu_1, 1),
+        "bleu_4": round(result.bleu_4, 1),
+        "rouge_1": round(result.rouge_1, 4),
+        "rouge_l": round(result.rouge_l, 4),
+        "per_subflow": per_subflow,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# Main experiment
+# ═══════════════════════════════════════════════════════════════
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="ABCD Full Experiment")
+    parser.add_argument("--max-train-convs", type=int, default=None)
+    parser.add_argument("--max-test-convs", type=int, default=None)
+    parser.add_argument("--train-frac", type=float, default=TRAIN_FRAC)
+    parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
+    parser.add_argument("--max-batches", type=int, default=MAX_BATCHES)
+    parser.add_argument("--model", default=MODEL)
+    parser.add_argument("--seed", type=int, default=SEED)
+    parser.add_argument("--skip-training", action="store_true")
+    parser.add_argument("--skip-seed", action="store_true")
+    parser.add_argument("--resume-from", type=str, default=None)
+    args = parser.parse_args()
+
+    log.info("=" * 55)
+    log.info("FULL EXPERIMENT: Intent Split → Seed → Train → Eval")
+    log.info("=" * 55)
+
+    # ═══════════════════════════════════════════════════════════
+    # 1. Load + Split data
+    # ═══════════════════════════════════════════════════════════
+    log.info("\n[1/5] Loading ABCD dataset...")
+    all_convs = load_abcd_data("train", ABCD_DIR)  # use train split for training
+    log.info(f"  {len(all_convs)} conversations loaded")
+
+    log.info("\n[2/5] Splitting by subflow (train_frac=%.1f)...", args.train_frac)
+    train_convs, test_convs = split_by_subflow(all_convs, args.train_frac, args.seed)
+    if args.max_train_convs:
+        train_convs = train_convs[:args.max_train_convs]
+    if args.max_test_convs:
+        test_convs = test_convs[:args.max_test_convs]
+    log.info(f"  Train: {len(train_convs)} convs, Test: {len(test_convs)} convs")
+
+    # Extract turns for evaluation
+    test_turns = extract_all_agent_turns(test_convs)
+    log.info(f"  Test turns: {len(test_turns)}")
+
+    # Save split info
+    split_info = {
+        "train_convs": len(train_convs), "test_convs": len(test_convs),
+        "train_turns": len(extract_all_agent_turns(train_convs)),
+        "test_turns": len(test_turns),
+        "test_subflows": list(set(t.subflow for t in test_turns)),
+    }
+    (OUT_DIR / "split_info.json").write_text(json.dumps(split_info, indent=2, ensure_ascii=False))
+
+    # ═══════════════════════════════════════════════════════════
+    # 2. Seed Baseline
+    # ═══════════════════════════════════════════════════════════
+    seed_results = None
+    if not args.skip_seed:
+        log.info("\n[3/5] Seed Baseline (no workflow, no memory)...")
+        from eval_tod.abcd.agent import ABCDAgent
+        from awm import MemoryStore, WorkflowStore
+
+        seed_agent = ABCDAgent(
+            model=args.model,
+            workflow=WorkflowStore(), memory=MemoryStore(),
+        )
+        seed_turns = seed_agent.generate_all_turn_predictions(test_convs)
+        seed_results = evaluate_turn_results(seed_turns, "seed")
+
+        log.info(f"  Seed: BERT-F1={seed_results['bert_f1']:.4f}  "
+                 f"BLEU-4={seed_results['bleu_4']:.1f}  ROUGE-L={seed_results['rouge_l']:.4f}")
+
+        # Save
+        (OUT_DIR / "seed_predictions.json").write_text(
+            json.dumps(seed_turns, indent=2, ensure_ascii=False), encoding="utf-8")
+        (OUT_DIR / "seed_eval.json").write_text(
+            json.dumps(seed_results, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # ═══════════════════════════════════════════════════════════
+    # 3. Training
+    # ═══════════════════════════════════════════════════════════
+    trained_results = None
+    if not args.skip_training:
+        log.info("\n[4/5] AWM Batch Training...")
+        from eval_tod.abcd.agent import ABCDAgent
+        from eval_tod.response_logger import ResponseLogger
+        from awm import MemoryStore, WorkflowStore
+
+        logger = ResponseLogger(str(OUT_DIR / "llm_responses"))
+        workflow = WorkflowStore()
+        memory = MemoryStore()
+
+        # Resume from checkpoint
+        start_batch = 1
+        if args.resume_from:
+            import re
+            ckpt_path = Path(args.resume_from)
+            if not ckpt_path.exists():
+                log.error(f"Checkpoint not found: {ckpt_path}")
+                sys.exit(1)
+            state_path = ckpt_path / "state.json"
+            if state_path.exists():
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+                start_batch = state.get("next_batch", 1)
+            else:
+                m = re.search(r"batch_(\d+)", ckpt_path.name)
+                start_batch = int(m.group(1)) + 1 if m else 1
+            wf_path = ckpt_path / "workflow.txt"
+            if wf_path.exists():
+                workflow.load(str(wf_path))
+            mem_path = ckpt_path / "exemplars.json"
+            if mem_path.exists():
+                memory.load(str(mem_path))
+            log.info(f"  Resumed from {ckpt_path}: starting batch {start_batch}")
+
+        agent = ABCDAgent(
+            model=args.model, workflow=workflow, memory=memory,
+            response_logger=logger,
+        )
+
+        # Build batches
+        batches = [train_convs[i:i + args.batch_size]
+                   for i in range(0, len(train_convs), args.batch_size)]
+        if args.max_batches:
+            batches = batches[:args.max_batches]
+        log.info(f"  Batches: {len(batches)} (batch_size={args.batch_size})")
+
+        for batch_idx, batch in enumerate(batches, start=1):
+            if batch_idx < start_batch:
+                continue
+
+            log.info(f"  Batch {batch_idx}/{len(batches)}: {len(batch)} dialogues")
+
+            # Run + induce
+            preds = agent.generate_predictions(batch)
+            eval_dicts = [{"bert_f1": 0.0} for _ in batch]
+            agent.induce(batch, preds, eval_dicts)
+            agent.update_memory(batch, preds, eval_dicts)
+
+            # Checkpoint
+            if batch_idx % CHECKPOINT_EVERY == 0:
+                ckpt_dir = OUT_DIR / "checkpoints" / f"batch_{batch_idx:04d}"
+                ckpt_dir.mkdir(parents=True, exist_ok=True)
+                agent.save_workflow(str(ckpt_dir / "workflow.txt"))
+                agent.save_memory(str(ckpt_dir / "exemplars.json"))
+                (ckpt_dir / "state.json").write_text(json.dumps({
+                    "next_batch": batch_idx + 1, "total_batches": len(batches),
+                }))
+                log.info(f"    Checkpoint: {ckpt_dir}")
+
+        # Save trained state
+        agent.save_workflow(str(OUT_DIR / "awm_workflow.txt"))
+        agent.save_memory(str(OUT_DIR / "awm_exemplars.json"))
+
+        # ═══════════════════════════════════════════════════════
+        # 4. Trained Evaluation
+        # ═══════════════════════════════════════════════════════
+        log.info("\n[5/5] Trained Evaluation (with workflow + memory)...")
+        trained_turns = agent.generate_all_turn_predictions(test_convs)
+        trained_results = evaluate_turn_results(trained_turns, "trained")
+
+        log.info(f"  Trained: BERT-F1={trained_results['bert_f1']:.4f}  "
+                 f"BLEU-4={trained_results['bleu_4']:.1f}  ROUGE-L={trained_results['rouge_l']:.4f}")
+
+        (OUT_DIR / "trained_predictions.json").write_text(
+            json.dumps(trained_turns, indent=2, ensure_ascii=False), encoding="utf-8")
+        (OUT_DIR / "trained_eval.json").write_text(
+            json.dumps(trained_results, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # ═══════════════════════════════════════════════════════════
+    # 5. Comparison
+    # ═══════════════════════════════════════════════════════════
+    print(f"\n{'='*55}")
+    print(f"EXPERIMENT RESULTS")
+    print(f"{'='*55}")
+
+    if seed_results:
+        print(f"\n  Seed Baseline (no training):")
+        print(f"    BERT-F1:  {seed_results['bert_f1']:.4f}")
+        print(f"    BLEU-4:   {seed_results['bleu_4']:.1f}")
+        print(f"    ROUGE-L:  {seed_results['rouge_l']:.4f}")
+
+    if trained_results:
+        print(f"\n  After Training:")
+        print(f"    BERT-F1:  {trained_results['bert_f1']:.4f}")
+        print(f"    BLEU-4:   {trained_results['bleu_4']:.1f}")
+        print(f"    ROUGE-L:  {trained_results['rouge_l']:.4f}")
+
+    if seed_results and trained_results:
+        delta_bert = trained_results['bert_f1'] - seed_results['bert_f1']
+        delta_bleu = trained_results['bleu_4'] - seed_results['bleu_4']
+        delta_rouge = trained_results['rouge_l'] - seed_results['rouge_l']
+        print(f"\n  Δ (Trained - Seed):")
+        print(f"    BERT-F1:  {delta_bert:+.4f}")
+        print(f"    BLEU-4:   {delta_bleu:+.1f}")
+        print(f"    ROUGE-L:  {delta_rouge:+.4f}")
+
+    # Per-subflow comparison
+    if seed_results and trained_results:
+        all_sf = set(seed_results.get("per_subflow", {})) | set(trained_results.get("per_subflow", {}))
+        print(f"\n  Per-Subflow Δ BERT-F1:")
+        sf_deltas = []
+        for sf in sorted(all_sf):
+            seed_bert = seed_results["per_subflow"].get(sf, {}).get("bert_f1", 0)
+            train_bert = trained_results["per_subflow"].get(sf, {}).get("bert_f1", 0)
+            if seed_bert > 0 and train_bert > 0:
+                sf_deltas.append((sf, seed_bert, train_bert, train_bert - seed_bert))
+        sf_deltas.sort(key=lambda x: -x[3])
+        for sf, seed_b, train_b, delta in sf_deltas[:10]:
+            print(f"    {sf:35s}  {seed_b:.4f} → {train_b:.4f}  ({delta:+.4f})")
+
+    # Save summary
+    summary = {
+        "config": vars(args),
+        "split": split_info,
+        "seed": seed_results,
+        "trained": trained_results,
+    }
+    (OUT_DIR / "experiment_summary.json").write_text(
+        json.dumps(summary, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+
+    print(f"\n{'='*55}")
+    print(f"DONE. Output: {OUT_DIR}")
+    print(f"{'='*55}")
+
+
+if __name__ == "__main__":
+    main()
