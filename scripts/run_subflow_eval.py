@@ -179,6 +179,8 @@ def main():
                         help="Skip mining, use pre-built skill.md")
     parser.add_argument("--skill-path", default=None,
                         help="Path to pre-built skill.md (for --skip-mining)")
+    parser.add_argument("--skip-seed", action="store_true",
+                        help="Skip seed baseline evaluation")
     parser.add_argument("--model", default=MODEL)
     parser.add_argument("--max-train", type=int, default=None)
     parser.add_argument("--max-test", type=int, default=None)
@@ -248,16 +250,18 @@ def main():
                      f"{skill_info['coverage_pct']:.0f}% coverage, "
                      f"{n_snippets} reference snippets")
 
-        # ── 3. Seed Baseline ──────────────────────────────────
+        # ── 3. Seed Baseline (optional) ───────────────────────
         from eval_tod.abcd.agent import ABCDAgent
         from awm import WorkflowStore, MemoryStore
 
-        log.info("  Seed baseline...")
-        seed_agent = ABCDAgent(
-            model=args.model, workflow=WorkflowStore(), memory=MemoryStore())
-        seed_result = evaluate_agent_on_subflow(seed_agent, test_convs, "seed")
-        log.info(f"    BERT={seed_result['text']['bert_f1']:.4f}  "
-                 f"BLEU-4={seed_result['text']['bleu_4']:.1f}  AST={seed_result['ast_mean']:.4f}")
+        seed_result = None
+        if not args.skip_seed:
+            log.info("  Seed baseline...")
+            seed_agent = ABCDAgent(
+                model=args.model, workflow=WorkflowStore(), memory=MemoryStore())
+            seed_result = evaluate_agent_on_subflow(seed_agent, test_convs, "seed")
+            log.info(f"    BERT={seed_result['text']['bert_f1']:.4f}  "
+                     f"BLEU-4={seed_result['text']['bleu_4']:.1f}  AST={seed_result['ast_mean']:.4f}")
 
         # ── 4. Mined Skill ────────────────────────────────────
         log.info("  Mined skill evaluation...")
@@ -271,9 +275,11 @@ def main():
                  f"BLEU-4={mined_result['text']['bleu_4']:.1f}  AST={mined_result['ast_mean']:.4f}")
 
         # ── 5. Delta ──────────────────────────────────────────
-        delta_bert = mined_result['text']['bert_f1'] - seed_result['text']['bert_f1']
-        delta_ast = mined_result['ast_mean'] - seed_result['ast_mean']
-        log.info(f"  Δ BERT={delta_bert:+.4f}  Δ AST={delta_ast:+.4f}")
+        delta = {}
+        if seed_result:
+            delta["bert_f1"] = round(mined_result['text']['bert_f1'] - seed_result['text']['bert_f1'], 4)
+            delta["ast"] = round(mined_result['ast_mean'] - seed_result['ast_mean'], 4)
+            log.info(f"  Δ BERT={delta['bert_f1']:+.4f}  Δ AST={delta['ast']:+.4f}")
 
         all_results[subflow] = {
             "train_sessions": len(train_convs),
@@ -282,20 +288,29 @@ def main():
             "coverage_pct": skill_info.get("coverage_pct", 0),
             "seed": seed_result,
             "mined": mined_result,
-            "delta": {"bert_f1": round(delta_bert, 4), "ast": round(delta_ast, 4)},
+            "delta": delta,
         }
 
     # ── 6. Summary ────────────────────────────────────────────
     print(f"\n{'='*55}")
     print(f"SUMMARY")
     print(f"{'='*55}")
-    print(f"{'Subflow':35s} {'ΔBERT':>8s} {'ΔAST':>8s} {'Seed':>8s} {'Mined':>8s}")
+    has_seed = any(r.get("seed") for r in all_results.values())
+    if has_seed:
+        print(f"{'Subflow':35s} {'ΔBERT':>8s} {'ΔAST':>8s} {'Seed':>8s} {'Mined':>8s}")
+    else:
+        print(f"{'Subflow':35s} {'BERT':>8s} {'BLEU-4':>8s} {'AST':>8s}")
     print("-" * 72)
-    for sf, r in sorted(all_results.items(), key=lambda x: -x[1]["delta"]["bert_f1"]):
-        d = r["delta"]
-        s = r["seed"]["text"]["bert_f1"]
+    for sf, r in sorted(all_results.items(),
+                        key=lambda x: -(x[1]["mined"]["text"]["bert_f1"])):
         m = r["mined"]["text"]["bert_f1"]
-        print(f"{sf:35s} {d['bert_f1']:+.4f} {d['ast']:+.4f} {s:.4f} {m:.4f}")
+        if has_seed and r.get("seed"):
+            d = r["delta"]
+            s = r["seed"]["text"]["bert_f1"]
+            print(f"{sf:35s} {d.get('bert_f1', 0):+.4f} {d.get('ast', 0):+.4f} {s:.4f} {m:.4f}")
+        else:
+            print(f"{sf:35s} {m:.4f} {r['mined']['text']['bleu_4']:6.1f} "
+                  f"{r['mined']['ast_mean']:.4f}")
 
     (OUT_DIR / "summary.json").write_text(
         json.dumps(all_results, indent=2, ensure_ascii=False), encoding="utf-8")
