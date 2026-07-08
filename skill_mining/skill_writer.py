@@ -426,8 +426,9 @@ def _build_skill_md_from_subgraph_fallback(
         label = n.get("label", nid)
         anchor = label.replace(":", "-").replace(" ", "-").lower()
         has_snippets = "yes" if nid in op_snippets and op_snippets[nid] else "no"
+        ref_link = f"operator-{anchor}"
         lines.append(f"- **`{label}`** — freq={n['frequency']}. "
-                     f"[See snippets →](reference.md#{"operator-" + anchor}) "
+                     f"[See snippets →](reference.md#{ref_link}) "
                      f"({has_snippets} snippets)")
 
     return "\n".join(lines)
