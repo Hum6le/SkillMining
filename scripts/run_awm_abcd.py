@@ -135,7 +135,8 @@ def main():
         preds = agent.generate_predictions(batch)
 
         # 2. Induce workflow + update memory
-        eval_dicts = [{"bert_f1": 0.0} for _ in batch]
+        from eval_tod.abcd.agent import compute_per_dialogue_ast
+        eval_dicts = compute_per_dialogue_ast(batch)
         agent.induce(batch, preds, eval_dicts)
         agent.update_memory(batch, preds, eval_dicts)
 

@@ -379,22 +379,26 @@ class ABCDAgent(AbstractTodAgent):
     ) -> str:
         """Induce workflow patterns with LLM-managed update (add/delete/refine/merge).
 
-        The LLM receives the existing workflow + new batch summary, then outputs
-        the COMPLETE updated workflow.  Old workflow is replaced (not appended),
-        so the workflow stays concise and deduplicated over time.
+        Uses AST-based scores (action accuracy) instead of BERT-F1 to judge
+        whether the current workflow is producing correct actions.
         """
         from llm import chat
 
-        # Build batch summary
+        # Build batch summary — key insight is whether actions matched
         lines = ["## New Batch Summary"]
         for conv, pred, metrics in zip(dialogues, predictions, eval_results):
             scenario = conv.get("scenario", {})
             flow = scenario.get("flow", "?")
             subflow = scenario.get("subflow", "?")
-            bert_f1 = metrics.get("bert_f1", 0)
+            ast_score = metrics.get("ast_score", metrics.get("bert_f1", 0))
+            action_ok = metrics.get("action_correct", 0)
+            action_total = metrics.get("action_total", 0)
+            ast_detail = ""
+            if action_total > 0:
+                ast_detail = f"  actions={action_ok}/{action_total}"
             lines.append(
                 f"- {flow}/{subflow} (convo={conv.get('convo_id','?')}): "
-                f"bert_f1={bert_f1:.3f}  "
+                f"ast={ast_score:.3f}{ast_detail}  "
                 f"gen={pred.response_text[:120] if pred.response_text else '(empty)'}"
             )
 
@@ -402,13 +406,17 @@ class ABCDAgent(AbstractTodAgent):
 
         prompt = (
             "You maintain a living knowledge base of customer service workflow patterns. "
-            "Given the existing workflow and a new batch of agent responses, produce "
-            "the UPDATED workflow.\n\n"
+            "Given the existing workflow and a new batch of agent responses with AST "
+            "(Action State Tracking) scores, produce the UPDATED workflow.\n\n"
+            "## Reading the Scores\n"
+            "- ``ast`` = fraction of system actions the agent got right.\n"
+            "- Low ast means the workflow is NOT helping for this dialogue type — fix it.\n"
+            "- High ast with ``actions=0`` means no actions were needed (utterance-only turn).\n\n"
             "## Update Rules\n"
-            "- **Add** new patterns discovered in this batch that are not yet covered.\n"
-            "- **Refine** existing patterns if this batch reveals better strategies.\n"
+            "- **Add** new patterns for dialogues where the agent had wrong actions (low ast).\n"
+            "- **Refine** patterns if similar dialogues show inconsistent action accuracy.\n"
             "- **Merge** patterns that are duplicates or very similar.\n"
-            "- **Delete** patterns that are proven wrong or no longer relevant.\n"
+            "- **Delete** patterns that consistently lead to wrong actions.\n"
             "- Keep the workflow concise and actionable (aim for 10-20 patterns max).\n"
             "- Preserve patterns that are still valid even if not seen in this batch.\n\n"
             + "\n".join(lines[:60])
@@ -445,9 +453,10 @@ class ABCDAgent(AbstractTodAgent):
         return updated
 
     def update_memory(self, dialogues, predictions, eval_results: list[dict]):
-        """Store successful dialogues as exemplars (for AWM)."""
+        """Store successful dialogues as exemplars — based on AST score > 0.5."""
         for conv, pred, metrics in zip(dialogues, predictions, eval_results):
-            if metrics.get("success") or metrics.get("info_rate", 0) > 0.8:
+            ast = metrics.get("ast_score", 0)
+            if ast > 0.5 or metrics.get("success") or metrics.get("info_rate", 0) > 0.8:
                 scenario = conv.get("scenario", {})
                 self.memory.add_dict({
                     "dialogue_id": f"abcd-{conv.get('convo_id', '?')}",
@@ -560,3 +569,83 @@ def turn_results_to_abcd_predictions(
         ))
 
     return predictions
+
+
+def compute_per_dialogue_ast(
+    conversations: list[dict],
+) -> list[dict]:
+    """Compute per-dialogue AST score for induction feedback.
+
+    Compares ground-truth action turns in each conversation.  Callers should
+    run predict_all_turns(predict_actions=True) first, then call this with
+    the resulting turn dicts to compute per-dialogue AST scores.
+
+    Returns list of dicts: {ast_score, action_correct, action_total}.
+    """
+    from .data import extract_ground_truth
+
+    scores: list[dict] = []
+    for conv in conversations:
+        truths = extract_ground_truth(conv)
+        gt_action_turns = [
+            t for t in truths if t.turn_type == "action" and t.action_name
+        ]
+        total = len(gt_action_turns)
+        # Without predictions, report totals only
+        scores.append({
+            "ast_score": 0.0,
+            "action_correct": 0,
+            "action_total": total,
+        })
+    return scores
+
+
+def compute_ast_from_turn_results(
+    conversations: list[dict],
+    turn_results: list[dict],
+) -> list[dict]:
+    """Compute per-dialogue AST from turn-level predictions (predict_actions=True).
+
+    Groups turn_results by convo_id, compares predicted_action against
+    ground-truth action turns.
+
+    Returns list of dicts (aligned with conversations): {ast_score, action_correct, action_total}.
+    """
+    from .data import extract_ground_truth
+
+    # Group turn results by convo_id
+    by_convo: dict[str, list[dict]] = {}
+    for r in turn_results:
+        cid = r["convo_id"]
+        by_convo.setdefault(cid, []).append(r)
+
+    scores: list[dict] = []
+    for conv in conversations:
+        cid = str(conv.get("convo_id", "?"))
+        truths = extract_ground_truth(conv)
+        gt_actions = {
+            t.turn_index: t
+            for t in truths if t.turn_type == "action" and t.action_name
+        }
+
+        turns = by_convo.get(cid, [])
+        # Map predictions to action turns: for each action turn, find the
+        # closest preceding agent turn prediction
+        correct = 0
+        for turn_idx, gt in gt_actions.items():
+            # Find best matching prediction (the agent turn just before this action)
+            best_action = ""
+            for r in turns:
+                if r["turn_index"] < turn_idx and "predicted_action" in r:
+                    best_action = r["predicted_action"]
+            if best_action and best_action == gt.action_name:
+                correct += 1
+
+        total = len(gt_actions)
+        scores.append({
+            "ast_score": correct / max(total, 1),
+            "action_correct": correct,
+            "action_total": total,
+        })
+
+    return scores

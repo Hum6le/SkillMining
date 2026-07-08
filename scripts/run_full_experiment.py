@@ -32,6 +32,7 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 
 from eval_tod.abcd.data import load_abcd_data
 from eval_tod.abcd.split import split_by_subflow, extract_all_agent_turns
+from eval_tod.abcd.agent import compute_per_dialogue_ast
 from eval_tod.text_eval import evaluate_responses
 
 ABCD_DIR = "data/eval/abcd/data"
@@ -279,9 +280,9 @@ def main():
 
             log.info(f"  Batch {batch_idx}/{len(batches)}: {len(batch)} dialogues")
 
-            # Run + induce
+            # Run + induce (AST-based eval, not BERT)
             preds = agent.generate_predictions(batch)
-            eval_dicts = [{"bert_f1": 0.0} for _ in batch]
+            eval_dicts = compute_per_dialogue_ast(batch)
             agent.induce(batch, preds, eval_dicts)
             agent.update_memory(batch, preds, eval_dicts)
 
