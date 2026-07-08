@@ -105,6 +105,9 @@ def main():
     parser.add_argument("--max-train-convs", type=int, default=None)
     parser.add_argument("--max-test-convs", type=int, default=None)
     parser.add_argument("--train-frac", type=float, default=TRAIN_FRAC)
+    parser.add_argument("--split", type=str, default=None,
+                        choices=["train", "dev", "test"],
+                        help="Single split: load + split by subflow (quick test)")
     parser.add_argument("--train-file", type=str, default=None,
                         help="Pre-split train convs JSON (from split_abcd_by_intent.py)")
     parser.add_argument("--test-file", type=str, default=None,
@@ -131,8 +134,14 @@ def main():
         test_convs = json.loads(Path(args.test_file).read_text(encoding="utf-8"))
         log.info(f"  Train: {len(train_convs)} convs (from {args.train_file})")
         log.info(f"  Test:  {len(test_convs)} convs (from {args.test_file})")
+    elif args.split:
+        log.info("\n[1/4] Loading ABCD '%s' + splitting by subflow...", args.split)
+        all_convs = load_abcd_data(args.split, ABCD_DIR)
+        train_convs, test_convs = split_by_subflow(all_convs, args.train_frac, args.seed)
+        log.info(f"  {len(train_convs)} train / {len(test_convs)} test  "
+                 f"(from {len(all_convs)} '{args.split}' convs, train_frac={args.train_frac})")
     else:
-        log.info("\n[1/4] Loading ABCD official splits...")
+        log.info("\n[1/4] Loading ABCD official train + test splits...")
         train_convs = load_abcd_data("train", ABCD_DIR)
         test_convs = load_abcd_data("test", ABCD_DIR)
         log.info(f"  Train: {len(train_convs)} convs, Test: {len(test_convs)} convs")
