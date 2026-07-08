@@ -118,8 +118,14 @@ def mine_subflow_skill(subflow: str, train_convs: list) -> dict:
         "coverage_pct": skill_info["coverage_pct"],
     }
 
+    # Generate reference.md (operator → dialogue snippets)
+    from skill_mining.skill_writer import _find_operator_snippets, build_reference_md
+    operators = skill_info["selected_vertices"]
+    op_snippets = _find_operator_snippets(train_convs, subflow, operators)
+    reference_md = build_reference_md(subflow, op_snippets, max_snippets_per_op=5)
+
     return {"skill_info": skill_info, "subgraph": subgraph,
-            "operator_results": op_results}
+            "operator_results": op_results, "reference_md": reference_md}
 
 
 def build_workflow_from_skill(subflow: str, skill_info: dict, subgraph: dict) -> str:
@@ -231,11 +237,16 @@ def main():
             sf_out = OUT_DIR / subflow
             sf_out.mkdir(parents=True, exist_ok=True)
             (sf_out / "skill.md").write_text(skill_text, encoding="utf-8")
+            (sf_out / "reference.md").write_text(
+                mined.get("reference_md", ""), encoding="utf-8")
             (sf_out / "subgraph.json").write_text(
                 json.dumps(mined["subgraph"], indent=2, ensure_ascii=False),
                 encoding="utf-8")
+            n_snippets = sum(1 for v in mined.get("reference_md", "").split("\n")
+                            if v.startswith("```text"))
             log.info(f"  Mined: {skill_info['num_selected']} vertices, "
-                     f"{skill_info['coverage_pct']:.0f}% coverage")
+                     f"{skill_info['coverage_pct']:.0f}% coverage, "
+                     f"{n_snippets} reference snippets")
 
         # ── 3. Seed Baseline ──────────────────────────────────
         from eval_tod.abcd.agent import ABCDAgent
