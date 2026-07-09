@@ -68,17 +68,23 @@ def classify_by_ast_unified(
     test_convs: list[dict],
 ) -> tuple[dict, dict, dict]:
     """Use the SAME turn_results_to_abcd_predictions + compute_ast for both methods."""
-    # ── Normalise convo_id to str everywhere ──
+    # ── Normalise convo_id + sort + fallback parse ──
     for r in hg_turn_results:
         r["convo_id"] = str(r.get("convo_id", ""))
-    for r in awm_turn_results:
-        r["convo_id"] = str(r.get("convo_id", ""))
-        # Fallback: if no predicted_action, try to parse from prediction text
         if "predicted_action" not in r and "prediction" in r:
             from eval_tod.abcd.agent import _parse_action_response
             action, slots, _ = _parse_action_response(r.get("prediction", ""))
             r["predicted_action"] = action
             r["predicted_slots"] = slots
+    for r in awm_turn_results:
+        r["convo_id"] = str(r.get("convo_id", ""))
+        if "predicted_action" not in r and "prediction" in r:
+            from eval_tod.abcd.agent import _parse_action_response
+            action, slots, _ = _parse_action_response(r.get("prediction", ""))
+            r["predicted_action"] = action
+            r["predicted_slots"] = slots
+    hg_turn_results.sort(key=lambda x: (x["convo_id"], x.get("turn_index", 0)))
+    awm_turn_results.sort(key=lambda x: (x["convo_id"], x.get("turn_index", 0)))
     for conv in test_convs:
         conv["convo_id"] = str(conv.get("convo_id", ""))
 
@@ -154,11 +160,15 @@ def classify_by_ast_unified(
 
 
 def _find_turn_response(turn_results: list[dict], cid: str, action_turn: int) -> str:
-    """Find the agent response preceding this action turn."""
+    """Find the nearest agent response preceding this action turn."""
     best = ""
-    for r in turn_results:
-        if str(r.get("convo_id", "")) == cid and r.get("turn_index", 999) < action_turn:
-            best = r.get("prediction", "")
+    for r in sorted(turn_results, key=lambda x: x.get("turn_index", 0)):
+        if str(r.get("convo_id", "")) == cid:
+            if r.get("turn_index", 999) < action_turn:
+                if r.get("prediction"):
+                    best = r.get("prediction", "")
+            else:
+                break
     return best
 
 

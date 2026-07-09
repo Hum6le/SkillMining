@@ -659,16 +659,18 @@ def compute_ast_from_turn_results(
             for t in truths if t.turn_type == "action" and t.action_name
         }
 
-        turns = by_convo.get(cid, [])
-        # Map predictions to action turns: for each action turn, find the
-        # closest preceding agent turn prediction
+        turns = sorted(by_convo.get(cid, []), key=lambda x: x["turn_index"])
+        # Same logic as turn_results_to_abcd_predictions:
+        # nearest preceding agent turn's prediction applies to each action turn
         correct = 0
         for turn_idx, gt in gt_actions.items():
-            # Find best matching prediction (the agent turn just before this action)
             best_action = ""
             for r in turns:
-                if r["turn_index"] < turn_idx and "predicted_action" in r:
-                    best_action = r["predicted_action"]
+                if r["turn_index"] < turn_idx:
+                    if r.get("predicted_action"):
+                        best_action = r["predicted_action"]
+                else:
+                    break  # turns is sorted, stop once r["turn_index"] >= turn_idx
             if best_action and best_action == gt.action_name:
                 correct += 1
 
