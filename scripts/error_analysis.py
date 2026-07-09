@@ -204,16 +204,16 @@ def analyze_case(
 ## Reference Snippets
 {reference_md[:1000] if reference_md else '(none)'}
 
-Output in Markdown:
+用中文回复。输出格式：
 
 ### {entry['convo_id']} action@{entry['action_turn']}
 **GT**: `{entry['gt_action']}` | **HG**: `{entry['hg_action']}` | **AWM**: `{entry['awm_action']}`
 
-**Root Cause**: [1-2 sentences]
+**根因**: [1-2句，为什么失败的方法在这个 turn 上错了]
 
-**Knowledge Gap**: [what one has that the other lacks]
+**知识差距**: [成功的方法具备什么知识/模式是失败的方法缺少的]
 
-**Fix**: [concrete change]
+**改进建议**: [具体怎么修改失败方法的 skill/workflow]
 """
 
     try:
@@ -262,13 +262,15 @@ def generate_summary(
 ## Case Analyses
 {summaries[:12000]}
 
-Write:
-1. **Which method wins** and by what margin?
-2. **Common failure patterns** per method
-3. **Knowledge differences**
-4. **Top 3 recommendations**
+用中文写报告：
 
-Markdown."""
+1. **总体结论**: 哪个方法更好，差距多大
+2. **HG 常见失败模式**: 哪些类型的 action 容易错
+3. **AWM 常见失败模式**: 哪些类型的 action 容易错
+4. **知识差异**: 两个方法的 skill/workflow 结构差异是什么
+5. **Top 3 改进建议**: 针对较弱方法的改进方案
+
+Markdown 格式。"""
 
     try:
         return chat(prompt, temperature=0.0, max_tokens=2048).strip()
