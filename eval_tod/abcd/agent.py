@@ -271,6 +271,10 @@ class ABCDAgent(AbstractTodAgent):
 
             if predict_actions:
                 action, slots, resp = _parse_action_response(raw_output)
+                # Debug: log first few parses
+                if agent_num == 1 and len(results) == 0:
+                    print(f"  [DEBUG predict_actions] raw(200): {raw_output[:200]}")
+                    print(f"  [DEBUG predict_actions] parsed: action={action!r} slots={slots!r} resp={resp[:80]!r}")
                 entry["predicted_action"] = action
                 entry["predicted_slots"] = slots
                 entry["prediction"] = resp
