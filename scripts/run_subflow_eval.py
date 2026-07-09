@@ -138,8 +138,9 @@ def mine_subflow_skill(subflow: str, train_convs: list) -> dict:
 
 def evaluate_agent_on_subflow(
     agent, test_convs: list, label: str, subflow: str = "",
+    save_dir: Path | None = None,
 ) -> dict:
-    """Run turn-level predictions + evaluation (with progress)."""
+    """Run turn-level predictions + evaluation (with progress). Saves preds."""
     total = len(test_convs)
     all_turn_results: list[dict] = []
     for i, conv in enumerate(test_convs):
@@ -148,6 +149,13 @@ def evaluate_agent_on_subflow(
         results = agent.predict_all_turns(conv, predict_actions=True, verbose=False)
         all_turn_results.extend(results)
     print(f"  [{label}] Done: {total} convs, {len(all_turn_results)} turns")
+
+    # Save predictions for error analysis
+    if save_dir:
+        save_dir.mkdir(parents=True, exist_ok=True)
+        (save_dir / f"{label}_predictions.json").write_text(
+            json.dumps(all_turn_results, indent=2, ensure_ascii=False),
+            encoding="utf-8")
 
     turn_results = all_turn_results
     preds = [r["prediction"] for r in turn_results]
@@ -235,12 +243,15 @@ def main():
         log.info(f"  Train: {len(train_convs)}, Test: {len(test_convs)}")
 
         # ── 2. Mine skill ─────────────────────────────────────
+        sf_out = OUT_DIR / subflow
+        sf_out.mkdir(parents=True, exist_ok=True)
+
         if args.skip_mining:
             skill_text = ""
             if args.skill_path:
                 skill_text = Path(args.skill_path).read_text(encoding="utf-8")
             else:
-                sf_skill = OUT_DIR / subflow / "skill.md"
+                sf_skill = sf_out / "skill.md"
                 if sf_skill.exists():
                     skill_text = sf_skill.read_text(encoding="utf-8")
             skill_info = {"selected_vertices": [], "coverage_pct": 0, "num_sessions": 0}
@@ -250,8 +261,6 @@ def main():
             skill_text = mined.get("skill_md", "")
 
             # Save skill.md + reference.md + subgraph
-            sf_out = OUT_DIR / subflow
-            sf_out.mkdir(parents=True, exist_ok=True)
             (sf_out / "skill.md").write_text(skill_text, encoding="utf-8")
             (sf_out / "reference.md").write_text(
                 mined.get("reference_md", ""), encoding="utf-8")
@@ -272,7 +281,8 @@ def main():
             log.info("  Seed baseline...")
             seed_agent = ABCDAgent(
                 model=args.model, workflow=WorkflowStore(), memory=MemoryStore())
-            seed_result = evaluate_agent_on_subflow(seed_agent, test_convs, "seed", subflow)
+            seed_result = evaluate_agent_on_subflow(
+                seed_agent, test_convs, "seed", subflow, save_dir=sf_out)
             log.info(f"    BERT={seed_result['text']['bert_f1']:.4f}  "
                      f"BLEU-4={seed_result['text']['bleu_4']:.1f}  AST={seed_result['ast_mean']:.4f}")
 
@@ -283,7 +293,8 @@ def main():
             wf.update(skill_text)
         mined_agent = ABCDAgent(
             model=args.model, workflow=wf, memory=MemoryStore())
-        mined_result = evaluate_agent_on_subflow(mined_agent, test_convs, "mined", subflow)
+        mined_result = evaluate_agent_on_subflow(
+            mined_agent, test_convs, "mined", subflow, save_dir=sf_out)
         log.info(f"    BERT={mined_result['text']['bert_f1']:.4f}  "
                  f"BLEU-4={mined_result['text']['bleu_4']:.1f}  AST={mined_result['ast_mean']:.4f}")
 
