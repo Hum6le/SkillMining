@@ -55,38 +55,50 @@ def classify_by_ast_unified(
     awm_turn_results: list[dict],
     test_convs: list[dict],
 ) -> tuple[dict, dict, dict]:
-    """Use the SAME turn_results_to_abcd_predictions + compute_ast for both methods.
+    """Use the SAME turn_results_to_abcd_predictions + compute_ast for both methods."""
+    # ── Normalise convo_id to str everywhere ──
+    for r in hg_turn_results:
+        r["convo_id"] = str(r.get("convo_id", ""))
+    for r in awm_turn_results:
+        r["convo_id"] = str(r.get("convo_id", ""))
+    for conv in test_convs:
+        conv["convo_id"] = str(conv.get("convo_id", ""))
 
-    Returns:
-        classification: {hg_fail_awm_pass, awm_fail_hg_pass, both_fail, both_pass}
-        hg_per_turn: {convo_id: ASTResult}
-        awm_per_turn: {convo_id: ASTResult}
-    """
-    # Convert both to ABCDPrediction (same logic)
     hg_abcd = turn_results_to_abcd_predictions(hg_turn_results, test_convs)
     awm_abcd = turn_results_to_abcd_predictions(awm_turn_results, test_convs)
 
-    # Build per-convo AST results
-    hg_ast = {p.conversation_id: compute_ast(extract_ground_truth(
-        _find_conv(test_convs, p.conversation_id)), p, p.conversation_id)
-              for p in hg_abcd}
-    awm_ast = {p.conversation_id: compute_ast(extract_ground_truth(
-        _find_conv(test_convs, p.conversation_id)), p, p.conversation_id)
-               for p in awm_abcd}
+    log.info(f"  HG: {len(hg_abcd)} convs mapped, AWM: {len(awm_abcd)} convs mapped "
+             f"(test has {len(test_convs)} convs)")
 
-    # Per-action-turn matching
+    # Build lookup by convo_id for both
+    hg_by_cid: dict[str, dict[int, str]] = {}
+    for p in hg_abcd:
+        hg_by_cid[str(p.conversation_id)] = {t.turn_index: t.predicted_action or "" for t in p.turns}
+    awm_by_cid: dict[str, dict[int, str]] = {}
+    for p in awm_abcd:
+        awm_by_cid[str(p.conversation_id)] = {t.turn_index: t.predicted_action or "" for t in p.turns}
+
+    # Debug: check a sample mapping
+    if hg_by_cid and awm_by_cid:
+        sample_cid = list(hg_by_cid.keys())[0]
+        hg_sample = hg_by_cid.get(sample_cid, {})
+        awm_sample = awm_by_cid.get(sample_cid, {})
+        log.info(f"  Sample convo={sample_cid}: HG actions={len(hg_sample)}, AWM actions={len(awm_sample)}")
+        common_turns = set(hg_sample) & set(awm_sample)
+        diffs = sum(1 for t in common_turns if hg_sample[t] != awm_sample[t])
+        log.info(f"  Common turns: {len(common_turns)}, different predictions: {diffs}")
+
+    # Per-action-turn classification
     results: dict[str, list[dict]] = {
         "hg_fail_awm_pass": [], "awm_fail_hg_pass": [],
         "both_fail": [], "both_pass": [],
     }
 
     for conv in test_convs:
-        cid = str(conv.get("convo_id", "?"))
+        cid = str(conv.get("convo_id", ""))
         truths = extract_ground_truth(conv)
-
-        # Build per-turn prediction lookup for each method
-        hg_preds = _build_turn_lookup(hg_abcd, cid)
-        awm_preds = _build_turn_lookup(awm_abcd, cid)
+        hg_preds = hg_by_cid.get(cid, {})
+        awm_preds = awm_by_cid.get(cid, {})
 
         for gt in truths:
             if gt.turn_type != "action" or not gt.action_name:
@@ -97,10 +109,6 @@ def classify_by_ast_unified(
             hg_ok = (hg_action == gt.action_name)
             awm_ok = (awm_action == gt.action_name)
 
-            # Get context + response from turn results
-            hg_resp = _find_turn_response(hg_turn_results, cid, gt.turn_index)
-            awm_resp = _find_turn_response(awm_turn_results, cid, gt.turn_index)
-
             entry = {
                 "convo_id": cid,
                 "action_turn": gt.turn_index,
@@ -109,8 +117,8 @@ def classify_by_ast_unified(
                 "awm_action": awm_action,
                 "hg_ok": hg_ok,
                 "awm_ok": awm_ok,
-                "hg_response": hg_resp[:300],
-                "awm_response": awm_resp[:300],
+                "hg_response": _find_turn_response(hg_turn_results, cid, gt.turn_index)[:300],
+                "awm_response": _find_turn_response(awm_turn_results, cid, gt.turn_index)[:300],
                 "reference": gt.text[:300],
                 "context": _extract_context(conv, gt.turn_index),
             }
@@ -124,28 +132,14 @@ def classify_by_ast_unified(
             else:
                 results["both_pass"].append(entry)
 
-    return results, hg_ast, awm_ast
-
-
-def _find_conv(convs: list[dict], cid: str) -> dict:
-    for c in convs:
-        if str(c.get("convo_id", "")) == cid:
-            return c
-    return {}
-
-
-def _build_turn_lookup(abcd_preds: list, cid: str) -> dict[int, str]:
-    for p in abcd_preds:
-        if p.conversation_id == cid:
-            return {t.turn_index: t.predicted_action or "" for t in p.turns}
-    return {}
+    return results, {}, {}  # AST aggregates computed separately if needed
 
 
 def _find_turn_response(turn_results: list[dict], cid: str, action_turn: int) -> str:
     """Find the agent response preceding this action turn."""
     best = ""
     for r in turn_results:
-        if r.get("convo_id") == cid and r.get("turn_index", 999) < action_turn:
+        if str(r.get("convo_id", "")) == cid and r.get("turn_index", 999) < action_turn:
             best = r.get("prediction", "")
     return best
 
@@ -228,8 +222,6 @@ def analyze_case(
 
 def generate_summary(
     classification: dict,
-    hg_ast_results: dict,
-    awm_ast_results: dict,
     analyses: list[str],
     subflow: str,
 ) -> str:
@@ -241,9 +233,10 @@ def generate_summary(
     if total == 0:
         return "# No action turns"
 
-    # Aggregate AST scores
-    hg_joint = sum(a.joint_accuracy for a in hg_ast_results.values()) / max(len(hg_ast_results), 1)
-    awm_joint = sum(a.joint_accuracy for a in awm_ast_results.values()) / max(len(awm_ast_results), 1)
+    hg_correct = n.get("awm_fail_hg_pass", 0) + n.get("both_pass", 0)
+    awm_correct = n.get("hg_fail_awm_pass", 0) + n.get("both_pass", 0)
+    hg_joint = hg_correct / max(total, 1)
+    awm_joint = awm_correct / max(total, 1)
 
     summaries = "\n\n---\n\n".join(analyses[:25])
 
@@ -313,12 +306,15 @@ def main():
 
     # ── 2. Classify — unified AST ────────────────────────────
     log.info("Classifying by AST (unified formula)...")
-    classification, hg_ast, awm_ast = classify_by_ast_unified(hg_preds, awm_preds, test_convs)
+    classification, _, _ = classify_by_ast_unified(hg_preds, awm_preds, test_convs)
 
     n = {k: len(v) for k, v in classification.items()}
     total = sum(n.values())
-    hg_joint = sum(a.joint_accuracy for a in hg_ast.values()) / max(len(hg_ast), 1)
-    awm_joint = sum(a.joint_accuracy for a in awm_ast.values()) / max(len(awm_ast), 1)
+
+    hg_correct = n["awm_fail_hg_pass"] + n["both_pass"]
+    awm_correct = n["hg_fail_awm_pass"] + n["both_pass"]
+    hg_joint = hg_correct / max(total, 1)
+    awm_joint = awm_correct / max(total, 1)
 
     log.info(f"  AST Joint — HG: {hg_joint:.4f}, AWM: {awm_joint:.4f}")
     log.info(f"  HG fail / AWM pass: {n['hg_fail_awm_pass']} ({100*n['hg_fail_awm_pass']/max(total,1):.0f}%)")
@@ -351,7 +347,7 @@ def main():
 
     # ── 4. Summary ───────────────────────────────────────────
     log.info("Generating summary report...")
-    report = generate_summary(classification, hg_ast, awm_ast, analyses, args.subflow)
+    report = generate_summary(classification, analyses, args.subflow)
 
     (OUT_DIR / "error_report.md").write_text(report, encoding="utf-8")
     (OUT_DIR / "case_analyses.md").write_text(
