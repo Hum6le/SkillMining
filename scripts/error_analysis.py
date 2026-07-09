@@ -4,9 +4,11 @@ r"""HG vs AWM 错误分析 — 统一用项目标准 AST 公式，统计全部 f
 用 `turn_results_to_abcd_predictions` + `compute_ast` 保证两种方法算 AST 完全一致。
 
 用法：
+  # AWM preds 必须用 test_turn_predictions.json（含 predicted_action）
+  # 不能用 test_final_preds.json（只有 NL text）
   python scripts/error_analysis.py \
     --hg-preds outputs/subflow_eval_xxx/recover_password/mined_predictions.json \
-    --awm-preds outputs/awm_abcd_xxx/turn_predictions.json \
+    --awm-preds outputs/awm_abcd_xxx/test_turn_predictions.json \
     --hg-skill outputs/subflow_eval_xxx/recover_password/skill.md \
     --awm-workflow outputs/awm_abcd_xxx/awm_workflow.txt \
     --test-data data/eval/abcd/splits/recover_password/test.json \
@@ -61,6 +63,12 @@ def classify_by_ast_unified(
         r["convo_id"] = str(r.get("convo_id", ""))
     for r in awm_turn_results:
         r["convo_id"] = str(r.get("convo_id", ""))
+        # Fallback: if no predicted_action, try to parse from prediction text
+        if "predicted_action" not in r and "prediction" in r:
+            from eval_tod.abcd.agent import _parse_action_response
+            action, slots, _ = _parse_action_response(r.get("prediction", ""))
+            r["predicted_action"] = action
+            r["predicted_slots"] = slots
     for conv in test_convs:
         conv["convo_id"] = str(conv.get("convo_id", ""))
 
@@ -294,7 +302,19 @@ def main():
     log.info("Loading predictions...")
     hg_preds = json.loads(Path(args.hg_preds).read_text(encoding="utf-8"))
     awm_preds = json.loads(Path(args.awm_preds).read_text(encoding="utf-8"))
-    log.info(f"  HG: {len(hg_preds)} turns, AWM: {len(awm_preds)} turns")
+    # Detect format: do predictions have predicted_action?
+    hg_has_actions = any("predicted_action" in r for r in hg_preds[:10])
+    awm_has_actions = any("predicted_action" in r for r in awm_preds[:10])
+    log.info(f"  HG: {len(hg_preds)} turns (has predicted_action: {hg_has_actions})")
+    log.info(f"  AWM: {len(awm_preds)} turns (has predicted_action: {awm_has_actions})")
+
+    if not hg_has_actions:
+        log.warning("  HG preds lack predicted_action — use "
+                    "generate_all_turn_predictions(predict_actions=True) output!")
+    if not awm_has_actions:
+        log.warning("  AWM preds lack predicted_action — use "
+                    "generate_all_turn_predictions(predict_actions=True) output! "
+                    "Try: test_turn_predictions.json instead of test_final_preds.json")
 
     log.info(f"Loading test data: {args.test_data}")
     test_convs = json.loads(Path(args.test_data).read_text(encoding="utf-8"))

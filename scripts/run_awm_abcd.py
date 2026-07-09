@@ -170,6 +170,17 @@ def main():
         model=MODEL, workflow=workflow, memory=memory,
         response_logger=logger,
     )
+
+    # Save turn-level predictions with actions (for AST/CDS + error analysis)
+    log.info("  Generating turn-level predictions with actions...")
+    test_turns = test_agent.generate_all_turn_predictions(
+        test_convs, predict_actions=True)
+    (OUT_DIR / "test_turn_predictions.json").write_text(
+        json.dumps(test_turns, indent=2, ensure_ascii=False),
+        encoding="utf-8")
+    log.info(f"  Saved {len(test_turns)} turn predictions")
+
+    # Also save plain predictions for text metrics
     test_preds = test_agent.predict_and_save(test_convs, str(OUT_DIR / "test_final_preds.json"))
     test_result = evaluate_all(test_convs, test_preds, dataset_name="abcd")
     log.info(f"Final test: {test_result['summary']}")
