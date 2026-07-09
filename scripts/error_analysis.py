@@ -4,15 +4,25 @@ r"""HG vs AWM 错误分析 — 统一用项目标准 AST 公式，统计全部 f
 用 `turn_results_to_abcd_predictions` + `compute_ast` 保证两种方法算 AST 完全一致。
 
 用法：
-  # AWM preds 必须用 test_turn_predictions.json（含 predicted_action）
-  # 不能用 test_final_preds.json（只有 NL text）
+  # 1. 先跑 HG mining（per-subflow）
+  python scripts/run_subflow_eval.py --subflow recover_password --skip-seed
+
+  # 2. 跑 AWM 训练（限定同一个 subflow）
+  python scripts/run_full_experiment.py \
+    --train-file data/eval/abcd/splits/recover_password/train.json \
+    --test-file data/eval/abcd/splits/recover_password/test.json
+
+  # 3. 对比分析
   python scripts/error_analysis.py \
     --hg-preds outputs/subflow_eval_xxx/recover_password/mined_predictions.json \
-    --awm-preds outputs/awm_abcd_xxx/test_turn_predictions.json \
+    --awm-preds outputs/full_experiment_xxx/trained_predictions.json \
     --hg-skill outputs/subflow_eval_xxx/recover_password/skill.md \
-    --awm-workflow outputs/awm_abcd_xxx/awm_workflow.txt \
+    --awm-workflow outputs/full_experiment_xxx/awm_workflow.txt \
     --test-data data/eval/abcd/splits/recover_password/test.json \
     --subflow recover_password
+
+注意：AWM preds 用 trained_predictions.json（含 predicted_action），
+不能用 test_final_preds.json（只有 NL text）。
 """
 
 from __future__ import annotations
