@@ -320,8 +320,20 @@ def main():
         # 4. Trained Evaluation
         # ═══════════════════════════════════════════════════════
         log.info("\n[4/4] Trained Evaluation (with workflow + memory)...")
+        log.info(f"  Workflow: {len(agent.workflow)} lines, Memory: {len(agent.memory)} exemplars")
+        # Log a sample of the workflow to verify it was loaded
+        wf_sample = agent.workflow.text[:200] if agent.workflow else "(empty)"
+        log.info(f"  Workflow sample: {wf_sample}...")
         trained_turns = agent.generate_all_turn_predictions(
             test_convs, predict_actions=True)
+        # Debug: check a few action predictions
+        actions_found = sum(1 for r in trained_turns if r.get("predicted_action"))
+        log.info(f"  Turns with predicted_action: {actions_found}/{len(trained_turns)}")
+        if actions_found > 0:
+            sample = next(r for r in trained_turns if r.get("predicted_action"))
+            log.info(f"  Sample: turn={sample['turn_index']} "
+                     f"action={sample.get('predicted_action','?')} "
+                     f"resp={sample.get('prediction','')[:80]}")
         trained_results = evaluate_turn_results(trained_turns, test_convs, "trained")
 
         _t = trained_results

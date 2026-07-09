@@ -551,6 +551,10 @@ def turn_results_to_abcd_predictions(
         by_convo.setdefault(cid, []).append(r)
 
     predictions: list[ABCDPrediction] = []
+    total_agent_preds = 0
+    total_action_turns = 0
+    total_mapped = 0
+
     for cid, turns in by_convo.items():
         conv = conv_index.get(cid)
         if conv is None:
@@ -559,8 +563,6 @@ def turn_results_to_abcd_predictions(
         delexed = conv.get("delexed", [])
         turn_preds: list[ABCDTurnPrediction] = []
 
-        # Each agent turn predicts actions that follow until the next agent turn.
-        # Action turns between agent A and agent B all get A's prediction.
         agent_preds: dict[int, str] = {}
         agent_slots: dict[int, str] = {}
         for r in sorted(turns, key=lambda x: x["turn_index"]):
@@ -569,6 +571,7 @@ def turn_results_to_abcd_predictions(
             if pa:
                 agent_preds[r["turn_index"]] = pa
                 agent_slots[r["turn_index"]] = ps
+        total_agent_preds += len(agent_preds)
 
         agent_indices = sorted(agent_preds.keys())
 
@@ -576,8 +579,8 @@ def turn_results_to_abcd_predictions(
             targets = turn.get("targets", [])
             if len(targets) < 3 or targets[1] != "take_action":
                 continue
+            total_action_turns += 1
 
-            # Nearest preceding agent turn's prediction applies here
             pred_action = ""
             pred_slots: list[str] = []
             for ai in agent_indices:
@@ -585,7 +588,10 @@ def turn_results_to_abcd_predictions(
                     pred_action = agent_preds[ai]
                     pred_slots = agent_slots[ai]
                 else:
-                    break  # agent_indices is sorted, stop once ai >= turn_idx
+                    break
+
+            if pred_action:
+                total_mapped += 1
 
             turn_preds.append(ABCDTurnPrediction(
                 turn_index=turn_idx,
@@ -598,6 +604,11 @@ def turn_results_to_abcd_predictions(
             conversation_id=cid,
             turns=turn_preds,
         ))
+
+    print(f"  [AST mapping] {len(predictions)} convs, "
+          f"{total_agent_preds} agent predictions, "
+          f"{total_action_turns} action turns, "
+          f"{total_mapped} mapped ({100*total_mapped/max(total_action_turns,1):.0f}%)")
 
     return predictions
 
