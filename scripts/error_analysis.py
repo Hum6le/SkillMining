@@ -94,13 +94,17 @@ def classify_by_ast_unified(
     log.info(f"  HG: {len(hg_abcd)} convs mapped, AWM: {len(awm_abcd)} convs mapped "
              f"(test has {len(test_convs)} convs)")
 
-    # Build lookup by convo_id for both
-    hg_by_cid: dict[str, dict[int, str]] = {}
+    # Build lookup by convo_id for both (action + slots)
+    hg_by_cid: dict[str, dict[int, tuple[str, list[str]]]] = {}
     for p in hg_abcd:
-        hg_by_cid[str(p.conversation_id)] = {t.turn_index: t.predicted_action or "" for t in p.turns}
-    awm_by_cid: dict[str, dict[int, str]] = {}
+        hg_by_cid[str(p.conversation_id)] = {
+            t.turn_index: (t.predicted_action or "", t.predicted_slots or [])
+            for t in p.turns}
+    awm_by_cid: dict[str, dict[int, tuple[str, list[str]]]] = {}
     for p in awm_abcd:
-        awm_by_cid[str(p.conversation_id)] = {t.turn_index: t.predicted_action or "" for t in p.turns}
+        awm_by_cid[str(p.conversation_id)] = {
+            t.turn_index: (t.predicted_action or "", t.predicted_slots or [])
+            for t in p.turns}
 
     # Debug: check a sample mapping
     if hg_by_cid and awm_by_cid:
@@ -109,8 +113,8 @@ def classify_by_ast_unified(
         awm_sample = awm_by_cid.get(sample_cid, {})
         log.info(f"  Sample convo={sample_cid}: HG actions={len(hg_sample)}, AWM actions={len(awm_sample)}")
         common_turns = set(hg_sample) & set(awm_sample)
-        diffs = sum(1 for t in common_turns if hg_sample[t] != awm_sample[t])
-        log.info(f"  Common turns: {len(common_turns)}, different predictions: {diffs}")
+        diffs = sum(1 for t in common_turns if hg_sample[t][0] != awm_sample[t][0])
+        log.info(f"  Common turns: {len(common_turns)}, different action names: {diffs}")
 
     # Per-action-turn classification
     results: dict[str, list[dict]] = {
@@ -128,10 +132,11 @@ def classify_by_ast_unified(
             if gt.turn_type != "action" or not gt.action_name:
                 continue
 
-            hg_action = hg_preds.get(gt.turn_index, "")
-            awm_action = awm_preds.get(gt.turn_index, "")
-            hg_ok = (hg_action == gt.action_name)
-            awm_ok = (awm_action == gt.action_name)
+            hg_action, hg_slots = hg_preds.get(gt.turn_index, ("", []))
+            awm_action, awm_slots = awm_preds.get(gt.turn_index, ("", []))
+            # Same joint-AST logic as compute_ast in abcd/metrics.py
+            hg_ok = (hg_action == gt.action_name and hg_slots == (gt.slot_values or []))
+            awm_ok = (awm_action == gt.action_name and awm_slots == (gt.slot_values or []))
 
             entry = {
                 "convo_id": cid,

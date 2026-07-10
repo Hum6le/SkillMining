@@ -650,50 +650,22 @@ def compute_ast_from_turn_results(
     conversations: list[dict],
     turn_results: list[dict],
 ) -> list[dict]:
-    """Compute per-dialogue AST from turn-level predictions (predict_actions=True).
+    """Compute per-dialogue AST — uses the SAME path as evaluate_abcd().
 
-    Groups turn_results by convo_id, compares predicted_action against
-    ground-truth action turns.
-
-    Returns list of dicts (aligned with conversations): {ast_score, action_correct, action_total}.
+    Calls turn_results_to_abcd_predictions → compute_ast to guarantee
+    consistency with the full evaluation pipeline.
     """
     from .data import extract_ground_truth
+    from .metrics import compute_ast as _compute_ast
 
-    # Group turn results by convo_id
-    by_convo: dict[str, list[dict]] = {}
-    for r in turn_results:
-        cid = r["convo_id"]
-        by_convo.setdefault(cid, []).append(r)
-
+    abcd_preds = turn_results_to_abcd_predictions(turn_results, conversations)
     scores: list[dict] = []
-    for conv in conversations:
-        cid = str(conv.get("convo_id", "?"))
+    for conv, pred in zip(conversations, abcd_preds):
         truths = extract_ground_truth(conv)
-        gt_actions = {
-            t.turn_index: t
-            for t in truths if t.turn_type == "action" and t.action_name
-        }
-
-        turns = sorted(by_convo.get(cid, []), key=lambda x: x["turn_index"])
-        # Same logic as turn_results_to_abcd_predictions:
-        # nearest preceding agent turn's prediction applies to each action turn
-        correct = 0
-        for turn_idx, gt in gt_actions.items():
-            best_action = ""
-            for r in turns:
-                if r["turn_index"] < turn_idx:
-                    if r.get("predicted_action"):
-                        best_action = r["predicted_action"]
-                else:
-                    break  # turns is sorted, stop once r["turn_index"] >= turn_idx
-            if best_action and best_action == gt.action_name:
-                correct += 1
-
-        total = len(gt_actions)
+        result = _compute_ast(truths, pred, conversation_id=pred.conversation_id)
         scores.append({
-            "ast_score": correct / max(total, 1),
-            "action_correct": correct,
-            "action_total": total,
+            "ast_score": result.joint_accuracy,
+            "action_correct": result.joint_correct,
+            "action_total": result.num_action_turns,
         })
-
     return scores
