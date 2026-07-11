@@ -305,6 +305,15 @@ slot/success workflow. For ABCD we now keep a separate AST-driven pipeline:
 python scripts/run_trace2skill_abcd.py --max-train 200 --max-test 100
 ```
 
+It also supports explicit pre-split files, using the same style as
+`run_full_experiment.py`:
+
+```bash
+python scripts/run_trace2skill_abcd.py \
+  --train-file data/eval/abcd/splits/recover_password/train.json \
+  --test-file data/eval/abcd/splits/recover_password/test.json
+```
+
 This pipeline:
 
 1. runs a seed ABCD agent with `predict_actions=True`

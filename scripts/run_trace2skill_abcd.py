@@ -58,6 +58,39 @@ class PipelineOutputs:
     evolved_skill_path: Path
 
 
+def _load_conversations(args) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    """Load train/test conversations from either explicit files or named splits."""
+    if bool(args.train_file) != bool(args.test_file):
+        raise ValueError("--train-file and --test-file must be provided together")
+
+    if args.train_file and args.test_file:
+        train_path = Path(args.train_file)
+        test_path = Path(args.test_file)
+        train_convs = json.loads(train_path.read_text(encoding="utf-8"))
+        test_convs = json.loads(test_path.read_text(encoding="utf-8"))
+        source_info = {
+            "mode": "files",
+            "train_file": str(train_path),
+            "test_file": str(test_path),
+            "data_path": None,
+            "train_split": None,
+            "test_split": None,
+        }
+        return train_convs, test_convs, source_info
+
+    train_convs = load_abcd_data(args.train_split, args.data_path)
+    test_convs = load_abcd_data(args.test_split, args.data_path)
+    source_info = {
+        "mode": "splits",
+        "train_file": None,
+        "test_file": None,
+        "data_path": args.data_path,
+        "train_split": args.train_split,
+        "test_split": args.test_split,
+    }
+    return train_convs, test_convs, source_info
+
+
 def _default_skill_text() -> str:
     return """---
 name: abcd_trace2skill
@@ -293,8 +326,7 @@ def run_pipeline(args) -> PipelineOutputs:
     model_cfg = resolve_config(model=args.model)
     model = model_cfg["model"]
 
-    train_convs = load_abcd_data(args.train_split, args.data_path)
-    test_convs = load_abcd_data(args.test_split, args.data_path)
+    train_convs, test_convs, source_info = _load_conversations(args)
     if args.max_train:
         train_convs = train_convs[:args.max_train]
     if args.max_test:
@@ -324,7 +356,22 @@ def run_pipeline(args) -> PipelineOutputs:
     evolved_skill_path = evolved_skill_dir / "SKILL.md"
     evolved_skill_path.write_text(seed_skill_text, encoding="utf-8")
 
-    log.info("Loaded %d train and %d test conversations", len(train_convs), len(test_convs))
+    if source_info["mode"] == "files":
+        log.info(
+            "Loaded %d train and %d test conversations from files",
+            len(train_convs),
+            len(test_convs),
+        )
+        log.info("Train file: %s", source_info["train_file"])
+        log.info("Test file: %s", source_info["test_file"])
+    else:
+        log.info(
+            "Loaded %d train and %d test conversations from splits (%s/%s)",
+            len(train_convs),
+            len(test_convs),
+            source_info["train_split"],
+            source_info["test_split"],
+        )
 
     # Stage 1: seed run on training set to mine failures
     log.info("Stage 1: seed run on training set")
@@ -418,9 +465,11 @@ def run_pipeline(args) -> PipelineOutputs:
 
     summary = {
         "config": {
-            "data_path": args.data_path,
-            "train_split": args.train_split,
-            "test_split": args.test_split,
+            "data_path": source_info["data_path"],
+            "train_split": source_info["train_split"],
+            "test_split": source_info["test_split"],
+            "train_file": source_info["train_file"],
+            "test_file": source_info["test_file"],
             "max_train": args.max_train,
             "max_test": args.max_test,
             "model": model,
@@ -452,6 +501,16 @@ def main() -> None:
         description="ABCD Trace2Skill-style pipeline driven by AST",
     )
     parser.add_argument("--data-path", default=ABCD_DIR)
+    parser.add_argument(
+        "--train-file",
+        default=None,
+        help="Pre-split train conversations JSON file",
+    )
+    parser.add_argument(
+        "--test-file",
+        default=None,
+        help="Pre-split test conversations JSON file",
+    )
     parser.add_argument("--train-split", default="train", choices=["train", "dev", "test"])
     parser.add_argument("--test-split", default="test", choices=["train", "dev", "test"])
     parser.add_argument("--max-train", type=int, default=200)
