@@ -15,7 +15,6 @@ What it does:
 
 import json
 import logging
-import os
 import re
 import sys
 from datetime import datetime
@@ -26,6 +25,8 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) in sys.path:
     sys.path.remove(str(_PROJECT_ROOT))
 sys.path.insert(0, str(_PROJECT_ROOT))
+
+from eval_tod.cli import evaluate_abcd_bundle
 
 # ── Config ────────────────────────────────────────────────────
 ABCD_DIR = "data/eval/abcd/data"
@@ -163,7 +164,6 @@ def main():
             log.info(f"  Checkpoint saved: {ckpt_dir}")
 
     # ── Final test evaluation ──────────────────────────────────
-    from eval_tod import evaluate_all
     log.info("=" * 50)
     log.info("Final test evaluation")
     test_agent = ABCDAgent(
@@ -182,7 +182,19 @@ def main():
 
     # Also save plain predictions for text metrics
     test_preds = test_agent.predict_and_save(test_convs, str(OUT_DIR / "test_final_preds.json"))
-    test_result = evaluate_all(test_convs, test_preds, dataset_name="abcd")
+    text_records = [
+        {
+            "dialogue_id": pred.dialogue_id,
+            "response_text": pred.response_text,
+        }
+        for pred in test_preds
+    ]
+    test_result = evaluate_abcd_bundle(
+        test_convs,
+        text_records=text_records,
+        abcd_records=test_turns,
+        text_prediction_key="response_text",
+    )
     log.info(f"Final test: {test_result['summary']}")
 
     # ── Save everything ───────────────────────────────────────
@@ -200,7 +212,7 @@ def main():
             "train": len(train_convs), "dev": len(dev_convs),
             "test": len(test_convs), "batches": len(batches),
         },
-        "final_test": test_result.get("text", {}),
+        "final_test": test_result,
         "workflow_lines": len(workflow),
         "memory_exemplars": len(memory),
         "llm_calls_logged": logger.count,

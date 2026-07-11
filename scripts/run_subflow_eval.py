@@ -41,7 +41,7 @@ sys.path.insert(0, str(_SKILL_DIR))
 
 from eval_tod.abcd.data import load_abcd_data
 from eval_tod.abcd.split import extract_all_agent_turns
-from eval_tod.text_eval import evaluate_responses
+from eval_tod.cli import evaluate_text_records
 
 SPLITS_DIR = Path("data/eval/abcd/splits")
 MODEL = "deepseek-chat"
@@ -160,7 +160,7 @@ def evaluate_agent_on_subflow(
     turn_results = all_turn_results
     preds = [r["prediction"] for r in turn_results]
     refs = [r["reference"] for r in turn_results]
-    text_result = evaluate_responses(preds, refs)
+    text_result = evaluate_text_records(preds, refs)
 
     # AST from turn results
     from eval_tod.abcd.agent import compute_ast_from_turn_results
@@ -171,9 +171,9 @@ def evaluate_agent_on_subflow(
         "label": label,
         "n_turns": len(preds),
         "text": {
-            "bert_f1": round(text_result.bert_f1, 4),
-            "bleu_4": round(text_result.bleu_4, 1),
-            "rouge_l": round(text_result.rouge_l, 4),
+            "bert_f1": round(text_result["bert_f1"], 4),
+            "bleu_4": round(text_result["bleu_4"], 1),
+            "rouge_l": round(text_result["rouge_l"], 4),
         },
         "ast_mean": round(ast_mean, 4),
     }

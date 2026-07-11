@@ -183,7 +183,12 @@ def compute_ast_aggregate(
         ``ASTAggregate`` with overall and per-dialogue scores.
     """
     agg = ASTAggregate()
-    for truths, pred in zip(all_ground_truths, all_predictions):
+    for idx, truths in enumerate(all_ground_truths):
+        pred = (
+            all_predictions[idx]
+            if idx < len(all_predictions)
+            else ABCDPrediction(conversation_id=str(idx), turns=[])
+        )
         agg.per_dialogue.append(
             compute_ast(truths, pred, conversation_id=pred.conversation_id)
         )
@@ -324,7 +329,12 @@ def compute_cds_aggregate(
         ``CDSAggregate`` with overall and per-dialogue scores.
     """
     agg = CDSAggregate()
-    for truths, pred in zip(all_ground_truths, all_predictions):
+    for idx, truths in enumerate(all_ground_truths):
+        pred = (
+            all_predictions[idx]
+            if idx < len(all_predictions)
+            else ABCDPrediction(conversation_id=str(idx), turns=[])
+        )
         agg.per_dialogue.append(
             compute_cds(truths, pred, conversation_id=pred.conversation_id)
         )

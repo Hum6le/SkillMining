@@ -153,3 +153,16 @@ def load_abcd_with_truth(
     """
     conversations = load_abcd_data(split, data_dir)
     return [(conv, extract_ground_truth(conv)) for conv in conversations]
+
+
+def last_agent_response_text(conversation: dict[str, Any]) -> str:
+    """Return the final delexed agent utterance for dialogue-level text eval."""
+    for turn in reversed(conversation.get("delexed", [])):
+        if turn.get("speaker") == "agent":
+            return str(turn.get("text", "")).strip()
+    return ""
+
+
+def last_agent_response_texts(conversations: list[dict[str, Any]]) -> list[str]:
+    """Return one dialogue-level text reference per ABCD conversation."""
+    return [last_agent_response_text(conv) for conv in conversations]

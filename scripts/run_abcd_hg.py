@@ -18,7 +18,6 @@ from __future__ import annotations
 import json
 import logging
 import math
-import os
 import sys
 from collections import defaultdict
 from datetime import datetime
@@ -37,6 +36,7 @@ if str(_SKILL_DIR) in sys.path:
 sys.path.insert(0, str(_SKILL_DIR))
 
 from eval_tod.abcd.data import load_abcd_data
+from eval_tod.cli import evaluate_abcd_bundle
 from skill_mining.abcd_session_hg import (
     SessionHypergraph,
     greedy_vertex_cover,
@@ -215,6 +215,17 @@ def _get_subflow(conv: dict) -> str:
     return str(conv.get("scenario", {}).get("subflow", "unknown"))
 
 
+def _prediction_records(predictions: list[Any]) -> list[dict[str, str]]:
+    """Convert dialogue-level Prediction objects to CLI-friendly records."""
+    return [
+        {
+            "dialogue_id": pred.dialogue_id,
+            "response_text": pred.response_text,
+        }
+        for pred in predictions
+    ]
+
+
 def _evaluate_with_per_intent_workflows(
     dialogues: list[dict],
     per_intent_workflows: Dict[str, str],
@@ -228,7 +239,6 @@ def _evaluate_with_per_intent_workflows(
     每个对话只注入它所属 subflow 的 skill，而非所有 skill 混在一起。
     """
     from eval_tod.abcd.agent import ABCDAgent
-    from eval_tod import evaluate_all
     from awm import WorkflowStore
 
     # 按 subflow 分组
@@ -260,7 +270,11 @@ def _evaluate_with_per_intent_workflows(
                  f"(seed_skill={'✓' if subflow in per_intent_workflows else '✗'})")
 
     # 按原顺序重排 predictions
-    result = evaluate_all(dialogues, all_preds, dataset_name="abcd")
+    result = evaluate_abcd_bundle(
+        dialogues,
+        text_records=_prediction_records(all_preds),
+        text_prediction_key="response_text",
+    )
     return all_preds, result
 
 
@@ -280,7 +294,6 @@ def run_training(
     """
     from eval_tod.abcd.agent import ABCDAgent
     from eval_tod.response_logger import ResponseLogger
-    from eval_tod import evaluate_all
     from awm import MemoryStore, WorkflowStore
 
     if per_intent_workflows is None:
@@ -318,7 +331,11 @@ def run_training(
         preds = agent.generate_predictions(batch)
 
         # 2. Evaluate
-        result = evaluate_all(batch, preds, dataset_name="abcd")
+        result = evaluate_abcd_bundle(
+            batch,
+            text_records=_prediction_records(preds),
+            text_prediction_key="response_text",
+        )
         batch_metrics.append({"batch": batch_idx, "summary": result.get("summary", "")})
         log.info(f"  {result['summary']}")
 

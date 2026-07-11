@@ -1,0 +1,996 @@
+{
+  "bad_price_yesterday": {
+    "nodes": [
+      {
+        "id": "bad_price_yesterday:record-reason:yesterday",
+        "label": "record-reason",
+        "frequency": 3
+      },
+      {
+        "id": "bad_price_yesterday:promo-code",
+        "label": "promo-code",
+        "frequency": 3
+      },
+      {
+        "id": "bad_price_yesterday:pull-up-account:norman bouchard",
+        "label": "pull-up-account",
+        "frequency": 1
+      },
+      {
+        "id": "bad_price_yesterday:verify-identity:norman bouchard,ej21pkbfcl,4845277187",
+        "label": "verify-identity",
+        "frequency": 1
+      },
+      {
+        "id": "bad_price_yesterday:pull-up-account:joyce wu",
+        "label": "pull-up-account",
+        "frequency": 1
+      },
+      {
+        "id": "bad_price_yesterday:verify-identity:joyce wu,klwra6fdpw,5405231028",
+        "label": "verify-identity",
+        "frequency": 1
+      },
+      {
+        "id": "bad_price_yesterday:pull-up-account:david williams",
+        "label": "pull-up-account",
+        "frequency": 1
+      },
+      {
+        "id": "bad_price_yesterday:verify-identity:david williams,unwovbw3mv,9420413722",
+        "label": "verify-identity",
+        "frequency": 1
+      }
+    ],
+    "edges": [
+      {
+        "source": "bad_price_yesterday:pull-up-account:norman bouchard",
+        "target": "bad_price_yesterday:record-reason:yesterday",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "bad_price_yesterday:record-reason:yesterday",
+        "target": "bad_price_yesterday:verify-identity:norman bouchard,ej21pkbfcl,4845277187",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "bad_price_yesterday:verify-identity:norman bouchard,ej21pkbfcl,4845277187",
+        "target": "bad_price_yesterday:promo-code",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "bad_price_yesterday:pull-up-account:joyce wu",
+        "target": "bad_price_yesterday:record-reason:yesterday",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "bad_price_yesterday:record-reason:yesterday",
+        "target": "bad_price_yesterday:verify-identity:joyce wu,klwra6fdpw,5405231028",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "bad_price_yesterday:verify-identity:joyce wu,klwra6fdpw,5405231028",
+        "target": "bad_price_yesterday:promo-code",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "bad_price_yesterday:pull-up-account:david williams",
+        "target": "bad_price_yesterday:record-reason:yesterday",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "bad_price_yesterday:record-reason:yesterday",
+        "target": "bad_price_yesterday:verify-identity:david williams,unwovbw3mv,9420413722",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "bad_price_yesterday:verify-identity:david williams,unwovbw3mv,9420413722",
+        "target": "bad_price_yesterday:promo-code",
+        "weight": 1,
+        "num_sessions": 1
+      }
+    ],
+    "n_selected_nodes": 8,
+    "n_selected_edges": 9,
+    "pathways": [
+      {
+        "entry": "bad_price_yesterday:pull-up-account:norman bouchard",
+        "steps": [
+          {
+            "node": "bad_price_yesterday:pull-up-account:norman bouchard",
+            "label": "pull-up-account",
+            "next": "bad_price_yesterday:record-reason:yesterday",
+            "edge_weight": 1
+          },
+          {
+            "node": "bad_price_yesterday:record-reason:yesterday",
+            "label": "record-reason",
+            "next": "bad_price_yesterday:verify-identity:norman bouchard,ej21pkbfcl,4845277187",
+            "edge_weight": 1
+          },
+          {
+            "node": "bad_price_yesterday:verify-identity:norman bouchard,ej21pkbfcl,4845277187",
+            "label": "verify-identity",
+            "next": "bad_price_yesterday:promo-code",
+            "edge_weight": 1
+          },
+          {
+            "node": "bad_price_yesterday:promo-code",
+            "label": "promo-code"
+          }
+        ],
+        "length": 4,
+        "total_weight": 0
+      },
+      {
+        "entry": "bad_price_yesterday:pull-up-account:joyce wu",
+        "steps": [
+          {
+            "node": "bad_price_yesterday:pull-up-account:joyce wu",
+            "label": "pull-up-account",
+            "next": "bad_price_yesterday:record-reason:yesterday",
+            "edge_weight": 1
+          },
+          {
+            "node": "bad_price_yesterday:record-reason:yesterday",
+            "label": "record-reason",
+            "next": "bad_price_yesterday:verify-identity:norman bouchard,ej21pkbfcl,4845277187",
+            "edge_weight": 1
+          },
+          {
+            "node": "bad_price_yesterday:verify-identity:norman bouchard,ej21pkbfcl,4845277187",
+            "label": "verify-identity",
+            "next": "bad_price_yesterday:promo-code",
+            "edge_weight": 1
+          },
+          {
+            "node": "bad_price_yesterday:promo-code",
+            "label": "promo-code"
+          }
+        ],
+        "length": 4,
+        "total_weight": 0
+      },
+      {
+        "entry": "bad_price_yesterday:pull-up-account:david williams",
+        "steps": [
+          {
+            "node": "bad_price_yesterday:pull-up-account:david williams",
+            "label": "pull-up-account",
+            "next": "bad_price_yesterday:record-reason:yesterday",
+            "edge_weight": 1
+          },
+          {
+            "node": "bad_price_yesterday:record-reason:yesterday",
+            "label": "record-reason",
+            "next": "bad_price_yesterday:verify-identity:norman bouchard,ej21pkbfcl,4845277187",
+            "edge_weight": 1
+          },
+          {
+            "node": "bad_price_yesterday:verify-identity:norman bouchard,ej21pkbfcl,4845277187",
+            "label": "verify-identity",
+            "next": "bad_price_yesterday:promo-code",
+            "edge_weight": 1
+          },
+          {
+            "node": "bad_price_yesterday:promo-code",
+            "label": "promo-code"
+          }
+        ],
+        "length": 4,
+        "total_weight": 0
+      }
+    ],
+    "branch_points": [
+      {
+        "node": "bad_price_yesterday:record-reason:yesterday",
+        "label": "record-reason",
+        "num_branches": 3,
+        "branches": [
+          {
+            "target": "bad_price_yesterday:verify-identity:norman bouchard,ej21pkbfcl,4845277187",
+            "weight": 1,
+            "label": "verify-identity"
+          },
+          {
+            "target": "bad_price_yesterday:verify-identity:joyce wu,klwra6fdpw,5405231028",
+            "weight": 1,
+            "label": "verify-identity"
+          },
+          {
+            "target": "bad_price_yesterday:verify-identity:david williams,unwovbw3mv,9420413722",
+            "weight": 1,
+            "label": "verify-identity"
+          }
+        ]
+      }
+    ],
+    "n_sessions": 3,
+    "coverage_pct": 100.0
+  },
+  "cost": {
+    "nodes": [
+      {
+        "id": "cost:offer-refund:8",
+        "label": "offer-refund",
+        "frequency": 3
+      },
+      {
+        "id": "cost:pull-up-account:rodriguez domingo",
+        "label": "pull-up-account",
+        "frequency": 2
+      },
+      {
+        "id": "cost:pull-up-account:norman bouchard",
+        "label": "pull-up-account",
+        "frequency": 2
+      },
+      {
+        "id": "cost:pull-up-account:chloe zhang",
+        "label": "pull-up-account",
+        "frequency": 1
+      },
+      {
+        "id": "cost:verify-identity:chloe zhang,zb880qpbjz,2663462033",
+        "label": "verify-identity",
+        "frequency": 1
+      },
+      {
+        "id": "cost:membership:gold",
+        "label": "membership",
+        "frequency": 1
+      },
+      {
+        "id": "cost:verify-identity:rodriguez domingo,22spbvqzvl,0195527993",
+        "label": "verify-identity",
+        "frequency": 1
+      },
+      {
+        "id": "cost:membership:guest",
+        "label": "membership",
+        "frequency": 1
+      },
+      {
+        "id": "cost:validate-purchase:rodriguezdomingo213,rodriguezdomingo213@,5238619247",
+        "label": "validate-purchase",
+        "frequency": 1
+      },
+      {
+        "id": "cost:shipping-status:delivered",
+        "label": "shipping-status",
+        "frequency": 1
+      },
+      {
+        "id": "cost:validate-purchase:nbouchard919,nbouchard919@email.c,5406712662",
+        "label": "validate-purchase",
+        "frequency": 1
+      },
+      {
+        "id": "cost:shipping-status:in transit",
+        "label": "shipping-status",
+        "frequency": 1
+      },
+      {
+        "id": "cost:update-order:waive fee",
+        "label": "update-order",
+        "frequency": 1
+      },
+      {
+        "id": "cost:validate-purchase:normanb1,normanb1@email.com,0709441412",
+        "label": "validate-purchase",
+        "frequency": 1
+      },
+      {
+        "id": "cost:shipping-status:out for delivery",
+        "label": "shipping-status",
+        "frequency": 1
+      }
+    ],
+    "edges": [
+      {
+        "source": "cost:pull-up-account:chloe zhang",
+        "target": "cost:verify-identity:chloe zhang,zb880qpbjz,2663462033",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "cost:verify-identity:chloe zhang,zb880qpbjz,2663462033",
+        "target": "cost:membership:gold",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "cost:pull-up-account:rodriguez domingo",
+        "target": "cost:verify-identity:rodriguez domingo,22spbvqzvl,0195527993",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "cost:verify-identity:rodriguez domingo,22spbvqzvl,0195527993",
+        "target": "cost:membership:guest",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "cost:membership:guest",
+        "target": "cost:offer-refund:8",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "cost:pull-up-account:rodriguez domingo",
+        "target": "cost:validate-purchase:rodriguezdomingo213,rodriguezdomingo213@,5238619247",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "cost:validate-purchase:rodriguezdomingo213,rodriguezdomingo213@,5238619247",
+        "target": "cost:shipping-status:delivered",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "cost:shipping-status:delivered",
+        "target": "cost:offer-refund:8",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "cost:pull-up-account:norman bouchard",
+        "target": "cost:validate-purchase:nbouchard919,nbouchard919@email.c,5406712662",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "cost:validate-purchase:nbouchard919,nbouchard919@email.c,5406712662",
+        "target": "cost:shipping-status:in transit",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "cost:shipping-status:in transit",
+        "target": "cost:update-order:waive fee",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "cost:pull-up-account:norman bouchard",
+        "target": "cost:validate-purchase:normanb1,normanb1@email.com,0709441412",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "cost:validate-purchase:normanb1,normanb1@email.com,0709441412",
+        "target": "cost:shipping-status:out for delivery",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "cost:shipping-status:out for delivery",
+        "target": "cost:offer-refund:8",
+        "weight": 1,
+        "num_sessions": 1
+      }
+    ],
+    "n_selected_nodes": 15,
+    "n_selected_edges": 14,
+    "pathways": [
+      {
+        "entry": "cost:pull-up-account:rodriguez domingo",
+        "steps": [
+          {
+            "node": "cost:pull-up-account:rodriguez domingo",
+            "label": "pull-up-account",
+            "next": "cost:verify-identity:rodriguez domingo,22spbvqzvl,0195527993",
+            "edge_weight": 1
+          },
+          {
+            "node": "cost:verify-identity:rodriguez domingo,22spbvqzvl,0195527993",
+            "label": "verify-identity",
+            "next": "cost:membership:guest",
+            "edge_weight": 1
+          },
+          {
+            "node": "cost:membership:guest",
+            "label": "membership",
+            "next": "cost:offer-refund:8",
+            "edge_weight": 1
+          },
+          {
+            "node": "cost:offer-refund:8",
+            "label": "offer-refund"
+          }
+        ],
+        "length": 4,
+        "total_weight": 0
+      },
+      {
+        "entry": "cost:pull-up-account:norman bouchard",
+        "steps": [
+          {
+            "node": "cost:pull-up-account:norman bouchard",
+            "label": "pull-up-account",
+            "next": "cost:validate-purchase:nbouchard919,nbouchard919@email.c,5406712662",
+            "edge_weight": 1
+          },
+          {
+            "node": "cost:validate-purchase:nbouchard919,nbouchard919@email.c,5406712662",
+            "label": "validate-purchase",
+            "next": "cost:shipping-status:in transit",
+            "edge_weight": 1
+          },
+          {
+            "node": "cost:shipping-status:in transit",
+            "label": "shipping-status",
+            "next": "cost:update-order:waive fee",
+            "edge_weight": 1
+          },
+          {
+            "node": "cost:update-order:waive fee",
+            "label": "update-order"
+          }
+        ],
+        "length": 4,
+        "total_weight": 0
+      },
+      {
+        "entry": "cost:pull-up-account:chloe zhang",
+        "steps": [
+          {
+            "node": "cost:pull-up-account:chloe zhang",
+            "label": "pull-up-account",
+            "next": "cost:verify-identity:chloe zhang,zb880qpbjz,2663462033",
+            "edge_weight": 1
+          },
+          {
+            "node": "cost:verify-identity:chloe zhang,zb880qpbjz,2663462033",
+            "label": "verify-identity",
+            "next": "cost:membership:gold",
+            "edge_weight": 1
+          },
+          {
+            "node": "cost:membership:gold",
+            "label": "membership"
+          }
+        ],
+        "length": 3,
+        "total_weight": 0
+      }
+    ],
+    "branch_points": [
+      {
+        "node": "cost:pull-up-account:rodriguez domingo",
+        "label": "pull-up-account",
+        "num_branches": 2,
+        "branches": [
+          {
+            "target": "cost:verify-identity:rodriguez domingo,22spbvqzvl,0195527993",
+            "weight": 1,
+            "label": "verify-identity"
+          },
+          {
+            "target": "cost:validate-purchase:rodriguezdomingo213,rodriguezdomingo213@,5238619247",
+            "weight": 1,
+            "label": "validate-purchase"
+          }
+        ]
+      },
+      {
+        "node": "cost:pull-up-account:norman bouchard",
+        "label": "pull-up-account",
+        "num_branches": 2,
+        "branches": [
+          {
+            "target": "cost:validate-purchase:nbouchard919,nbouchard919@email.c,5406712662",
+            "weight": 1,
+            "label": "validate-purchase"
+          },
+          {
+            "target": "cost:validate-purchase:normanb1,normanb1@email.com,0709441412",
+            "weight": 1,
+            "label": "validate-purchase"
+          }
+        ]
+      }
+    ],
+    "n_sessions": 5,
+    "coverage_pct": 100.0
+  },
+  "credit_card": {
+    "nodes": [
+      {
+        "id": "credit_card:try-again",
+        "label": "try-again",
+        "frequency": 7
+      },
+      {
+        "id": "credit_card:log-out-in",
+        "label": "log-out-in",
+        "frequency": 5
+      },
+      {
+        "id": "credit_card:enter-details:troubleshoot",
+        "label": "enter-details",
+        "frequency": 2
+      },
+      {
+        "id": "credit_card:pull-up-account:david williams",
+        "label": "pull-up-account",
+        "frequency": 1
+      },
+      {
+        "id": "credit_card:make-purchase:michael kors jacket",
+        "label": "make-purchase",
+        "frequency": 1
+      }
+    ],
+    "edges": [
+      {
+        "source": "credit_card:try-again",
+        "target": "credit_card:log-out-in",
+        "weight": 4,
+        "num_sessions": 4
+      },
+      {
+        "source": "credit_card:enter-details:troubleshoot",
+        "target": "credit_card:try-again",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "credit_card:pull-up-account:david williams",
+        "target": "credit_card:try-again",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "credit_card:log-out-in",
+        "target": "credit_card:enter-details:troubleshoot",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "credit_card:log-out-in",
+        "target": "credit_card:try-again",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "credit_card:try-again",
+        "target": "credit_card:make-purchase:michael kors jacket",
+        "weight": 1,
+        "num_sessions": 1
+      }
+    ],
+    "n_selected_nodes": 5,
+    "n_selected_edges": 6,
+    "pathways": [
+      {
+        "entry": "credit_card:pull-up-account:david williams",
+        "steps": [
+          {
+            "node": "credit_card:pull-up-account:david williams",
+            "label": "pull-up-account",
+            "next": "credit_card:try-again",
+            "edge_weight": 1
+          },
+          {
+            "node": "credit_card:try-again",
+            "label": "try-again",
+            "next": "credit_card:log-out-in",
+            "edge_weight": 4
+          },
+          {
+            "node": "credit_card:log-out-in",
+            "label": "log-out-in",
+            "next": "credit_card:enter-details:troubleshoot",
+            "edge_weight": 1
+          },
+          {
+            "node": "credit_card:enter-details:troubleshoot",
+            "label": "enter-details"
+          }
+        ],
+        "length": 4,
+        "total_weight": 0
+      }
+    ],
+    "branch_points": [
+      {
+        "node": "credit_card:try-again",
+        "label": "try-again",
+        "num_branches": 2,
+        "branches": [
+          {
+            "target": "credit_card:log-out-in",
+            "weight": 4,
+            "label": "log-out-in"
+          },
+          {
+            "target": "credit_card:make-purchase:michael kors jacket",
+            "weight": 1,
+            "label": "make-purchase"
+          }
+        ]
+      },
+      {
+        "node": "credit_card:log-out-in",
+        "label": "log-out-in",
+        "num_branches": 2,
+        "branches": [
+          {
+            "target": "credit_card:enter-details:troubleshoot",
+            "weight": 1,
+            "label": "enter-details"
+          },
+          {
+            "target": "credit_card:try-again",
+            "weight": 1,
+            "label": "try-again"
+          }
+        ]
+      }
+    ],
+    "n_sessions": 6,
+    "coverage_pct": 100.0
+  },
+  "jeans_other_3": {
+    "nodes": [
+      {
+        "id": "jeans_other_3:search-faq",
+        "label": "search-faq",
+        "frequency": 3
+      },
+      {
+        "id": "jeans_other_3:search-jeans",
+        "label": "search-jeans",
+        "frequency": 2
+      },
+      {
+        "id": "jeans_other_3:select-faq:jeans_other_3",
+        "label": "select-faq",
+        "frequency": 1
+      },
+      {
+        "id": "jeans_other_3:pull-up-account:chloe zhang",
+        "label": "pull-up-account",
+        "frequency": 1
+      },
+      {
+        "id": "jeans_other_3:record-reason:michael kors jeans",
+        "label": "record-reason",
+        "frequency": 1
+      },
+      {
+        "id": "jeans_other_3:notify-team:purchasing departmen",
+        "label": "notify-team",
+        "frequency": 1
+      },
+      {
+        "id": "jeans_other_3:search-jacket",
+        "label": "search-jacket",
+        "frequency": 1
+      },
+      {
+        "id": "jeans_other_3:select-faq:jacket_other_2",
+        "label": "select-faq",
+        "frequency": 1
+      }
+    ],
+    "edges": [
+      {
+        "source": "jeans_other_3:search-faq",
+        "target": "jeans_other_3:search-jeans",
+        "weight": 2,
+        "num_sessions": 2
+      },
+      {
+        "source": "jeans_other_3:search-jeans",
+        "target": "jeans_other_3:select-faq:jeans_other_3",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "jeans_other_3:pull-up-account:chloe zhang",
+        "target": "jeans_other_3:record-reason:michael kors jeans",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "jeans_other_3:record-reason:michael kors jeans",
+        "target": "jeans_other_3:notify-team:purchasing departmen",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "jeans_other_3:search-faq",
+        "target": "jeans_other_3:search-jacket",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "jeans_other_3:search-jacket",
+        "target": "jeans_other_3:select-faq:jacket_other_2",
+        "weight": 1,
+        "num_sessions": 1
+      }
+    ],
+    "n_selected_nodes": 8,
+    "n_selected_edges": 6,
+    "pathways": [
+      {
+        "entry": "jeans_other_3:search-faq",
+        "steps": [
+          {
+            "node": "jeans_other_3:search-faq",
+            "label": "search-faq",
+            "next": "jeans_other_3:search-jeans",
+            "edge_weight": 2
+          },
+          {
+            "node": "jeans_other_3:search-jeans",
+            "label": "search-jeans",
+            "next": "jeans_other_3:select-faq:jeans_other_3",
+            "edge_weight": 1
+          },
+          {
+            "node": "jeans_other_3:select-faq:jeans_other_3",
+            "label": "select-faq"
+          }
+        ],
+        "length": 3,
+        "total_weight": 0
+      },
+      {
+        "entry": "jeans_other_3:pull-up-account:chloe zhang",
+        "steps": [
+          {
+            "node": "jeans_other_3:pull-up-account:chloe zhang",
+            "label": "pull-up-account",
+            "next": "jeans_other_3:record-reason:michael kors jeans",
+            "edge_weight": 1
+          },
+          {
+            "node": "jeans_other_3:record-reason:michael kors jeans",
+            "label": "record-reason",
+            "next": "jeans_other_3:notify-team:purchasing departmen",
+            "edge_weight": 1
+          },
+          {
+            "node": "jeans_other_3:notify-team:purchasing departmen",
+            "label": "notify-team"
+          }
+        ],
+        "length": 3,
+        "total_weight": 0
+      }
+    ],
+    "branch_points": [
+      {
+        "node": "jeans_other_3:search-faq",
+        "label": "search-faq",
+        "num_branches": 2,
+        "branches": [
+          {
+            "target": "jeans_other_3:search-jeans",
+            "weight": 2,
+            "label": "search-jeans"
+          },
+          {
+            "target": "jeans_other_3:search-jacket",
+            "weight": 1,
+            "label": "search-jacket"
+          }
+        ]
+      }
+    ],
+    "n_sessions": 4,
+    "coverage_pct": 100.0
+  },
+  "manage": {
+    "nodes": [
+      {
+        "id": "manage:shipping-status:in transit",
+        "label": "shipping-status",
+        "frequency": 2
+      },
+      {
+        "id": "manage:pull-up-account:crystal minh",
+        "label": "pull-up-account",
+        "frequency": 1
+      },
+      {
+        "id": "manage:validate-purchase:cminh948,cminh948@email.com,4870952797",
+        "label": "validate-purchase",
+        "frequency": 1
+      },
+      {
+        "id": "manage:update-order:change order",
+        "label": "update-order",
+        "frequency": 1
+      },
+      {
+        "id": "manage:pull-up-account:norman bouchard",
+        "label": "pull-up-account",
+        "frequency": 1
+      },
+      {
+        "id": "manage:verify-identity:norman bouchard,4vejcyvp8u,5545781356",
+        "label": "verify-identity",
+        "frequency": 1
+      },
+      {
+        "id": "manage:membership:gold",
+        "label": "membership",
+        "frequency": 1
+      },
+      {
+        "id": "manage:pull-up-account:rodriguez domingo",
+        "label": "pull-up-account",
+        "frequency": 1
+      },
+      {
+        "id": "manage:membership:silver",
+        "label": "membership",
+        "frequency": 1
+      },
+      {
+        "id": "manage:enter-details:861 circle drive bal",
+        "label": "enter-details",
+        "frequency": 1
+      },
+      {
+        "id": "manage:enter-details:by mail",
+        "label": "enter-details",
+        "frequency": 1
+      }
+    ],
+    "edges": [
+      {
+        "source": "manage:pull-up-account:crystal minh",
+        "target": "manage:shipping-status:in transit",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "manage:shipping-status:in transit",
+        "target": "manage:validate-purchase:cminh948,cminh948@email.com,4870952797",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "manage:validate-purchase:cminh948,cminh948@email.com,4870952797",
+        "target": "manage:update-order:change order",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "manage:pull-up-account:norman bouchard",
+        "target": "manage:verify-identity:norman bouchard,4vejcyvp8u,5545781356",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "manage:verify-identity:norman bouchard,4vejcyvp8u,5545781356",
+        "target": "manage:shipping-status:in transit",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "manage:shipping-status:in transit",
+        "target": "manage:membership:gold",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "manage:membership:silver",
+        "target": "manage:enter-details:861 circle drive bal",
+        "weight": 1,
+        "num_sessions": 1
+      },
+      {
+        "source": "manage:enter-details:861 circle drive bal",
+        "target": "manage:enter-details:by mail",
+        "weight": 1,
+        "num_sessions": 1
+      }
+    ],
+    "n_selected_nodes": 11,
+    "n_selected_edges": 8,
+    "pathways": [
+      {
+        "entry": "manage:pull-up-account:crystal minh",
+        "steps": [
+          {
+            "node": "manage:pull-up-account:crystal minh",
+            "label": "pull-up-account",
+            "next": "manage:shipping-status:in transit",
+            "edge_weight": 1
+          },
+          {
+            "node": "manage:shipping-status:in transit",
+            "label": "shipping-status",
+            "next": "manage:validate-purchase:cminh948,cminh948@email.com,4870952797",
+            "edge_weight": 1
+          },
+          {
+            "node": "manage:validate-purchase:cminh948,cminh948@email.com,4870952797",
+            "label": "validate-purchase",
+            "next": "manage:update-order:change order",
+            "edge_weight": 1
+          },
+          {
+            "node": "manage:update-order:change order",
+            "label": "update-order"
+          }
+        ],
+        "length": 4,
+        "total_weight": 0
+      },
+      {
+        "entry": "manage:pull-up-account:norman bouchard",
+        "steps": [
+          {
+            "node": "manage:pull-up-account:norman bouchard",
+            "label": "pull-up-account",
+            "next": "manage:verify-identity:norman bouchard,4vejcyvp8u,5545781356",
+            "edge_weight": 1
+          },
+          {
+            "node": "manage:verify-identity:norman bouchard,4vejcyvp8u,5545781356",
+            "label": "verify-identity",
+            "next": "manage:shipping-status:in transit",
+            "edge_weight": 1
+          },
+          {
+            "node": "manage:shipping-status:in transit",
+            "label": "shipping-status",
+            "next": "manage:validate-purchase:cminh948,cminh948@email.com,4870952797",
+            "edge_weight": 1
+          },
+          {
+            "node": "manage:validate-purchase:cminh948,cminh948@email.com,4870952797",
+            "label": "validate-purchase",
+            "next": "manage:update-order:change order",
+            "edge_weight": 1
+          },
+          {
+            "node": "manage:update-order:change order",
+            "label": "update-order"
+          }
+        ],
+        "length": 5,
+        "total_weight": 0
+      }
+    ],
+    "branch_points": [
+      {
+        "node": "manage:shipping-status:in transit",
+        "label": "shipping-status",
+        "num_branches": 2,
+        "branches": [
+          {
+            "target": "manage:validate-purchase:cminh948,cminh948@email.com,4870952797",
+            "weight": 1,
+            "label": "validate-purchase"
+          },
+          {
+            "target": "manage:membership:gold",
+            "weight": 1,
+            "label": "membership"
+          }
+        ]
+      }
+    ],
+    "n_sessions": 3,
+    "coverage_pct": 100.0
+  }
+}

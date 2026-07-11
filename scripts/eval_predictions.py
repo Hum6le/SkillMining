@@ -1,14 +1,8 @@
 #!/usr/bin/env python3
-"""Standalone evaluation from saved prediction JSON — no agent calls.
+"""Standalone evaluation from saved prediction JSON - no agent calls.
 
-Usage:
-  python scripts/eval_predictions.py \
-    --predictions outputs/awm_abcd_xxx/test_final_preds.json \
-    --split test
-
-  python scripts/eval_predictions.py \
-    --predictions outputs/abcd_hg_xxx/test_final_preds.json \
-    --split test --dataset abcd
+This script now delegates to the unified eval_tod CLI helpers so the
+alignment rules match the main evaluation entry points.
 """
 
 from __future__ import annotations
@@ -23,27 +17,9 @@ if str(_PROJECT_ROOT) in sys.path:
 sys.path.insert(0, str(_PROJECT_ROOT))
 
 from eval_tod.abcd.data import load_abcd_data
-from eval_tod.schemas import Prediction
-from eval_tod import evaluate_all
+from eval_tod.cli import evaluate_abcd_bundle
 
 ABCD_DIR = "data/eval/abcd/data"
-
-
-def load_predictions(path: str) -> list[Prediction]:
-    """Load Prediction objects from a saved JSON file."""
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    preds = []
-    for item in data:
-        preds.append(Prediction(
-            dialogue_id=item.get("dialogue_id", ""),
-            inform_slots=item.get("inform_slots", {}),
-            request_slots=item.get("request_slots", {}),
-            booking=item.get("booking", {}),
-            response_text=item.get("response_text", ""),
-        ))
-    return preds
 
 
 def main():
@@ -51,12 +27,15 @@ def main():
     parser = argparse.ArgumentParser(
         description="Evaluate saved predictions (no agent calls)")
     parser.add_argument("--predictions", required=True,
-                        help="Path to saved predictions JSON")
+                        help="Path to saved text predictions JSON")
     parser.add_argument("--split", default="test",
                         choices=["train", "dev", "test"])
     parser.add_argument("--dataset", default="abcd",
-                        choices=["abcd", "multiwoz"])
+                        choices=["abcd"])
     parser.add_argument("--max-sessions", type=int, default=None)
+    parser.add_argument("--abcd-predictions", default=None,
+                        help="Optional separate ABCD action prediction JSON")
+    parser.add_argument("--text-prediction-key", default="response_text")
     args = parser.parse_args()
 
     preds_path = Path(args.predictions)
@@ -72,18 +51,31 @@ def main():
 
     # Load predictions
     print(f"Loading predictions from {preds_path}...")
-    preds = load_predictions(str(preds_path))
+    text_records = json.loads(preds_path.read_text(encoding="utf-8"))
+    if not isinstance(text_records, list):
+        print("Error: predictions file must contain a JSON array")
+        sys.exit(1)
 
-    # Align: trim predictions to match dialogues
-    if len(preds) > len(dialogues):
-        print(f"  Trimming predictions: {len(preds)} → {len(dialogues)}")
-        preds = preds[:len(dialogues)]
-    elif len(preds) < len(dialogues):
-        print(f"  Warning: {len(preds)} predictions < {len(dialogues)} dialogues")
+    abcd_records = None
+    if args.abcd_predictions:
+        abcd_path = Path(args.abcd_predictions)
+        if not abcd_path.exists():
+            print(f"Error: {abcd_path} not found")
+            sys.exit(1)
+        print(f"Loading ABCD action predictions from {abcd_path}...")
+        abcd_records = json.loads(abcd_path.read_text(encoding="utf-8"))
+        if not isinstance(abcd_records, list):
+            print("Error: abcd_predictions file must contain a JSON array")
+            sys.exit(1)
 
     # Evaluate
-    print(f"Evaluating {len(preds)} predictions on {len(dialogues)} dialogues...")
-    result = evaluate_all(dialogues, preds, dataset_name=args.dataset)
+    print(f"Evaluating {len(dialogues)} dialogues...")
+    result = evaluate_abcd_bundle(
+        dialogues,
+        text_records=text_records,
+        abcd_records=abcd_records,
+        text_prediction_key=args.text_prediction_key,
+    )
 
     # Print results
     print(f"\n{'='*55}")
@@ -118,7 +110,7 @@ def main():
     out_path = preds_path.parent / f"eval_{preds_path.stem}.json"
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2, ensure_ascii=False, default=str)
-    print(f"\nResults saved → {out_path}")
+    print(f"\nResults saved -> {out_path}")
 
 
 if __name__ == "__main__":

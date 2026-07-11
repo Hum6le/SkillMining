@@ -317,23 +317,9 @@ def _extract_references(dialogues, dataset_name: str) -> list[str]:
                 refs.append("")
         return refs
     if dataset_name == "abcd":
-        from .abcd.data import get_utterance_text
-        refs = []
-        for conv in dialogues:
-            # Collect agent utterances from this conversation
-            agent_utts = []
-            for turn in conv.get("delexed", []):
-                if turn.get("speaker") == "agent":
-                    targets = turn.get("targets", [])
-                    utt_id = targets[4] if len(targets) > 4 else -1
-                    agent_utts.append(
-                        get_utterance_text(utt_id) if utt_id >= 0
-                        else turn.get("text", "")
-                    )
-            # For generative mode (1 pred per dialogue), use the last agent utterance
-            if agent_utts:
-                refs.append(agent_utts[-1])
-        return refs
+        from .abcd.data import last_agent_response_texts
+
+        return last_agent_response_texts(dialogues)
     return []
 
 

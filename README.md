@@ -139,6 +139,23 @@ python -m Trace2Skill.pipeline_tod --batch-training \
 python -m Trace2Skill.pipeline.main --batch-training --split train --batch-size 20
 ```
 
+Preferred local script entry:
+
+```bash
+python scripts/run_tod_pipeline.py --smoke-test
+python scripts/run_tod_pipeline.py --split test --end 50
+python scripts/run_tod_pipeline.py --batch-training --split train --batch-size 50
+```
+
+These entrypoints now share the same CLI implementation:
+
+```bash
+python scripts/run_tod_pipeline.py ...
+python -m Trace2Skill.pipeline.main ...
+python -m Trace2Skill.pipeline_tod ...
+python pipeline_tod.py ...
+```
+
 ```python
 # Or step by step
 from eval_tod.kb import MultiWOZKB
@@ -223,6 +240,82 @@ Skill_Baseline/
 | **Information Rate** | Slot-level precision: fraction of goal slots (inform + request) correctly predicted |
 | **Success Rate** | Binary per-dialogue: ALL inform constraints + ALL requests + booking reference present |
 | **LLM Judge** | Multi-agent LLM evaluation: 5 specialist judges + 1 combiner score dialogues on task_completion, slot_accuracy, dialogue_fluency, helpfulness, efficiency |
+
+## Unified Evaluation CLI
+
+Metric computation is now centralized behind `python -m eval_tod`, so the
+older experiment scripts can call the same evaluation interface instead of each
+keeping their own alignment logic.
+
+### MultiWOZ ToD evaluation
+
+```bash
+python -m eval_tod tod \
+  --dataset multiwoz21 \
+  --data_path data/eval/multiwoz21 \
+  --predictions preds.json
+```
+
+The legacy form still works:
+
+```bash
+python -m eval_tod.cli --dataset multiwoz21 --data_path data/eval/multiwoz21 --predictions preds.json
+```
+
+### Generic text evaluation
+
+```bash
+python -m eval_tod text \
+  --predictions text_preds.json \
+  --references text_refs.json
+```
+
+This returns the unified text metrics used throughout the repo:
+- `BERTScore`
+- `BLEU-1` / `BLEU-4`
+- `ROUGE-1` / `ROUGE-2` / `ROUGE-L`
+
+### ABCD evaluation
+
+```bash
+python -m eval_tod abcd \
+  --data_path data/eval/abcd/data \
+  --split test \
+  --text-predictions text_predictions.json \
+  --abcd-predictions abcd_predictions.json
+```
+
+For ABCD we evaluate two output channels separately under one interface:
+- Natural-language response text -> `BERTScore`, `BLEU`, `ROUGE`
+- Action-slot predictions -> `AST` and `CDS`
+
+The helper layer used by older scripts is in [`eval_tod/cli.py`](/D:/paper/Skill_Baseline/eval_tod/cli.py):
+- `evaluate_text_records(...)`
+- `evaluate_abcd_bundle(...)`
+
+This keeps metric definitions, prediction alignment, and summary formatting in
+one place.
+
+## ABCD Trace2Skill Pipeline
+
+The original `Trace2Skill` pipeline in this repo is still the MultiWOZ-style
+slot/success workflow. For ABCD we now keep a separate AST-driven pipeline:
+
+```bash
+python scripts/run_trace2skill_abcd.py --max-train 200 --max-test 100
+```
+
+This pipeline:
+
+1. runs a seed ABCD agent with `predict_actions=True`
+2. evaluates turn-level predictions with `AST` / `CDS`
+3. treats `AST < 1.0` dialogues as failures
+4. sends those failures into Trace2Skill-style error analysis and skill evolution
+5. compares seed vs evolved skill on test `AST`
+
+Seed skill path:
+
+[`eval_tod/skills/abcd_trace2skill/SKILL.md`](/D:/paper/Skill_Baseline/eval_tod/skills/abcd_trace2skill/SKILL.md)
 
 ## Agent Types
 

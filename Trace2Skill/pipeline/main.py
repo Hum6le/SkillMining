@@ -388,7 +388,7 @@ def _run_batch_training_pipeline(
 # Script entry point
 # ══════════════════════════════════════════════════════════════════
 
-if __name__ == "__main__":
+def build_arg_parser():
     import argparse
 
     ap = argparse.ArgumentParser(
@@ -420,7 +420,6 @@ Examples:
     ap.add_argument("--output-dir", default="outputs/tod_pipeline")
     ap.add_argument("--data-path", default=None)
     ap.add_argument("--max-turns", type=int, default=6)
-    # Batch
     ap.add_argument("--batch-training", action="store_true")
     ap.add_argument("--batch-size", type=int, default=50)
     ap.add_argument("--checkpoint-every", type=int, default=None)
@@ -429,7 +428,45 @@ Examples:
     ap.add_argument("--test-split", default=None)
     ap.add_argument("--max-batches", type=int, default=None)
     ap.add_argument("--resume-from", default=None)
-    args = ap.parse_args()
+    return ap
+
+
+def config_from_args(args) -> PipelineConfig:
+    config = PipelineConfig()
+
+    if args.smoke_test:
+        config.apply_smoke_test()
+        return config
+
+    if args.split is not None:
+        config.split = args.split
+    config.start = args.start
+    if args.end is not None:
+        config.end = args.end
+    config.model = args.model
+    config.output_dir = args.output_dir
+    config.max_turns = args.max_turns
+    if args.data_path is not None:
+        config.data_path = args.data_path
+    if args.no_judge:
+        config.llm_judge = False
+    config.llm_judge_sample = args.judge_sample
+    config.batch_training = args.batch_training
+    config.batch_size = args.batch_size
+    config.checkpoint_every = args.checkpoint_every
+    config.val_every = args.val_every
+    if args.val_split:
+        config.val_split = args.val_split
+    if args.test_split:
+        config.test_split = args.test_split
+    config.max_batches = args.max_batches
+    config.resume_from = args.resume_from
+    return config
+
+
+def main(argv: list[str] | None = None) -> PipelineResult:
+    parser = build_arg_parser()
+    args = parser.parse_args(argv)
 
     logging.basicConfig(
         level=logging.INFO,
@@ -437,35 +474,7 @@ Examples:
         datefmt="%H:%M:%S",
     )
 
-    config = PipelineConfig()
-
-    if args.smoke_test:
-        config.apply_smoke_test()
-    else:
-        if args.split is not None:
-            config.split = args.split
-        config.start = args.start
-        if args.end is not None:
-            config.end = args.end
-        config.model = args.model
-        config.output_dir = args.output_dir
-        config.max_turns = args.max_turns
-        if args.data_path is not None:
-            config.data_path = args.data_path
-        if args.no_judge:
-            config.llm_judge = False
-        config.llm_judge_sample = args.judge_sample
-        config.batch_training = args.batch_training
-        config.batch_size = args.batch_size
-        config.checkpoint_every = args.checkpoint_every
-        config.val_every = args.val_every
-        if args.val_split:
-            config.val_split = args.val_split
-        if args.test_split:
-            config.test_split = args.test_split
-        config.max_batches = args.max_batches
-        config.resume_from = args.resume_from
-
+    config = config_from_args(args)
     result = run_pipeline(config)
     if config.batch_training and not config.smoke_test:
         print(f"\nSeed    test: IR={result.seed_eval['aggregate']['info_rate']:.3f}  "
@@ -478,3 +487,8 @@ Examples:
         if result.had_failures:
             print(f"Evolved:  IR={result.evolved_eval['aggregate']['info_rate']:.3f}  "
                   f"SR={result.evolved_eval['aggregate']['success_rate']:.3f}")
+    return result
+
+
+if __name__ == "__main__":
+    main()

@@ -40,6 +40,7 @@ sys.path.insert(0, str(_SKILL_DIR))
 
 from eval_tod.abcd.data import load_abcd_data
 from eval_tod.abcd.agent_skill import SkillSelectingAgent, compute_selection_accuracy
+from eval_tod.cli import evaluate_abcd_bundle
 from skill_mining.abcd_session_hg import (
     SessionHypergraph,
     greedy_vertex_cover,
@@ -218,31 +219,58 @@ def main():
     log.info("=" * 50)
     log.info("Running full evaluation...")
 
-    # 5a. Text metrics (ROUGE / BLEU / BERT)
-    from eval_tod import evaluate_all
-    log.info("\n--- Text Metrics ---")
-    result = evaluate_all(eval_convs, text_preds, dataset_name="abcd")
+    eval_payload = evaluate_abcd_bundle(
+        eval_convs,
+        text_records=[
+            {
+                "dialogue_id": p.dialogue_id,
+                "response_text": p.response_text,
+            }
+            for p in text_preds
+        ],
+        abcd_records=[
+            {
+                "conversation_id": p.conversation_id,
+                "turns": [
+                    {
+                        "turn_index": t.turn_index,
+                        "turn_type": t.turn_type,
+                        "predicted_action": t.predicted_action,
+                        "predicted_slots": t.predicted_slots,
+                    }
+                    for t in p.turns
+                ],
+            }
+            for p in abcd_preds
+        ],
+        text_prediction_key="response_text",
+    )
 
-    text_metrics = result.get("text", {})
-    if text_metrics and "error" not in text_metrics:
-        log.info(f"  BERT-F1:  {text_metrics.get('bert_f1', 'N/A'):.4f}")
-        log.info(f"  BLEU-1:   {text_metrics.get('bleu_1', 'N/A'):.1f}")
-        log.info(f"  BLEU-4:   {text_metrics.get('bleu_4', 'N/A'):.1f}")
-        log.info(f"  ROUGE-1:  {text_metrics.get('rouge_1', 'N/A'):.4f}")
-        log.info(f"  ROUGE-2:  {text_metrics.get('rouge_2', 'N/A'):.4f}")
-        log.info(f"  ROUGE-L:  {text_metrics.get('rouge_l', 'N/A'):.4f}")
+    # 5a. Text metrics (ROUGE / BLEU / BERT)
+    log.info("\n--- Text Metrics ---")
+    text_metrics = eval_payload.get("text", {})
+    log.info(f"  BERT-F1:  {text_metrics.get('bert_f1', 'N/A'):.4f}")
+    log.info(f"  BLEU-1:   {text_metrics.get('bleu_1', 'N/A'):.1f}")
+    log.info(f"  BLEU-4:   {text_metrics.get('bleu_4', 'N/A'):.1f}")
+    log.info(f"  ROUGE-1:  {text_metrics.get('rouge_1', 'N/A'):.4f}")
+    log.info(f"  ROUGE-2:  {text_metrics.get('rouge_2', 'N/A'):.4f}")
+    log.info(f"  ROUGE-L:  {text_metrics.get('rouge_l', 'N/A'):.4f}")
 
     # 5b. AST / CDS
-    from eval_tod.abcd.data import extract_ground_truth
-    from eval_tod.abcd.metrics import evaluate_abcd
     log.info("\n--- AST / CDS ---")
-    all_gt = [extract_ground_truth(conv) for conv in eval_convs]
-    abcd_result = evaluate_abcd(all_gt, abcd_preds)
-    log.info(f"  AST Joint:       {abcd_result.ast.joint_accuracy:.4f}")
-    log.info(f"  AST Action Name: {abcd_result.ast.action_name_accuracy:.4f}")
-    log.info(f"  AST Slot Value:  {abcd_result.ast.slot_value_accuracy:.4f}")
-    log.info(f"  CDS Overall:     {abcd_result.cds.overall_cds:.4f}")
-    log.info(f"  Action turns:    {abcd_result.ast.total_action_turns}")
+    ast_cds = eval_payload.get("ast_cds", {})
+    alignment = eval_payload.get("abcd_alignment", {})
+    if alignment["num_missing"]:
+        log.warning(
+            "  Missing ABCD predictions for %d/%d conversations",
+            alignment["num_missing"],
+            alignment["num_conversations"],
+        )
+    log.info(f"  AST Joint:       {ast_cds.get('ast_joint', 'N/A'):.4f}")
+    log.info(f"  AST Action Name: {ast_cds.get('ast_action_name', 'N/A'):.4f}")
+    log.info(f"  AST Slot Value:  {ast_cds.get('ast_slot_value', 'N/A'):.4f}")
+    log.info(f"  CDS Overall:     {ast_cds.get('cds_overall', 'N/A'):.4f}")
+    log.info(f"  Action turns:    {ast_cds.get('num_action_turns', 'N/A')}")
 
     # 5c. Skill selection accuracy
     log.info("\n--- Skill Selection Accuracy ---")
@@ -268,13 +296,8 @@ def main():
             "has_metadata": len(skill_metadata) > 0,
         },
         "text_metrics": text_metrics,
-        "ast_cds": {
-            "ast_joint": abcd_result.ast.joint_accuracy,
-            "ast_action_name": abcd_result.ast.action_name_accuracy,
-            "ast_slot_value": abcd_result.ast.slot_value_accuracy,
-            "cds_overall": abcd_result.cds.overall_cds,
-            "num_action_turns": abcd_result.ast.total_action_turns,
-        },
+        "ast_cds": ast_cds,
+        "abcd_alignment": alignment,
         "skill_selection": sel_result,
         "selection_log": agent.selection_log,
     }
@@ -291,8 +314,8 @@ def main():
     log.info(f"  BERT-F1:  {text_metrics.get('bert_f1', 'N/A'):.4f}")
     log.info(f"  BLEU-4:   {text_metrics.get('bleu_4', 'N/A'):.1f}")
     log.info(f"  ROUGE-L:  {text_metrics.get('rouge_l', 'N/A'):.4f}")
-    log.info(f"  AST:      {abcd_result.ast.joint_accuracy:.4f}")
-    log.info(f"  CDS:      {abcd_result.cds.overall_cds:.4f}")
+    log.info(f"  AST:      {ast_cds.get('ast_joint', 'N/A'):.4f}")
+    log.info(f"  CDS:      {ast_cds.get('cds_overall', 'N/A'):.4f}")
     log.info(f"  Skill_Acc:{sel_result['accuracy']:.4f}")
 
 

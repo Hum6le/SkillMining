@@ -1,18 +1,18 @@
-#!/usr/bin/env python3
-r"""ABCD 完整实验：意图划分 → Seed Baseline → 训练 → 逐轮评估 → 对比。
+﻿#!/usr/bin/env python3
+r"""ABCD full experiment: intent split -> seed baseline -> training -> evaluation.
 
-流程：
-  1. 按 subflow 分层划分 train/test
-  2. Seed baseline：空 workflow，逐轮预测 + 评估
-  3. AWM 训练：batch 训练 + workflow induction
-  4. Trained 评估：用训练后的 workflow 逐轮预测 + 评估
-  5. 对比 seed vs trained
+Flow:
+  1. Split train/test by subflow.
+  2. Run a seed baseline with an empty workflow.
+  3. Train AWM in batches and induce workflows.
+  4. Evaluate the trained workflow turn by turn.
+  5. Compare seed vs trained.
 
-用法：
-  python scripts/run_full_experiment.py                          # 完整实验
-  python scripts/run_full_experiment.py --max-train-convs 200    # 小规模验证
-  python scripts/run_full_experiment.py --skip-training           # 只看 seed baseline
-  python scripts/run_full_experiment.py --resume-from <checkpoint_dir>  # 从 checkpoint 续跑
+Usage:
+  python scripts/run_full_experiment.py
+  python scripts/run_full_experiment.py --max-train-convs 200
+  python scripts/run_full_experiment.py --skip-training
+  python scripts/run_full_experiment.py --resume-from <checkpoint_dir>
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 from eval_tod.abcd.data import load_abcd_data
 from eval_tod.abcd.split import split_by_subflow, extract_all_agent_turns
 from eval_tod.abcd.agent import compute_ast_from_turn_results
-from eval_tod.text_eval import evaluate_responses
+from eval_tod.cli import evaluate_text_records
 
 ABCD_DIR = "data/eval/abcd/data"
 BATCH_SIZE = 20
@@ -59,20 +59,16 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
-# ═══════════════════════════════════════════════════════════════
-# Evaluation helpers
-# ═══════════════════════════════════════════════════════════════
-
 def evaluate_turn_results(
     turn_results: list[dict],
     conversations: list[dict],
     label: str,
 ) -> dict:
     """Run text + AST/CDS metrics on turn-level predictions."""
-    # ── Text metrics ──
+    # 鈹€鈹€ Text metrics 鈹€鈹€
     preds = [r["prediction"] for r in turn_results]
     refs = [r["reference"] for r in turn_results]
-    text_result = evaluate_responses(preds, refs)
+    text_result = evaluate_text_records(preds, refs)
 
     # Per-subflow text
     by_sf: dict[str, dict[str, list]] = defaultdict(lambda: {"preds": [], "refs": []})
@@ -85,24 +81,28 @@ def evaluate_turn_results(
     for sf, d in sorted(by_sf.items()):
         if len(d["preds"]) < 2:
             continue
-        r = evaluate_responses(d["preds"], d["refs"])
-        per_subflow[sf] = {"n": len(d["preds"]), "bert_f1": round(r.bert_f1, 4),
-                           "bleu_4": round(r.bleu_4, 1), "rouge_l": round(r.rouge_l, 4)}
+        r = evaluate_text_records(d["preds"], d["refs"])
+        per_subflow[sf] = {
+            "n": len(d["preds"]),
+            "bert_f1": round(r["bert_f1"], 4),
+            "bleu_4": round(r["bleu_4"], 1),
+            "rouge_l": round(r["rouge_l"], 4),
+        }
 
     result = {
         "label": label,
         "n": len(preds),
         "text": {
-            "bert_f1": round(text_result.bert_f1, 4),
-            "bleu_1": round(text_result.bleu_1, 1),
-            "bleu_4": round(text_result.bleu_4, 1),
-            "rouge_1": round(text_result.rouge_1, 4),
-            "rouge_l": round(text_result.rouge_l, 4),
+            "bert_f1": round(text_result["bert_f1"], 4),
+            "bleu_1": round(text_result["bleu_1"], 1),
+            "bleu_4": round(text_result["bleu_4"], 1),
+            "rouge_1": round(text_result["rouge_1"], 4),
+            "rouge_l": round(text_result["rouge_l"], 4),
         },
         "per_subflow": per_subflow,
     }
 
-    # ── AST / CDS (if action predictions available) ──
+    # 鈹€鈹€ AST / CDS (if action predictions available) 鈹€鈹€
     if any("predicted_action" in r for r in turn_results):
         try:
             from eval_tod.abcd.agent import turn_results_to_abcd_predictions
@@ -125,10 +125,6 @@ def evaluate_turn_results(
 
     return result
 
-
-# ═══════════════════════════════════════════════════════════════
-# Main experiment
-# ═══════════════════════════════════════════════════════════════
 
 def main():
     import argparse
@@ -153,12 +149,10 @@ def main():
     args = parser.parse_args()
 
     log.info("=" * 55)
-    log.info("FULL EXPERIMENT: Intent Split → Seed → Train → Eval")
+    log.info("FULL EXPERIMENT: Intent Split -> Seed -> Train -> Eval")
     log.info("=" * 55)
 
-    # ═══════════════════════════════════════════════════════════
     # 1. Load + Split data
-    # ═══════════════════════════════════════════════════════════
     if args.train_file and args.test_file:
         log.info("\n[1/4] Loading pre-split data...")
         train_convs = json.loads(Path(args.train_file).read_text(encoding="utf-8"))
@@ -196,10 +190,8 @@ def main():
     }
     (OUT_DIR / "split_info.json").write_text(json.dumps(split_info, indent=2, ensure_ascii=False))
 
-    # ═══════════════════════════════════════════════════════════
-    # 2. Seed Baseline
-    # ═══════════════════════════════════════════════════════════
-    seed_results = None
+    # 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?    # 2. Seed Baseline
+    # 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?    seed_results = None
     if not args.skip_seed:
         log.info("\n[2/4] Seed Baseline (no workflow, no memory)...")
         from eval_tod.abcd.agent import ABCDAgent
@@ -225,10 +217,8 @@ def main():
         (OUT_DIR / "seed_eval.json").write_text(
             json.dumps(seed_results, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    # ═══════════════════════════════════════════════════════════
-    # 3. Training
-    # ═══════════════════════════════════════════════════════════
-    trained_results = None
+    # 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?    # 3. Training
+    # 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?    trained_results = None
     if not args.skip_training:
         log.info("\n[3/4] AWM Batch Training...")
         from eval_tod.abcd.agent import ABCDAgent
@@ -280,7 +270,7 @@ def main():
 
             log.info(f"  Batch {batch_idx}/{len(batches)}: {len(batch)} dialogues")
 
-            # Turn-level predictions with actions → real AST scores
+            # Turn-level predictions with actions -> real AST scores
             turn_results = agent.generate_all_turn_predictions(
                 batch, predict_actions=True, verbose=False)
             eval_dicts = compute_ast_from_turn_results(batch, turn_results)
@@ -316,10 +306,8 @@ def main():
         agent.save_workflow(str(OUT_DIR / "awm_workflow.txt"))
         agent.save_memory(str(OUT_DIR / "awm_exemplars.json"))
 
-        # ═══════════════════════════════════════════════════════
-        # 4. Trained Evaluation
-        # ═══════════════════════════════════════════════════════
-        log.info("\n[4/4] Trained Evaluation (with workflow + memory)...")
+        # 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?        # 4. Trained Evaluation
+        # 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?        log.info("\n[4/4] Trained Evaluation (with workflow + memory)...")
         log.info(f"  Workflow: {len(agent.workflow)} lines, Memory: {len(agent.memory)} exemplars")
         # Log a sample of the workflow to verify it was loaded
         wf_sample = agent.workflow.text[:200] if agent.workflow else "(empty)"
@@ -347,9 +335,7 @@ def main():
         (OUT_DIR / "trained_eval.json").write_text(
             json.dumps(trained_results, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    # ═══════════════════════════════════════════════════════════
     # 5. Comparison
-    # ═══════════════════════════════════════════════════════════
     print(f"\n{'='*55}")
     print(f"EXPERIMENT RESULTS")
     print(f"{'='*55}")
@@ -380,7 +366,7 @@ def main():
         delta_bert = trained_results["text"]['bert_f1'] - seed_results["text"]['bert_f1']
         delta_bleu = trained_results["text"]['bleu_4'] - seed_results["text"]['bleu_4']
         delta_rouge = trained_results["text"]['rouge_l'] - seed_results["text"]['rouge_l']
-        print(f"\n  Δ (Trained - Seed):")
+        print(f"\n  Delta (Trained - Seed):")
         print(f"    BERT-F1:  {delta_bert:+.4f}")
         print(f"    BLEU-4:   {delta_bleu:+.1f}")
         print(f"    ROUGE-L:  {delta_rouge:+.4f}")
@@ -393,7 +379,7 @@ def main():
     # Per-subflow comparison
     if seed_results and trained_results:
         all_sf = set(seed_results.get("per_subflow", {})) | set(trained_results.get("per_subflow", {}))
-        print(f"\n  Per-Subflow Δ BERT-F1:")
+        print(f"\n  Per-Subflow Delta BERT-F1:")
         sf_deltas = []
         for sf in sorted(all_sf):
             seed_bert = seed_results.get("per_subflow", {}).get(sf, {}).get("bert_f1", 0)
@@ -402,7 +388,7 @@ def main():
                 sf_deltas.append((sf, seed_bert, train_bert, train_bert - seed_bert))
         sf_deltas.sort(key=lambda x: -x[3])
         for sf, seed_b, train_b, delta in sf_deltas[:10]:
-            print(f"    {sf:35s}  {seed_b:.4f} → {train_b:.4f}  ({delta:+.4f})")
+            print(f"    {sf:35s}  {seed_b:.4f} -> {train_b:.4f}  ({delta:+.4f})")
 
     # Save summary
     summary = {
@@ -421,3 +407,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
