@@ -52,7 +52,7 @@ DEFAULT_MODEL = "deepseek-chat"
 
 @dataclass
 class PipelineOutputs:
-    seed_eval: dict[str, Any]
+    seed_eval: dict[str, Any] | None
     evolved_eval: dict[str, Any]
     output_dir: Path
     evolved_skill_path: Path
@@ -438,23 +438,26 @@ def run_pipeline(args) -> PipelineOutputs:
     else:
         log.info("No train AST failures, skip evolution")
 
-    # Stage 4: seed test evaluation
-    log.info("Stage 4: seed evaluation on test")
-    seed_test_agent = _build_agent(model, seed_skill_text, response_logger)
-    seed_test_turns = seed_test_agent.generate_all_turn_predictions(
-        test_convs,
-        predict_actions=True,
-    )
-    seed_test_eval = _evaluate_turn_results(test_convs, seed_test_turns, "seed_test")
-    (out_dir / "seed_test_turns.json").write_text(
-        json.dumps(seed_test_turns, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    (out_dir / "seed_test_eval.json").write_text(
-        json.dumps(seed_test_eval, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    log.info("Seed test: %s", seed_test_eval["summary"])
+    seed_test_eval = None
+    if args.skip_seed_test:
+        log.info("Stage 4: skipping seed evaluation on test (--skip-seed-test)")
+    else:
+        log.info("Stage 4: seed evaluation on test")
+        seed_test_agent = _build_agent(model, seed_skill_text, response_logger)
+        seed_test_turns = seed_test_agent.generate_all_turn_predictions(
+            test_convs,
+            predict_actions=True,
+        )
+        seed_test_eval = _evaluate_turn_results(test_convs, seed_test_turns, "seed_test")
+        (out_dir / "seed_test_turns.json").write_text(
+            json.dumps(seed_test_turns, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        (out_dir / "seed_test_eval.json").write_text(
+            json.dumps(seed_test_eval, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        log.info("Seed test: %s", seed_test_eval["summary"])
 
     # Stage 5: evolved test evaluation
     log.info("Stage 5: evolved evaluation on test")
@@ -486,6 +489,7 @@ def run_pipeline(args) -> PipelineOutputs:
             "max_test": args.max_test,
             "model": model,
             "skill_path": str(seed_skill_path),
+            "skip_seed_test": args.skip_seed_test,
         },
         "seed_train": train_eval,
         "seed_test": seed_test_eval,
@@ -530,18 +534,26 @@ def main() -> None:
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--skill-path", default=DEFAULT_SKILL_PATH)
     parser.add_argument("--output-dir", default="outputs")
+    parser.add_argument(
+        "--skip-seed-test",
+        action="store_true",
+        help="Skip seed baseline evaluation on the test set",
+    )
     args = parser.parse_args()
 
     result = run_pipeline(args)
-    seed_ast = result.seed_eval["ast_cds"]["ast_joint"]
     evolved_ast = result.evolved_eval["ast_cds"]["ast_joint"]
     print("\n" + "=" * 60)
     print("ABCD TRACE2SKILL PIPELINE COMPLETE")
     print(f"Output:      {result.output_dir}")
     print(f"Skill:       {result.evolved_skill_path}")
-    print(f"Seed AST:    {seed_ast:.4f}")
+    if result.seed_eval is not None:
+        seed_ast = result.seed_eval["ast_cds"]["ast_joint"]
+        print(f"Seed AST:    {seed_ast:.4f}")
+        print(f"Delta AST:   {evolved_ast - seed_ast:+.4f}")
+    else:
+        print("Seed AST:    skipped")
     print(f"Evolved AST: {evolved_ast:.4f}")
-    print(f"Delta AST:   {evolved_ast - seed_ast:+.4f}")
     print("=" * 60)
 
 
