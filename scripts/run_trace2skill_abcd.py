@@ -43,7 +43,7 @@ from eval_tod.abcd.agent import turn_results_to_abcd_predictions
 from eval_tod.abcd.data import extract_ground_truth
 from eval_tod.cli import evaluate_text_records
 from eval_tod.response_logger import ResponseLogger
-from llm import _get_client, resolve_config
+from llm import chat
 
 ABCD_DIR = "data/eval/abcd/data"
 DEFAULT_SKILL_PATH = "eval_tod/skills/abcd_trace2skill/SKILL.md"
@@ -56,6 +56,25 @@ class PipelineOutputs:
     evolved_eval: dict[str, Any]
     output_dir: Path
     evolved_skill_path: Path
+
+
+class _ChatClientAdapter:
+    """Minimal adapter so Trace2Skill evolver can use the project's chat() API."""
+
+    def __init__(self, model: str, response_logger: ResponseLogger | None = None):
+        self.model = model
+        self.response_logger = response_logger
+
+    def chat(self, messages, settings=None) -> str:
+        temperature = getattr(settings, "temperature", 0.3) if settings is not None else 0.3
+        max_tokens = getattr(settings, "max_tokens", None) if settings is not None else None
+        return chat(
+            messages,
+            model=self.model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_logger=self.response_logger,
+        )
 
 
 def _load_conversations(args) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
@@ -294,14 +313,8 @@ def _run_skill_evolution(
     if not records:
         return []
 
-    evolver_client = _get_client(
-        model=model,
-        cache_tag="abcd_trace2skill",
-        response_logger=response_logger,
-    )
-
     evolver = ParallelSkillEvolver(
-        client=evolver_client,
+        client=_ChatClientAdapter(model=model, response_logger=response_logger),
         skill_dir=str(skill_path.parent),
         batch_size=1,
         merge_batch_size=5,
@@ -323,8 +336,7 @@ def _run_skill_evolution(
 
 
 def run_pipeline(args) -> PipelineOutputs:
-    model_cfg = resolve_config(model=args.model)
-    model = model_cfg["model"]
+    model = args.model
 
     train_convs, test_convs, source_info = _load_conversations(args)
     if args.max_train:
