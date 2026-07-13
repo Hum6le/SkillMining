@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shutil
 import subprocess
 import sys
@@ -51,6 +52,10 @@ ABCD_DIR = "data/eval/abcd/data"
 DEFAULT_SKILL_PATH = "eval_tod/skills/abcd_trace2skill/SKILL.md"
 DEFAULT_MODEL = "deepseek-chat"
 DEFAULT_LLM_QPS = 3.0
+_REPORT_ITEM_PATTERN = re.compile(
+    r"^#\s+(Failure Cause Item|Failure Memory Item)\s+(\d+)\s*\n",
+    re.MULTILINE,
+)
 
 
 class _RateLimitedChat:
@@ -431,6 +436,73 @@ Then output the analysis in this exact markdown format:
 Output at least one Failure Cause Item and one Failure Memory Item."""
 
 
+def _has_parseable_failure_items(report: str) -> bool:
+    """Return True when Trace2Skill's parser will find at least one item."""
+    return bool(_REPORT_ITEM_PATTERN.search(report))
+
+
+def _build_parseable_report_suffix(
+    case: dict[str, Any],
+    corrections: list[dict[str, Any]],
+    reason: str,
+) -> str:
+    """Create parser-compatible sections when the LLM report format drifts."""
+    first = (case.get("ast_mismatches") or [{}])[0]
+    first_correction = corrections[0] if corrections else {}
+    turn_index = first.get("action_turn_index", "?")
+    predicted_action = first.get("predicted_action")
+    predicted_slots = first.get("predicted_slots", [])
+    gold_action = first.get("gold_action") or first_correction.get("corrected_action", "")
+    gold_slots = first.get("gold_slots") or first_correction.get("corrected_slots", [])
+    return "\n".join([
+        "",
+        "<!-- Parser-compatible fallback appended by run_trace2skill_abcd.py.",
+        f"Reason: {reason}",
+        "-->",
+        "",
+        "# Failure Cause Item 1",
+        "## Title",
+        "Incorrect backend action or slot label for an ABCD action turn",
+        "## Description",
+        (
+            f"At action turn {turn_index}, the model predicted action {predicted_action!r} "
+            f"with slots {predicted_slots!r}, but AST verification requires action "
+            f"{gold_action!r} with ordered slots {gold_slots!r}."
+        ),
+        "## Content",
+        (
+            "Before writing the natural-language response, identify the exact backend "
+            "action label and ordered slot values required by the current subflow state. "
+            "Do not rely on a plausible response alone, because AST scores the backend "
+            "action and slot list directly."
+        ),
+        "## Relation to Skill",
+        (
+            "Add explicit action-slot tracking guidance: for each agent turn, decide the "
+            "next backend action first, copy slot values exactly from the dialogue or "
+            "scenario context, preserve slot order, and then make the response consistent "
+            "with that action."
+        ),
+        "",
+        "# Failure Memory Item 1",
+        "## Title",
+        "Verify action and ordered slots before response generation",
+        "## Description",
+        "ABCD failures can occur even when the response sounds reasonable if the backend label is wrong.",
+        "## Content",
+        (
+            "For action-bearing turns, treat the backend action and ordered slot list as "
+            "the primary prediction target. Generate the response only after the exact "
+            "action-slot pair has been selected."
+        ),
+        "## Skill Reflection",
+        (
+            "The skill should include a dedicated AST discipline section that prioritizes "
+            "exact action labels, exact slot values, and order-sensitive slot matching."
+        ),
+    ])
+
+
 def _build_verified_analysis_prompt(case: dict[str, Any], feedback: str | None = None) -> str:
     prompt = "\n".join([
         "## Failed ABCD Dialogue",
@@ -499,6 +571,8 @@ def _save_verified_report(
     case: dict[str, Any],
     report: str,
     verified: bool,
+    parseable: bool,
+    parse_repaired: bool,
 ) -> str:
     did = case.get("dialogue_id", "unknown").replace("/", "_").replace("\\", "_")
     case_dir = output_dir / did
@@ -507,12 +581,14 @@ def _save_verified_report(
     (case_dir / "verification.json").write_text(
         json.dumps({
             "verified": verified,
+            "parseable": parseable,
+            "parse_repaired": parse_repaired,
             "failure_log_path": case.get("failure_log_path"),
             "num_mismatches": len(case.get("ast_mismatches", [])),
         }, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
-    if verified:
+    if verified and parseable:
         (case_dir / "evaluate_passed.flag").write_text("passed\n", encoding="utf-8")
     return str(case_dir)
 
@@ -533,7 +609,10 @@ def _run_verified_abcd_error_analysis(
         print(f"  Verified ABCD analysis {idx}/{len(failed_cases)}: {case.get('dialogue_id', '?')}")
         report = ""
         verified = False
+        parseable = False
+        parse_repaired = False
         feedback: str | None = None
+        corrections: list[dict[str, Any]] = []
 
         for _ in range(max_rounds + 1):
             prompt = _build_verified_analysis_prompt(case, feedback)
@@ -552,16 +631,42 @@ def _run_verified_abcd_error_analysis(
                 case.get("ast_mismatches", []),
                 corrections,
             )
-            feedback = feedback_text
-            if verified:
+            parseable = _has_parseable_failure_items(report)
+            if verified and parseable:
                 break
+            feedback_parts = [feedback_text]
+            if verified and not parseable:
+                feedback_parts.append(
+                    "The corrections are locally verified, but the markdown analysis "
+                    "is not parseable. Use top-level headings exactly like "
+                    "`# Failure Cause Item 1` and `# Failure Memory Item 1`, followed by "
+                    "`## Title`, `## Description`, and `## Content` sections."
+                )
+            feedback = "\n".join(part for part in feedback_parts if part)
 
         if not report:
             report = _fallback_verified_report(case, feedback or "No LLM report was returned.")
+            parseable = _has_parseable_failure_items(report)
         elif not verified:
             report = report + "\n\n<!-- Local AST verification failed:\n" + (feedback or "") + "\n-->\n"
+            parseable = _has_parseable_failure_items(report)
+        elif not parseable:
+            report = report + _build_parseable_report_suffix(
+                case,
+                corrections,
+                "LLM output did not match Trace2Skill parser headings.",
+            )
+            parse_repaired = True
+            parseable = _has_parseable_failure_items(report)
 
-        output_paths.append(_save_verified_report(output_dir, case, report, verified))
+        output_paths.append(_save_verified_report(
+            output_dir,
+            case,
+            report,
+            verified,
+            parseable,
+            parse_repaired,
+        ))
 
     return output_paths
 
@@ -664,6 +769,30 @@ def _run_error_analysis(
         cwd=str(_TRACE2SKILL),
         check=True,
     )
+    records = json.loads(parsed_path.read_text(encoding="utf-8"))
+    if not records:
+        report_count = len(list(output_dir.glob("*/analysis_report.md")))
+        passed_count = len(list(output_dir.glob("*/evaluate_passed.flag")))
+        failed_parse_count = len(list((output_dir / "failed_to_parse").glob("*/analysis_report.md")))
+        debug = {
+            "error": "Parsed zero error-analysis records",
+            "output_dir": str(output_dir),
+            "parsed_path": str(parsed_path),
+            "analysis_reports": report_count,
+            "evaluate_passed_flags": passed_count,
+            "failed_to_parse_reports": failed_parse_count,
+            "hint": (
+                "The parser only keeps reports that have evaluate_passed.flag and "
+                "parser-compatible '# Failure Cause Item N' / '# Failure Memory Item N' sections."
+            ),
+        }
+        debug_path = output_dir.parent / f"{output_dir.name}_parse_debug.json"
+        debug_path.write_text(json.dumps(debug, indent=2, ensure_ascii=False), encoding="utf-8")
+        raise RuntimeError(
+            "Parsed zero error-analysis records. "
+            f"reports={report_count}, passed_flags={passed_count}, "
+            f"failed_to_parse={failed_parse_count}. Debug: {debug_path}"
+        )
     return parsed_path
 
 
