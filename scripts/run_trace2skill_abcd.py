@@ -21,6 +21,8 @@ import logging
 import shutil
 import subprocess
 import sys
+import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -48,6 +50,40 @@ from llm import chat
 ABCD_DIR = "data/eval/abcd/data"
 DEFAULT_SKILL_PATH = "eval_tod/skills/abcd_trace2skill/SKILL.md"
 DEFAULT_MODEL = "deepseek-chat"
+DEFAULT_LLM_QPS = 3.0
+
+
+class _RateLimitedChat:
+    """Thread-safe wrapper around llm.chat with a fixed minimum call interval."""
+
+    def __init__(self, chat_fn, qps: float):
+        self._chat_fn = chat_fn
+        self._min_interval = 1.0 / qps if qps and qps > 0 else 0.0
+        self._lock = threading.Lock()
+        self._next_allowed = 0.0
+
+    def __call__(self, *args, **kwargs):
+        if self._min_interval > 0:
+            with self._lock:
+                now = time.monotonic()
+                wait = self._next_allowed - now
+                if wait > 0:
+                    time.sleep(wait)
+                    now = time.monotonic()
+                self._next_allowed = now + self._min_interval
+        return self._chat_fn(*args, **kwargs)
+
+
+def _install_rate_limited_chat(qps: float):
+    """Patch llm.chat so all project calls in this process share one limiter."""
+    import llm
+
+    global chat
+    original_chat = llm.chat
+    limited_chat = _RateLimitedChat(original_chat, qps)
+    llm.chat = limited_chat
+    chat = limited_chat
+    return original_chat
 
 
 @dataclass
@@ -83,8 +119,8 @@ def _load_conversations(args) -> tuple[list[dict[str, Any]], list[dict[str, Any]
         raise ValueError("--train-file and --test-file must be provided together")
 
     if args.train_file and args.test_file:
-        train_path = Path(args.train_file)
-        test_path = Path(args.test_file)
+        train_path = Path(args.train_file).resolve()
+        test_path = Path(args.test_file).resolve()
         train_convs = json.loads(train_path.read_text(encoding="utf-8"))
         test_convs = json.loads(test_path.read_text(encoding="utf-8"))
         source_info = {
@@ -149,6 +185,7 @@ then produce a short natural-language response that matches that action.
 
 
 def _load_skill_text(skill_path: Path) -> str:
+    skill_path = skill_path.resolve()
     if not skill_path.exists():
         skill_path.parent.mkdir(parents=True, exist_ok=True)
         skill_path.write_text(_default_skill_text(), encoding="utf-8")
@@ -208,6 +245,327 @@ def _evaluate_turn_results(
     }
 
 
+def _build_ast_mismatch_report(
+    conversation: dict[str, Any],
+    turn_results: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], str]:
+    """Build a verified AST mismatch report using the same mapping as evaluation."""
+    convo_id = str(conversation.get("convo_id", "?"))
+    predictions = turn_results_to_abcd_predictions(turn_results, [conversation])
+    pred = predictions[0] if predictions else None
+    pred_by_idx = {p.turn_index: p for p in (pred.turns if pred else [])}
+    truths = extract_ground_truth(conversation)
+
+    agent_rows = sorted(turn_results, key=lambda row: row["turn_index"])
+    mismatches: list[dict[str, Any]] = []
+    report_lines = [
+        f"Conversation ID: {convo_id}",
+        "Each row below is scored exactly as AST scores it: action name and slot values must both match.",
+        "",
+    ]
+
+    for gt in truths:
+        if gt.turn_type != "action":
+            continue
+
+        mapped_agent = None
+        for row in agent_rows:
+            if row["turn_index"] < gt.turn_index:
+                mapped_agent = row
+            else:
+                break
+
+        turn_pred = pred_by_idx.get(gt.turn_index)
+        predicted_action = turn_pred.predicted_action if turn_pred else None
+        predicted_slots = turn_pred.predicted_slots if turn_pred else None
+        gold_slots = gt.slot_values or []
+        pred_slots = predicted_slots or []
+        action_ok = predicted_action == gt.action_name
+        slots_ok = pred_slots == gold_slots
+
+        if action_ok and slots_ok:
+            continue
+
+        item = {
+            "action_turn_index": gt.turn_index,
+            "source_agent_turn_index": mapped_agent.get("turn_index") if mapped_agent else None,
+            "source_agent_context": mapped_agent.get("context", "") if mapped_agent else "",
+            "source_agent_response": mapped_agent.get("prediction", "") if mapped_agent else "",
+            "reference_agent_response": mapped_agent.get("reference", "") if mapped_agent else "",
+            "predicted_action": predicted_action,
+            "predicted_slots": pred_slots,
+            "gold_action": gt.action_name,
+            "gold_slots": gold_slots,
+            "action_match": action_ok,
+            "slots_match": slots_ok,
+        }
+        mismatches.append(item)
+
+        report_lines.extend([
+            f"## Mismatch at action turn {gt.turn_index}",
+            f"- Source agent turn: {item['source_agent_turn_index']}",
+            f"- Predicted action: {predicted_action}",
+            f"- Gold action: {gt.action_name}",
+            f"- Predicted slots: {pred_slots}",
+            f"- Gold slots: {gold_slots}",
+            f"- Action match: {action_ok}",
+            f"- Slot match: {slots_ok}",
+            "- Source agent context:",
+            item["source_agent_context"][:1600],
+            f"- Source agent response: {item['source_agent_response']}",
+            f"- Reference agent response: {item['reference_agent_response']}",
+            "",
+        ])
+
+    return mismatches, "\n".join(report_lines)
+
+
+def _verify_corrected_actions(
+    mismatches: list[dict[str, Any]],
+    corrections: list[dict[str, Any]],
+) -> tuple[bool, str]:
+    """Check whether proposed corrections exactly fix the AST mismatches."""
+    correction_by_turn = {
+        int(c.get("turn_index")): c
+        for c in corrections
+        if str(c.get("turn_index", "")).isdigit()
+    }
+    feedback: list[str] = []
+    all_ok = True
+
+    for mismatch in mismatches:
+        turn_index = int(mismatch["action_turn_index"])
+        correction = correction_by_turn.get(turn_index)
+        if correction is None:
+            all_ok = False
+            feedback.append(f"turn {turn_index}: missing correction")
+            continue
+
+        corrected_action = correction.get("corrected_action")
+        corrected_slots = correction.get("corrected_slots") or []
+        if not isinstance(corrected_slots, list):
+            corrected_slots = [str(corrected_slots)]
+
+        action_ok = corrected_action == mismatch["gold_action"]
+        slots_ok = corrected_slots == mismatch["gold_slots"]
+        if not action_ok or not slots_ok:
+            all_ok = False
+            feedback.append(
+                "turn {turn}: expected action={gold_action!r}, slots={gold_slots!r}; "
+                "got action={action!r}, slots={slots!r}".format(
+                    turn=turn_index,
+                    gold_action=mismatch["gold_action"],
+                    gold_slots=mismatch["gold_slots"],
+                    action=corrected_action,
+                    slots=corrected_slots,
+                )
+            )
+
+    return all_ok, "\n".join(feedback) if feedback else "All proposed corrections exactly match AST gold labels."
+
+
+def _extract_corrections(report: str) -> list[dict[str, Any]]:
+    """Extract the corrections JSON block from a verified analysis report."""
+    import re
+
+    fenced = re.search(r"```json\s*(\{.*?\})\s*```", report, re.DOTALL)
+    payload = fenced.group(1) if fenced else ""
+    if not payload:
+        start = report.find("{")
+        end = report.rfind("}")
+        payload = report[start:end + 1] if start != -1 and end != -1 and end > start else ""
+    if not payload:
+        return []
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        return []
+    corrections = data.get("corrections", [])
+    return corrections if isinstance(corrections, list) else []
+
+
+_ABCD_VERIFIED_ANALYSIS_SYSTEM = """You are an expert failure-analysis agent for ABCD task-oriented dialogue action tracking.
+
+Your job is to diagnose why an agent failed AST (Action State Tracking), propose exact corrected action/slot labels for every mismatched action turn, and then write reusable skill lessons.
+
+AST is strict: a turn is correct only when the action name exactly matches and the slot value list exactly matches in order.
+
+You will receive a verified mismatch report. Do not guess beyond that report. Ground every cause in the provided context, predicted labels, and gold labels.
+
+First output a JSON block with exact corrections:
+```json
+{
+  "corrections": [
+    {
+      "turn_index": 0,
+      "corrected_action": "action-name",
+      "corrected_slots": ["slot1", "slot2"],
+      "reason": "short evidence-based reason"
+    }
+  ]
+}
+```
+
+Then output the analysis in this exact markdown format:
+
+# Failure Cause Item 1
+## Title
+<One-line summary>
+## Description
+<What went wrong, citing the mismatched turn and evidence>
+## Content
+<What the agent should do instead, stated as actionable skill guidance>
+## Relation to Skill
+<Concrete skill update suggestion>
+
+# Failure Memory Item 1
+## Title
+<Reusable pattern>
+## Description
+<When this pattern occurs>
+## Content
+<Concrete behavior to remember>
+## Skill Reflection
+<Where/how the skill should encode this lesson>
+
+Output at least one Failure Cause Item and one Failure Memory Item."""
+
+
+def _build_verified_analysis_prompt(case: dict[str, Any], feedback: str | None = None) -> str:
+    prompt = "\n".join([
+        "## Failed ABCD Dialogue",
+        f"Dialogue ID: {case.get('dialogue_id', 'N/A')}",
+        f"Subflow: {case.get('domains', [])}",
+        "",
+        "## Scenario",
+        case.get("goal_description", "")[:2000],
+        "",
+        "## AST Summary",
+        f"Dialogue AST: {case.get('info_rate', 'N/A')}",
+        f"Joint correct: {case.get('inform_correct', '?')}/{case.get('inform_total', '?')}",
+        "",
+        "## Verified AST Mismatch Report",
+        case.get("ast_mismatch_report", "")[:9000],
+        "",
+        "## Full Trajectory",
+        case.get("trajectory", "")[:5000],
+    ])
+    if feedback:
+        prompt += "\n\n## Local Verification Feedback\n" + feedback
+        prompt += "\nRevise the corrections JSON so every corrected action and corrected_slots exactly matches the verified AST labels."
+    return prompt
+
+
+def _fallback_verified_report(case: dict[str, Any], feedback: str) -> str:
+    first = (case.get("ast_mismatches") or [{}])[0]
+    return "\n".join([
+        "```json",
+        json.dumps({"corrections": []}, indent=2),
+        "```",
+        "",
+        "# Failure Cause Item 1",
+        "## Title",
+        "AST mismatch analysis was not locally verified",
+        "## Description",
+        f"The analyzer did not produce corrections that passed local AST verification. {feedback}",
+        "## Content",
+        (
+            "For each action turn, compare the predicted action name and ordered slot list "
+            "against the verified AST labels before updating the skill."
+        ),
+        "## Relation to Skill",
+        (
+            "Add explicit guidance that ABCD actions must be selected as exact backend action "
+            "labels with ordered slot values, not inferred from response text alone."
+        ),
+        "",
+        "# Failure Memory Item 1",
+        "## Title",
+        "Verify action and slot labels before response wording",
+        "## Description",
+        "ABCD AST failures often come from plausible responses paired with incorrect backend labels.",
+        "## Content",
+        (
+            f"On action turn {first.get('action_turn_index', '?')}, first determine the exact "
+            "backend action and ordered slots, then write the response to match that decision."
+        ),
+        "## Skill Reflection",
+        "The skill should prioritize exact action-slot tracking before natural-language response generation.",
+    ])
+
+
+def _save_verified_report(
+    output_dir: Path,
+    case: dict[str, Any],
+    report: str,
+    verified: bool,
+) -> str:
+    did = case.get("dialogue_id", "unknown").replace("/", "_").replace("\\", "_")
+    case_dir = output_dir / did
+    case_dir.mkdir(parents=True, exist_ok=True)
+    (case_dir / "analysis_report.md").write_text(report, encoding="utf-8")
+    (case_dir / "verification.json").write_text(
+        json.dumps({
+            "verified": verified,
+            "failure_log_path": case.get("failure_log_path"),
+            "num_mismatches": len(case.get("ast_mismatches", [])),
+        }, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    if verified:
+        (case_dir / "evaluate_passed.flag").write_text("passed\n", encoding="utf-8")
+    return str(case_dir)
+
+
+def _run_verified_abcd_error_analysis(
+    failed_cases: list[dict[str, Any]],
+    output_dir: Path,
+    model: str,
+    response_logger: ResponseLogger,
+    *,
+    max_rounds: int = 2,
+) -> list[str]:
+    output_dir = output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_paths: list[str] = []
+
+    for idx, case in enumerate(failed_cases, start=1):
+        print(f"  Verified ABCD analysis {idx}/{len(failed_cases)}: {case.get('dialogue_id', '?')}")
+        report = ""
+        verified = False
+        feedback: str | None = None
+
+        for _ in range(max_rounds + 1):
+            prompt = _build_verified_analysis_prompt(case, feedback)
+            report = chat(
+                [
+                    {"role": "system", "content": _ABCD_VERIFIED_ANALYSIS_SYSTEM},
+                    {"role": "user", "content": prompt},
+                ],
+                model=model,
+                temperature=0.2,
+                max_tokens=4096,
+                response_logger=response_logger,
+            ).strip()
+            corrections = _extract_corrections(report)
+            verified, feedback_text = _verify_corrected_actions(
+                case.get("ast_mismatches", []),
+                corrections,
+            )
+            feedback = feedback_text
+            if verified:
+                break
+
+        if not report:
+            report = _fallback_verified_report(case, feedback or "No LLM report was returned.")
+        elif not verified:
+            report = report + "\n\n<!-- Local AST verification failed:\n" + (feedback or "") + "\n-->\n"
+
+        output_paths.append(_save_verified_report(output_dir, case, report, verified))
+
+    return output_paths
+
+
 def _build_ast_failure_cases(
     conversations: list[dict[str, Any]],
     turn_results: list[dict[str, Any]],
@@ -215,6 +573,9 @@ def _build_ast_failure_cases(
     *,
     log_dir: Path,
 ) -> list[dict[str, Any]]:
+    log_dir = log_dir.resolve()
+    log_dir.mkdir(parents=True, exist_ok=True)
+
     by_convo: dict[str, list[dict[str, Any]]] = {}
     for row in turn_results:
         by_convo.setdefault(str(row["convo_id"]), []).append(row)
@@ -226,6 +587,7 @@ def _build_ast_failure_cases(
 
         convo_id = str(conv.get("convo_id", "?"))
         turns = sorted(by_convo.get(convo_id, []), key=lambda x: x["turn_index"])
+        ast_mismatches, ast_mismatch_report = _build_ast_mismatch_report(conv, turns)
         trajectory_lines = []
         for row in turns:
             trajectory_lines.append(f"[Context upto turn {row['turn_index']}]")
@@ -241,6 +603,7 @@ def _build_ast_failure_cases(
         log_payload = {
             "convo_id": convo_id,
             "ast_score": ast.get("ast_score", 0.0),
+            "ast_mismatches": ast_mismatches,
             "turn_results": turns,
         }
         log_path.write_text(
@@ -250,6 +613,9 @@ def _build_ast_failure_cases(
 
         failed_cases.append({
             "dialogue_id": f"abcd-{convo_id}",
+            "failure_log_path": str(log_path),
+            "ast_mismatches": ast_mismatches,
+            "ast_mismatch_report": ast_mismatch_report,
             "domains": [str(conv.get("scenario", {}).get("subflow", "unknown"))],
             "goal_description": json.dumps(conv.get("scenario", {}), ensure_ascii=False),
             "info_rate": ast.get("ast_score", 0.0),
@@ -277,16 +643,17 @@ def _run_error_analysis(
     model: str,
     response_logger: ResponseLogger,
 ) -> Path:
-    from eval_tod.error_analysis import ErrorAnalyzer
+    output_dir = output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    analyzer = ErrorAnalyzer(
-        model=model,
-        workers=4,
-        response_logger=response_logger,
+    _run_verified_abcd_error_analysis(
+        failed_cases,
+        output_dir,
+        model,
+        response_logger,
     )
-    analyzer.analyze_batch(failed_cases, output_dir=str(output_dir))
 
-    parsed_path = output_dir.parent / f"{output_dir.name}_parsed.json"
+    parsed_path = (output_dir.parent / f"{output_dir.name}_parsed.json").resolve()
     subprocess.run(
         [
             sys.executable,
@@ -309,6 +676,11 @@ def _run_skill_evolution(
 ) -> list[str]:
     from skill_evolver.parallel_evolving_agent import ParallelSkillEvolver
 
+    records_path = records_path.resolve()
+    skill_path = skill_path.resolve()
+    output_dir = output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     records = json.loads(records_path.read_text(encoding="utf-8"))
     if not records:
         return []
@@ -318,7 +690,7 @@ def _run_skill_evolution(
         skill_dir=str(skill_path.parent),
         batch_size=1,
         merge_batch_size=5,
-        max_workers=4,
+        max_workers=3,
         max_merge_levels=5,
         temperature=0.3,
         max_tokens=None,
@@ -337,6 +709,7 @@ def _run_skill_evolution(
 
 def run_pipeline(args) -> PipelineOutputs:
     model = args.model
+    _install_rate_limited_chat(args.llm_qps)
 
     train_convs, test_convs, source_info = _load_conversations(args)
     if args.max_train:
@@ -345,7 +718,7 @@ def run_pipeline(args) -> PipelineOutputs:
         test_convs = test_convs[:args.max_test]
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    out_dir = Path(args.output_dir) / f"abcd_trace2skill_{timestamp}"
+    out_dir = (Path(args.output_dir) / f"abcd_trace2skill_{timestamp}").resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
     logging.basicConfig(
@@ -361,7 +734,7 @@ def run_pipeline(args) -> PipelineOutputs:
 
     response_logger = ResponseLogger(out_dir / "llm_responses")
 
-    seed_skill_path = Path(args.skill_path)
+    seed_skill_path = Path(args.skill_path).resolve()
     seed_skill_text = _load_skill_text(seed_skill_path)
     evolved_skill_dir = out_dir / "evolved_skill"
     evolved_skill_dir.mkdir(parents=True, exist_ok=True)
@@ -384,6 +757,7 @@ def run_pipeline(args) -> PipelineOutputs:
             source_info["train_split"],
             source_info["test_split"],
         )
+    log.info("LLM rate limit: %.2f QPS", args.llm_qps)
 
     # Stage 1: seed run on training set to mine failures
     log.info("Stage 1: seed run on training set")
@@ -488,6 +862,7 @@ def run_pipeline(args) -> PipelineOutputs:
             "max_train": args.max_train,
             "max_test": args.max_test,
             "model": model,
+            "llm_qps": args.llm_qps,
             "skill_path": str(seed_skill_path),
             "skip_seed_test": args.skip_seed_test,
         },
@@ -532,6 +907,12 @@ def main() -> None:
     parser.add_argument("--max-train", type=int, default=200)
     parser.add_argument("--max-test", type=int, default=100)
     parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument(
+        "--llm-qps",
+        type=float,
+        default=DEFAULT_LLM_QPS,
+        help="Maximum LLM requests per second in this process; set <=0 to disable",
+    )
     parser.add_argument("--skill-path", default=DEFAULT_SKILL_PATH)
     parser.add_argument("--output-dir", default="outputs")
     parser.add_argument(
