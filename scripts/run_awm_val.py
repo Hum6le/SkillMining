@@ -55,7 +55,7 @@ def main():
     parser.add_argument("--model", default=MODEL)
     parser.add_argument("--max_turns", type=int, default=MAX_TURNS)
     parser.add_argument("--eval_mode", default="both", choices=["slot", "text", "both"],
-                        help="Evaluation mode: slot (IR/SR only), text (BERTScore/BLEU/ROUGE), both")
+                        help="Evaluation mode: slot (IR/SR only), text (BERTScore/BLEU/ROUGE/METEOR), both")
     parser.add_argument("--output_dir", default=None,
                         help="Custom output dir (default: auto-generated under outputs/)")
     args = parser.parse_args()

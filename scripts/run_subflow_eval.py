@@ -229,8 +229,12 @@ def evaluate_agent_on_subflow(
         "n_turns": len(preds),
         "text": {
             "bert_f1": round(text_result["bert_f1"], 4),
+            "bleu_1": round(text_result["bleu_1"], 1),
             "bleu_4": round(text_result["bleu_4"], 1),
+            "rouge_1": round(text_result["rouge_1"], 4),
+            "rouge_2": round(text_result["rouge_2"], 4),
             "rouge_l": round(text_result["rouge_l"], 4),
+            "meteor": round(text_result["meteor"], 4),
         },
         "ast_mean": round(ast_mean, 4),
     }
@@ -374,7 +378,10 @@ def main():
             seed_result = evaluate_agent_on_subflow(
                 seed_agent, test_convs, "seed", subflow, save_dir=sf_out)
             log.info(f"    BERT={seed_result['text']['bert_f1']:.4f}  "
-                     f"BLEU-4={seed_result['text']['bleu_4']:.1f}  AST={seed_result['ast_mean']:.4f}")
+                     f"BLEU-4={seed_result['text']['bleu_4']:.1f}  "
+                     f"ROUGE-L={seed_result['text']['rouge_l']:.4f}  "
+                     f"METEOR={seed_result['text']['meteor']:.4f}  "
+                     f"AST={seed_result['ast_mean']:.4f}")
 
         # ── 4. Mined Skill ────────────────────────────────────
         log.info("  Mined skill evaluation...")
@@ -392,7 +399,10 @@ def main():
         mined_result = evaluate_agent_on_subflow(
             mined_agent, test_convs, "mined", subflow, save_dir=sf_out)
         log.info(f"    BERT={mined_result['text']['bert_f1']:.4f}  "
-                 f"BLEU-4={mined_result['text']['bleu_4']:.1f}  AST={mined_result['ast_mean']:.4f}")
+                 f"BLEU-4={mined_result['text']['bleu_4']:.1f}  "
+                 f"ROUGE-L={mined_result['text']['rouge_l']:.4f}  "
+                 f"METEOR={mined_result['text']['meteor']:.4f}  "
+                 f"AST={mined_result['ast_mean']:.4f}")
 
         # ── 5. Delta ──────────────────────────────────────────
         delta = {}
@@ -420,7 +430,7 @@ def main():
     if has_seed:
         print(f"{'Subflow':35s} {'ΔBERT':>8s} {'ΔAST':>8s} {'Seed':>8s} {'Mined':>8s}")
     else:
-        print(f"{'Subflow':35s} {'BERT':>8s} {'BLEU-4':>8s} {'AST':>8s}")
+        print(f"{'Subflow':35s} {'BERT':>8s} {'BLEU-4':>8s} {'ROUGE-L':>8s} {'METEOR':>8s} {'AST':>8s}")
     print("-" * 72)
     for sf, r in sorted(all_results.items(),
                         key=lambda x: -(x[1]["mined"]["text"]["bert_f1"])):
@@ -430,7 +440,9 @@ def main():
             s = r["seed"]["text"]["bert_f1"]
             print(f"{sf:35s} {d.get('bert_f1', 0):+.4f} {d.get('ast', 0):+.4f} {s:.4f} {m:.4f}")
         else:
-            print(f"{sf:35s} {m:.4f} {r['mined']['text']['bleu_4']:6.1f} "
+            print(f"{sf:35s} {m:.4f} {r['mined']['text']['bleu_4']:8.1f} "
+                  f"{r['mined']['text']['rouge_l']:8.4f} "
+                  f"{r['mined']['text']['meteor']:8.4f} "
                   f"{r['mined']['ast_mean']:.4f}")
 
     (OUT_DIR / "summary.json").write_text(

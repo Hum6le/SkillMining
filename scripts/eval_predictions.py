@@ -93,6 +93,7 @@ def main():
         print(f"    ROUGE-1:    {text.get('rouge_1', 'N/A'):.4f}")
         print(f"    ROUGE-2:    {text.get('rouge_2', 'N/A'):.4f}")
         print(f"    ROUGE-L:    {text.get('rouge_l', 'N/A'):.4f}")
+        print(f"    METEOR:     {text.get('meteor', 'N/A'):.4f}")
 
     ast_cds = result.get("ast_cds", {})
     if ast_cds and "error" not in ast_cds:

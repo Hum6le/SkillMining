@@ -240,6 +240,7 @@ def evaluate_all(
                     "rouge_1": text_result.rouge_1,
                     "rouge_2": text_result.rouge_2,
                     "rouge_l": text_result.rouge_l,
+                    "meteor": text_result.meteor,
                     "num_samples": text_result.num_samples,
                     "per_sample": text_result.per_sample,
                 }
@@ -280,7 +281,8 @@ def evaluate_all(
         parts.append(
             f"BERT-F1={result['text']['bert_f1']:.4f} "
             f"BLEU-4={result['text']['bleu_4']:.1f} "
-            f"ROUGE-L={result['text']['rouge_l']:.4f}"
+            f"ROUGE-L={result['text']['rouge_l']:.4f} "
+            f"METEOR={result['text']['meteor']:.4f}"
         )
     if "ast_cds" in result and "error" not in result["ast_cds"]:
         parts.append(

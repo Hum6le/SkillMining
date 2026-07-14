@@ -244,8 +244,12 @@ def _evaluate_turn_results(
         "num_turns": len(turn_results),
         "text": {
             "bert_f1": round(text_eval["bert_f1"], 4),
+            "bleu_1": round(text_eval["bleu_1"], 1),
             "bleu_4": round(text_eval["bleu_4"], 1),
+            "rouge_1": round(text_eval["rouge_1"], 4),
+            "rouge_2": round(text_eval["rouge_2"], 4),
             "rouge_l": round(text_eval["rouge_l"], 4),
+            "meteor": round(text_eval["meteor"], 4),
         },
         "ast_cds": {
             "ast_joint": round(abcd_eval.ast.joint_accuracy, 4),
@@ -259,7 +263,10 @@ def _evaluate_turn_results(
             f"Action={abcd_eval.ast.action_name_accuracy:.4f} "
             f"Slot={abcd_eval.ast.slot_value_accuracy:.4f} "
             f"CDS={abcd_eval.cds.overall_cds:.4f} "
-            f"BERT-F1={text_eval['bert_f1']:.4f}"
+            f"BERT-F1={text_eval['bert_f1']:.4f} "
+            f"BLEU-4={text_eval['bleu_4']:.1f} "
+            f"ROUGE-L={text_eval['rouge_l']:.4f} "
+            f"METEOR={text_eval['meteor']:.4f}"
         ),
     }
 

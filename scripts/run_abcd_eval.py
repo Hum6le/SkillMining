@@ -255,6 +255,7 @@ def main():
     log.info(f"  ROUGE-1:  {text_metrics.get('rouge_1', 'N/A'):.4f}")
     log.info(f"  ROUGE-2:  {text_metrics.get('rouge_2', 'N/A'):.4f}")
     log.info(f"  ROUGE-L:  {text_metrics.get('rouge_l', 'N/A'):.4f}")
+    log.info(f"  METEOR:   {text_metrics.get('meteor', 'N/A'):.4f}")
 
     # 5b. AST / CDS
     log.info("\n--- AST / CDS ---")
@@ -314,6 +315,7 @@ def main():
     log.info(f"  BERT-F1:  {text_metrics.get('bert_f1', 'N/A'):.4f}")
     log.info(f"  BLEU-4:   {text_metrics.get('bleu_4', 'N/A'):.1f}")
     log.info(f"  ROUGE-L:  {text_metrics.get('rouge_l', 'N/A'):.4f}")
+    log.info(f"  METEOR:   {text_metrics.get('meteor', 'N/A'):.4f}")
     log.info(f"  AST:      {ast_cds.get('ast_joint', 'N/A'):.4f}")
     log.info(f"  CDS:      {ast_cds.get('cds_overall', 'N/A'):.4f}")
     log.info(f"  Skill_Acc:{sel_result['accuracy']:.4f}")

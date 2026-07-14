@@ -77,7 +77,7 @@ def evaluate_turns(
     log.info(f"Evaluating {len(predictions)} turn predictions ({label})...")
     text_result = evaluate_responses(predictions, references)
     log.info(f"  BERT-F1={text_result.bert_f1:.4f}  BLEU-4={text_result.bleu_4:.1f}  "
-             f"ROUGE-L={text_result.rouge_l:.4f}")
+             f"ROUGE-L={text_result.rouge_l:.4f}  METEOR={text_result.meteor:.4f}")
 
     # Per-subflow breakdown
     by_subflow: dict[str, dict[str, list]] = defaultdict(lambda: {"preds": [], "refs": []})
@@ -94,8 +94,12 @@ def evaluate_turns(
         per_subflow[sf] = {
             "n": len(data["preds"]),
             "bert_f1": round(sf_result.bert_f1, 4),
+            "bleu_1": round(sf_result.bleu_1, 1),
             "bleu_4": round(sf_result.bleu_4, 1),
+            "rouge_1": round(sf_result.rouge_1, 4),
+            "rouge_2": round(sf_result.rouge_2, 4),
             "rouge_l": round(sf_result.rouge_l, 4),
+            "meteor": round(sf_result.meteor, 4),
         }
 
     # Per-position breakdown (1st agent turn, 2nd, ...)
@@ -113,8 +117,12 @@ def evaluate_turns(
         per_position[pos] = {
             "n": len(data["preds"]),
             "bert_f1": round(pos_result.bert_f1, 4),
+            "bleu_1": round(pos_result.bleu_1, 1),
             "bleu_4": round(pos_result.bleu_4, 1),
+            "rouge_1": round(pos_result.rouge_1, 4),
+            "rouge_2": round(pos_result.rouge_2, 4),
             "rouge_l": round(pos_result.rouge_l, 4),
+            "meteor": round(pos_result.meteor, 4),
         }
 
     return {
@@ -129,6 +137,7 @@ def evaluate_turns(
             "rouge_1": round(text_result.rouge_1, 4),
             "rouge_2": round(text_result.rouge_2, 4),
             "rouge_l": round(text_result.rouge_l, 4),
+            "meteor": round(text_result.meteor, 4),
         },
         "per_subflow": per_subflow,
         "per_position": per_position,
@@ -146,14 +155,17 @@ def print_results(results: dict):
     print(f"  BLEU-1:     {ov['bleu_1']:.1f}")
     print(f"  BLEU-4:     {ov['bleu_4']:.1f}")
     print(f"  ROUGE-1:    {ov['rouge_1']:.4f}")
+    print(f"  ROUGE-2:    {ov['rouge_2']:.4f}")
     print(f"  ROUGE-L:    {ov['rouge_l']:.4f}")
+    print(f"  METEOR:     {ov['meteor']:.4f}")
 
     # Per-position
     print(f"\n  Per Agent Turn Position:")
     for pos in sorted(results.get("per_position", {}).keys()):
         p = results["per_position"][pos]
         print(f"    Turn #{pos}:  n={p['n']:5d}  "
-              f"BERT={p['bert_f1']:.4f}  BLEU-4={p['bleu_4']:.1f}  ROUGE-L={p['rouge_l']:.4f}")
+              f"BERT={p['bert_f1']:.4f}  BLEU-4={p['bleu_4']:.1f}  "
+              f"ROUGE-L={p['rouge_l']:.4f}  METEOR={p['meteor']:.4f}")
 
     # Top/bottom subflows
     ps = results.get("per_subflow", {})

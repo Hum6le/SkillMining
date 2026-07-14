@@ -85,8 +85,12 @@ def evaluate_turn_results(
         per_subflow[sf] = {
             "n": len(d["preds"]),
             "bert_f1": round(r["bert_f1"], 4),
+            "bleu_1": round(r["bleu_1"], 1),
             "bleu_4": round(r["bleu_4"], 1),
+            "rouge_1": round(r["rouge_1"], 4),
+            "rouge_2": round(r["rouge_2"], 4),
             "rouge_l": round(r["rouge_l"], 4),
+            "meteor": round(r["meteor"], 4),
         }
 
     result = {
@@ -97,7 +101,9 @@ def evaluate_turn_results(
             "bleu_1": round(text_result["bleu_1"], 1),
             "bleu_4": round(text_result["bleu_4"], 1),
             "rouge_1": round(text_result["rouge_1"], 4),
+            "rouge_2": round(text_result["rouge_2"], 4),
             "rouge_l": round(text_result["rouge_l"], 4),
+            "meteor": round(text_result["meteor"], 4),
         },
         "per_subflow": per_subflow,
     }
@@ -207,7 +213,7 @@ def main():
 
         _s = seed_results
         log.info(f"  Seed: BERT-F1={_s['text']['bert_f1']:.4f}  BLEU-4={_s['text']['bleu_4']:.1f}  "
-                 f"ROUGE-L={_s['text']['rouge_l']:.4f}"
+                 f"ROUGE-L={_s['text']['rouge_l']:.4f}  METEOR={_s['text']['meteor']:.4f}"
                  + (f"  AST={_s['ast_cds']['ast_joint']:.4f}  CDS={_s['ast_cds']['cds_overall']:.4f}"
                     if 'ast_cds' in _s and 'error' not in _s['ast_cds'] else ""))
 
@@ -326,7 +332,7 @@ def main():
 
         _t = trained_results
         log.info(f"  Trained: BERT-F1={_t['text']['bert_f1']:.4f}  BLEU-4={_t['text']['bleu_4']:.1f}  "
-                 f"ROUGE-L={_t['text']['rouge_l']:.4f}"
+                 f"ROUGE-L={_t['text']['rouge_l']:.4f}  METEOR={_t['text']['meteor']:.4f}"
                  + (f"  AST={_t['ast_cds']['ast_joint']:.4f}  CDS={_t['ast_cds']['cds_overall']:.4f}"
                     if 'ast_cds' in _t and 'error' not in _t['ast_cds'] else ""))
 
@@ -344,8 +350,12 @@ def main():
         st = seed_results["text"]
         print(f"\n  Seed Baseline (no training):")
         print(f"    BERT-F1:  {st['bert_f1']:.4f}")
+        print(f"    BLEU-1:   {st['bleu_1']:.1f}")
         print(f"    BLEU-4:   {st['bleu_4']:.1f}")
+        print(f"    ROUGE-1:  {st['rouge_1']:.4f}")
+        print(f"    ROUGE-2:  {st['rouge_2']:.4f}")
         print(f"    ROUGE-L:  {st['rouge_l']:.4f}")
+        print(f"    METEOR:   {st['meteor']:.4f}")
         if "ast_cds" in seed_results and "error" not in seed_results["ast_cds"]:
             ac = seed_results["ast_cds"]
             print(f"    AST:      {ac['ast_joint']:.4f}")
@@ -355,8 +365,12 @@ def main():
         tt = trained_results["text"]
         print(f"\n  After Training:")
         print(f"    BERT-F1:  {tt['bert_f1']:.4f}")
+        print(f"    BLEU-1:   {tt['bleu_1']:.1f}")
         print(f"    BLEU-4:   {tt['bleu_4']:.1f}")
+        print(f"    ROUGE-1:  {tt['rouge_1']:.4f}")
+        print(f"    ROUGE-2:  {tt['rouge_2']:.4f}")
         print(f"    ROUGE-L:  {tt['rouge_l']:.4f}")
+        print(f"    METEOR:   {tt['meteor']:.4f}")
         if "ast_cds" in trained_results and "error" not in trained_results["ast_cds"]:
             ac = trained_results["ast_cds"]
             print(f"    AST:      {ac['ast_joint']:.4f}")
@@ -366,10 +380,12 @@ def main():
         delta_bert = trained_results["text"]['bert_f1'] - seed_results["text"]['bert_f1']
         delta_bleu = trained_results["text"]['bleu_4'] - seed_results["text"]['bleu_4']
         delta_rouge = trained_results["text"]['rouge_l'] - seed_results["text"]['rouge_l']
+        delta_meteor = trained_results["text"]['meteor'] - seed_results["text"]['meteor']
         print(f"\n  Delta (Trained - Seed):")
         print(f"    BERT-F1:  {delta_bert:+.4f}")
         print(f"    BLEU-4:   {delta_bleu:+.1f}")
         print(f"    ROUGE-L:  {delta_rouge:+.4f}")
+        print(f"    METEOR:   {delta_meteor:+.4f}")
         if "ast_cds" in seed_results and "ast_cds" in trained_results:
             sa = seed_results["ast_cds"]; ta = trained_results["ast_cds"]
             if "error" not in sa and "error" not in ta:

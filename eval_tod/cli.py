@@ -124,7 +124,7 @@ Backward-compatible legacy form:
     # Generic text generation evaluation
     text = subparsers.add_parser(
         "text",
-        help="Evaluate generated responses with BERTScore/BLEU/ROUGE",
+        help="Evaluate generated responses with BERTScore/BLEU/ROUGE/METEOR",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     text.add_argument(
@@ -345,6 +345,7 @@ def evaluate_text_records(
         "rouge_1": result.rouge_1,
         "rouge_2": result.rouge_2,
         "rouge_l": result.rouge_l,
+        "meteor": result.meteor,
         "num_samples": result.num_samples,
         "per_sample": result.per_sample,
         "summary": result.summary(),
@@ -392,6 +393,7 @@ def evaluate_abcd_bundle(
             "rouge_1": text_result.rouge_1,
             "rouge_2": text_result.rouge_2,
             "rouge_l": text_result.rouge_l,
+            "meteor": text_result.meteor,
             "num_samples": text_result.num_samples,
             "per_sample": text_result.per_sample,
         }
@@ -415,7 +417,8 @@ def evaluate_abcd_bundle(
         parts.append(
             f"BERT-F1={payload['text']['bert_f1']:.4f} "
             f"BLEU-4={payload['text']['bleu_4']:.1f} "
-            f"ROUGE-L={payload['text']['rouge_l']:.4f}"
+            f"ROUGE-L={payload['text']['rouge_l']:.4f} "
+            f"METEOR={payload['text']['meteor']:.4f}"
         )
     if "ast_cds" in payload:
         parts.append(

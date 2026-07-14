@@ -9,6 +9,8 @@ three families of metrics:
   ``sacrebleu`` with default tokenisation.
 - **ROUGE**: recall-oriented overlap (ROUGE-1, ROUGE-2, ROUGE-L).
   Computed via Google's ``rouge-score``.
+- **METEOR**: exact-token METEOR-style score with harmonic precision/recall
+  weighting and fragmentation penalty.
 
 Usage::
 
@@ -21,6 +23,7 @@ Usage::
     print(f"BERT F1: {result.bert_f1:.4f}")
     print(f"BLEU-4:  {result.bleu_4:.1f}")
     print(f"ROUGE-L: {result.rouge_l:.4f}")
+    print(f"METEOR:  {result.meteor:.4f}")
 
 Also provides file I/O helpers for loading predictions from disk.
 """
@@ -29,6 +32,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Sequence
@@ -65,6 +70,7 @@ class TextEvalResult:
         rouge_1: ROUGE-1 F1 (unigram overlap).  Range ~[0, 1].
         rouge_2: ROUGE-2 F1 (bigram overlap).  Range ~[0, 1].
         rouge_l: ROUGE-L F1 (longest common subsequence).  Range ~[0, 1].
+        meteor: Exact-token METEOR-style score.  Range ~[0, 1].
         num_samples: Number of prediction-reference pairs evaluated.
         per_sample: List of per-sample dicts with the same keys.
     """
@@ -77,6 +83,7 @@ class TextEvalResult:
     rouge_1: float = 0.0
     rouge_2: float = 0.0
     rouge_l: float = 0.0
+    meteor: float = 0.0
     num_samples: int = 0
     per_sample: list[dict[str, float]] = field(default_factory=list)
 
@@ -86,7 +93,7 @@ class TextEvalResult:
             f"BERT-F1={self.bert_f1:.4f}  "
             f"BLEU-1={self.bleu_1:.1f}  BLEU-4={self.bleu_4:.1f}  "
             f"ROUGE-1={self.rouge_1:.4f}  ROUGE-2={self.rouge_2:.4f}  "
-            f"ROUGE-L={self.rouge_l:.4f}  "
+            f"ROUGE-L={self.rouge_l:.4f}  METEOR={self.meteor:.4f}  "
             f"(N={self.num_samples})"
         )
 
@@ -100,6 +107,7 @@ class TextEvalResult:
             f"  BLEU       BLEU-1={self.bleu_1:.1f}  BLEU-4={self.bleu_4:.1f}\n"
             f"  ROUGE      R1={self.rouge_1:.4f}  R2={self.rouge_2:.4f}  "
             f"RL={self.rouge_l:.4f}\n"
+            f"  METEOR     {self.meteor:.4f}\n"
             f"{'─' * 50}"
         )
 
@@ -109,6 +117,56 @@ class TextEvalResult:
 # ══════════════════════════════════════════════════════════════════
 
 _DEFAULT_BERT_MODEL = ""  # empty = use bert-score's lang='en' default (roberta-large)
+
+
+def _meteor_tokens(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+(?:'[a-z0-9]+)?", text.lower())
+
+
+def _exact_meteor_score(prediction: str, reference: str) -> float:
+    """Compute a METEOR-style score using exact token matches.
+
+    This keeps METEOR's precision/recall weighting and fragmentation penalty,
+    while avoiding runtime WordNet or paraphrase-table downloads.
+    """
+    pred_tokens = _meteor_tokens(prediction)
+    ref_tokens = _meteor_tokens(reference)
+    if not pred_tokens and not ref_tokens:
+        return 1.0
+    if not pred_tokens or not ref_tokens:
+        return 0.0
+    if pred_tokens == ref_tokens:
+        return 1.0
+
+    ref_remaining = Counter(ref_tokens)
+    used_ref_indices: set[int] = set()
+    matches: list[tuple[int, int]] = []
+    for pred_idx, token in enumerate(pred_tokens):
+        if ref_remaining[token] <= 0:
+            continue
+        for ref_idx, ref_token in enumerate(ref_tokens):
+            if ref_idx in used_ref_indices or ref_token != token:
+                continue
+            matches.append((pred_idx, ref_idx))
+            used_ref_indices.add(ref_idx)
+            ref_remaining[token] -= 1
+            break
+
+    match_count = len(matches)
+    if match_count == 0:
+        return 0.0
+
+    precision = match_count / len(pred_tokens)
+    recall = match_count / len(ref_tokens)
+    f_mean = (10.0 * precision * recall) / (recall + 9.0 * precision)
+
+    matches.sort()
+    chunks = 1
+    for (prev_pred, prev_ref), (cur_pred, cur_ref) in zip(matches, matches[1:]):
+        if cur_pred != prev_pred + 1 or cur_ref != prev_ref + 1:
+            chunks += 1
+    penalty = 0.5 * (chunks / match_count) ** 3
+    return f_mean * (1.0 - penalty)
 
 
 def evaluate_responses(
@@ -182,6 +240,11 @@ def evaluate_responses(
     rouge1_avg = sum(rouge1_scores) / n
     rouge2_avg = sum(rouge2_scores) / n
     rougeL_avg = sum(rougeL_scores) / n
+    meteor_scores = [
+        _exact_meteor_score(pred, ref)
+        for pred, ref in zip(predictions, references)
+    ]
+    meteor_avg = sum(meteor_scores) / n
 
     # ── Per-sample ───────────────────────────────────────────────
     per_sample: list[dict[str, float]] = []
@@ -191,6 +254,7 @@ def evaluate_responses(
             "rouge1": rouge1_scores[i],
             "rouge2": rouge2_scores[i],
             "rougeL": rougeL_scores[i],
+            "meteor": meteor_scores[i],
         })
 
     return TextEvalResult(
@@ -202,6 +266,7 @@ def evaluate_responses(
         rouge_1=rouge1_avg,
         rouge_2=rouge2_avg,
         rouge_l=rougeL_avg,
+        meteor=meteor_avg,
         num_samples=n,
         per_sample=per_sample,
     )
