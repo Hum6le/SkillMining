@@ -197,6 +197,22 @@ def evaluate_agent_on_subflow(
         (save_dir / f"{label}_predictions.json").write_text(
             json.dumps(all_turn_results, indent=2, ensure_ascii=False),
             encoding="utf-8")
+        react_traces = [
+            {
+                "convo_id": row.get("convo_id"),
+                "turn_index": row.get("turn_index"),
+                "agent_turn_num": row.get("agent_turn_num"),
+                "subflow": row.get("subflow"),
+                "react_trace": row.get("react_trace", []),
+            }
+            for row in all_turn_results
+            if row.get("react_trace")
+        ]
+        if react_traces:
+            (save_dir / f"{label}_react_traces.json").write_text(
+                json.dumps(react_traces, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
 
     turn_results = all_turn_results
     preds = [r["prediction"] for r in turn_results]
@@ -240,6 +256,12 @@ def main():
                         help="Path to pre-built skill.md (for --skip-mining)")
     parser.add_argument("--skip-seed", action="store_true",
                         help="Skip seed baseline evaluation")
+    parser.add_argument("--disable-reference-lookup", action="store_true",
+                        help="Do not inject retrieved reference.md snippets into the mined agent prompt")
+    parser.add_argument("--reference-top-k", type=int, default=3,
+                        help="Number of reference.md operator sections to retrieve per turn")
+    parser.add_argument("--reference-max-chars", type=int, default=1800,
+                        help="Max characters of retrieved reference snippets injected per turn")
     parser.add_argument("--mining-method", choices=["sequence", "legacy"],
                         default="sequence",
                         help="Skill mining method: sequence keeps canonical action order; legacy uses HG vertex cover")
@@ -298,12 +320,20 @@ def main():
 
         if args.skip_mining:
             skill_text = ""
+            reference_text = ""
             if args.skill_path:
-                skill_text = Path(args.skill_path).read_text(encoding="utf-8")
+                skill_path = Path(args.skill_path)
+                skill_text = skill_path.read_text(encoding="utf-8")
+                sibling_ref = skill_path.parent / "reference.md"
+                if sibling_ref.exists():
+                    reference_text = sibling_ref.read_text(encoding="utf-8")
             else:
                 sf_skill = sf_out / "skill.md"
                 if sf_skill.exists():
                     skill_text = sf_skill.read_text(encoding="utf-8")
+                sf_ref = sf_out / "reference.md"
+                if sf_ref.exists():
+                    reference_text = sf_ref.read_text(encoding="utf-8")
             skill_info = {"selected_vertices": [], "coverage_pct": 0, "num_sessions": 0}
         else:
             if args.mining_method == "sequence":
@@ -318,6 +348,7 @@ def main():
                 mined = mine_subflow_skill(subflow, train_convs)
             skill_info = mined["skill_info"]
             skill_text = mined.get("skill_md", "")
+            reference_text = mined.get("reference_md", "")
 
             # Save skill.md + reference.md + subgraph
             (sf_out / "skill.md").write_text(skill_text, encoding="utf-8")
@@ -351,7 +382,13 @@ def main():
         if skill_text:
             wf.update(skill_text)
         mined_agent = ABCDAgent(
-            model=args.model, workflow=wf, memory=MemoryStore())
+            model=args.model,
+            workflow=wf,
+            memory=MemoryStore(),
+            reference_text="" if args.disable_reference_lookup else reference_text,
+            reference_top_k=args.reference_top_k,
+            reference_max_chars=args.reference_max_chars,
+        )
         mined_result = evaluate_agent_on_subflow(
             mined_agent, test_convs, "mined", subflow, save_dir=sf_out)
         log.info(f"    BERT={mined_result['text']['bert_f1']:.4f}  "

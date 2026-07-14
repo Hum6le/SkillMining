@@ -205,7 +205,12 @@ def _chunk_list(items: list[Any], batch_size: int) -> list[list[Any]]:
     return [items[i:i + batch_size] for i in range(0, len(items), batch_size)]
 
 
-def _build_agent(model: str, workflow_text: str, response_logger: ResponseLogger) -> ABCDAgent:
+def _build_agent(
+    model: str,
+    workflow_text: str,
+    response_logger: ResponseLogger,
+    reference_text: str = "",
+) -> ABCDAgent:
     from awm import MemoryStore, WorkflowStore
 
     workflow = WorkflowStore()
@@ -215,6 +220,7 @@ def _build_agent(model: str, workflow_text: str, response_logger: ResponseLogger
         model=model,
         workflow=workflow,
         memory=MemoryStore(),
+        reference_text=reference_text,
         response_logger=response_logger,
     )
 
@@ -873,10 +879,15 @@ def run_pipeline(args) -> PipelineOutputs:
 
     seed_skill_path = Path(args.skill_path).resolve()
     seed_skill_text = _load_skill_text(seed_skill_path)
+    from eval_tod.reference_lookup import load_trace2skill_references
+    seed_reference_text = load_trace2skill_references(seed_skill_path)
     evolved_skill_dir = out_dir / "evolved_skill"
     evolved_skill_dir.mkdir(parents=True, exist_ok=True)
     evolved_skill_path = evolved_skill_dir / "SKILL.md"
     evolved_skill_path.write_text(seed_skill_text, encoding="utf-8")
+    seed_references_dir = seed_skill_path.parent / "references"
+    if seed_references_dir.exists() and seed_references_dir.is_dir():
+        shutil.copytree(seed_references_dir, evolved_skill_dir / "references", dirs_exist_ok=True)
 
     if source_info["mode"] == "files":
         log.info(
@@ -898,7 +909,7 @@ def run_pipeline(args) -> PipelineOutputs:
 
     # Stage 1: seed run on training set to mine failures
     log.info("Stage 1: seed run on training set")
-    seed_train_agent = _build_agent(model, seed_skill_text, response_logger)
+    seed_train_agent = _build_agent(model, seed_skill_text, response_logger, seed_reference_text)
     seed_train_turns = seed_train_agent.generate_all_turn_predictions(
         train_convs,
         predict_actions=True,
@@ -946,6 +957,7 @@ def run_pipeline(args) -> PipelineOutputs:
         batch_dir.mkdir(parents=True, exist_ok=True)
 
         current_skill_text = evolved_skill_path.read_text(encoding="utf-8")
+        current_reference_text = load_trace2skill_references(evolved_skill_path)
         pre_skill_lines = len(current_skill_text.splitlines())
         log.info(
             "Stage 2.%d: %s with %d conversations (pre-skill lines=%d)",
@@ -955,7 +967,12 @@ def run_pipeline(args) -> PipelineOutputs:
             pre_skill_lines,
         )
 
-        batch_agent = _build_agent(model, current_skill_text, response_logger)
+        batch_agent = _build_agent(
+            model,
+            current_skill_text,
+            response_logger,
+            current_reference_text,
+        )
         batch_turns = batch_agent.generate_all_turn_predictions(
             batch_convs,
             predict_actions=True,
@@ -1044,7 +1061,7 @@ def run_pipeline(args) -> PipelineOutputs:
         log.info("Stage 4: skipping seed evaluation on test (--skip-seed-test)")
     else:
         log.info("Stage 4: seed evaluation on test")
-        seed_test_agent = _build_agent(model, seed_skill_text, response_logger)
+        seed_test_agent = _build_agent(model, seed_skill_text, response_logger, seed_reference_text)
         seed_test_turns = seed_test_agent.generate_all_turn_predictions(
             test_convs,
             predict_actions=True,
@@ -1063,7 +1080,13 @@ def run_pipeline(args) -> PipelineOutputs:
     # Stage 5: evolved test evaluation
     log.info("Stage 5: evolved evaluation on test")
     evolved_skill_text = evolved_skill_path.read_text(encoding="utf-8")
-    evolved_test_agent = _build_agent(model, evolved_skill_text, response_logger)
+    evolved_reference_text = load_trace2skill_references(evolved_skill_path)
+    evolved_test_agent = _build_agent(
+        model,
+        evolved_skill_text,
+        response_logger,
+        evolved_reference_text,
+    )
     evolved_test_turns = evolved_test_agent.generate_all_turn_predictions(
         test_convs,
         predict_actions=True,
@@ -1091,6 +1114,7 @@ def run_pipeline(args) -> PipelineOutputs:
             "model": model,
             "llm_qps": args.llm_qps,
             "skill_path": str(seed_skill_path),
+            "seed_reference_chars": len(seed_reference_text),
             "skip_seed_test": args.skip_seed_test,
             "evolution_batch_size": args.evolution_batch_size,
             "max_evolution_batches": args.max_evolution_batches,
@@ -1098,6 +1122,7 @@ def run_pipeline(args) -> PipelineOutputs:
         "seed_train": train_eval,
         "seed_test": seed_test_eval,
         "evolved_test": evolved_test_eval,
+        "evolved_reference_chars": len(evolved_reference_text),
         "seed_failed_train_cases": len(seed_failed_cases),
         "iterative_failed_train_cases": total_failed_cases,
         "batch_history": batch_history,

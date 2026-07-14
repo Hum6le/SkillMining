@@ -50,6 +50,13 @@ Your reply should be:
 {order_info}
 """
 
+_REFERENCE_TOOL_PROMPT = """## Available Deterministic Tool
+Before each response, the runtime may call `retrieve_reference(context, subflow)`.
+This tool searches the mined `reference.md` for dialogue snippets relevant to
+the current conversation and returns compact examples. Treat the returned
+snippets as evidence for action/slot patterns, but do not copy private slot
+values unless they match the current scenario."""
+
 _TASK_PROMPT = """## Conversation So Far
 {context}
 
@@ -75,6 +82,45 @@ RESPONSE: <the agent response text>
 - RESPONSE: the natural language agent utterance (1-3 sentences)."""
 
 
+def _tokenize_for_lookup(text: str) -> set[str]:
+    return {
+        tok.lower()
+        for tok in re.findall(r"[a-zA-Z0-9_'-]+", text)
+        if len(tok) >= 3
+    }
+
+
+def _parse_reference_sections(reference_text: str) -> list[dict[str, str]]:
+    """Parse skill_mining reference.md into searchable operator sections."""
+    sections: list[dict[str, str]] = []
+    current_title: str | None = None
+    current_lines: list[str] = []
+
+    for line in reference_text.splitlines():
+        if line.startswith("## ") and not line.startswith("### "):
+            if current_title and current_lines:
+                body = "\n".join(current_lines).strip()
+                if body:
+                    sections.append({"title": current_title, "body": body})
+            current_title = line[3:].strip()
+            current_lines = []
+            continue
+        if current_title:
+            current_lines.append(line)
+
+    if current_title and current_lines:
+        body = "\n".join(current_lines).strip()
+        if body:
+            sections.append({"title": current_title, "body": body})
+
+    return sections
+
+
+def _canonical_reference_title(title: str) -> str:
+    """Collapse legacy slot-specific reference titles to an action name."""
+    return title.split(":", 1)[0].strip()
+
+
 # ── Agent ──────────────────────────────────────────────────────
 
 class ABCDAgent(AbstractTodAgent):
@@ -95,6 +141,9 @@ class ABCDAgent(AbstractTodAgent):
         max_turns: int = 1,
         memory: MemoryStore | None = None,
         workflow: WorkflowStore | None = None,
+        reference_text: str | None = None,
+        reference_top_k: int = 3,
+        reference_max_chars: int = 1800,
         delay: float = 0.3,
         response_logger=None,
     ):
@@ -107,7 +156,16 @@ class ABCDAgent(AbstractTodAgent):
         self.delay = delay
         self.memory = memory if memory is not None else MemoryStore()
         self.workflow = workflow if workflow is not None else WorkflowStore()
+        self.reference_text = reference_text or ""
+        self.reference_sections = _parse_reference_sections(self.reference_text)
+        self.reference_top_k = max(0, reference_top_k)
+        self.reference_max_chars = max(200, reference_max_chars)
         self._response_logger = response_logger
+
+    def set_reference_text(self, reference_text: str | None) -> None:
+        """Replace prompt-time mined-reference material."""
+        self.reference_text = reference_text or ""
+        self.reference_sections = _parse_reference_sections(self.reference_text)
 
     # ── AbstractTodAgent interface ─────────────────────────
 
@@ -164,12 +222,17 @@ class ABCDAgent(AbstractTodAgent):
 
         context = "\n".join(history_lines[:-1]) if len(history_lines) > 1 else history_lines[0] if history_lines else ""
 
+        reference_lookup = self._lookup_reference(context, scenario)
+        prompt_context = context
+        if reference_lookup["observation"]:
+            prompt_context += "\n\n" + reference_lookup["observation"]
+
         # Build messages
         from llm import chat
 
         messages = [
             {"role": "system", "content": system},
-            {"role": "user", "content": _TASK_PROMPT.format(context=context)},
+            {"role": "user", "content": _TASK_PROMPT.format(context=prompt_context)},
         ]
 
         response_text = ""
@@ -240,10 +303,15 @@ class ABCDAgent(AbstractTodAgent):
             if not context or not reference:
                 continue
 
+            reference_lookup = self._lookup_reference(context, scenario)
+            prompt_context = context
+            if reference_lookup["observation"]:
+                prompt_context += "\n\n" + reference_lookup["observation"]
+
             from llm import chat
             messages = [
                 {"role": "system", "content": system},
-                {"role": "user", "content": task_template.format(context=context)},
+                {"role": "user", "content": task_template.format(context=prompt_context)},
             ]
 
             raw_output = ""
@@ -265,6 +333,26 @@ class ABCDAgent(AbstractTodAgent):
                 "subflow": str(scenario.get("subflow", "")),
                 "flow": str(scenario.get("flow", "")),
                 "context": context,
+                "reference_lookup": reference_lookup,
+                "react_trace": [
+                    {
+                        "turn": 1,
+                        "thought": "Use the current dialogue context and subflow to retrieve mined reference snippets before predicting the next action.",
+                        "action": "retrieve_reference",
+                        "action_input": reference_lookup["query"],
+                        "observation": reference_lookup["observation"],
+                        "selected_sections": reference_lookup["selected_sections"],
+                    },
+                    {
+                        "turn": 2,
+                        "thought": "Predict the backend action, ordered slots, and response using the workflow, scenario, dialogue context, and retrieved snippets.",
+                        "action": "llm_generate",
+                        "action_input": {
+                            "messages": messages,
+                        },
+                        "observation": raw_output,
+                    },
+                ],
                 "reference": reference,
                 "prediction": raw_output,
             }
@@ -284,6 +372,104 @@ class ABCDAgent(AbstractTodAgent):
             results.append(entry)
 
         return results
+
+    def _lookup_reference(self, context: str, scenario: dict[str, Any]) -> dict[str, Any]:
+        """Return compact reference snippets relevant to the current turn."""
+        query = {
+            "subflow": str(scenario.get("subflow", "")),
+            "top_k": self.reference_top_k,
+            "max_chars": self.reference_max_chars,
+        }
+        if not self.reference_sections or self.reference_top_k <= 0:
+            return {
+                "tool": "retrieve_reference",
+                "query": query,
+                "selected_sections": [],
+                "observation": "",
+            }
+
+        subflow = str(scenario.get("subflow", "")).replace("_", " ")
+        query_tokens = _tokenize_for_lookup(context + " " + subflow)
+        query["query_tokens"] = sorted(query_tokens)[:80]
+        if not query_tokens:
+            return {
+                "tool": "retrieve_reference",
+                "query": query,
+                "selected_sections": [],
+                "observation": "",
+            }
+
+        best_by_action: dict[str, tuple[float, dict[str, str]]] = {}
+        for section in self.reference_sections:
+            title = section["title"]
+            body = section["body"]
+            canonical_title = _canonical_reference_title(title)
+            title_tokens = _tokenize_for_lookup(title.replace("-", " "))
+            canonical_tokens = _tokenize_for_lookup(canonical_title.replace("-", " "))
+            body_tokens = _tokenize_for_lookup(body[:1200])
+            score = 0.0
+            score += 4.0 * len(query_tokens & title_tokens)
+            score += 5.0 * len(query_tokens & canonical_tokens)
+            score += 1.0 * len(query_tokens & body_tokens)
+            # Common action names are especially useful for AST guidance.
+            if any(tok in canonical_tokens for tok in ("verify", "identity", "account", "order")):
+                score += 0.25
+            if score > 0:
+                current = best_by_action.get(canonical_title)
+                if current is None or score > current[0]:
+                    best_by_action[canonical_title] = (score, section)
+
+        if best_by_action:
+            scored = list(best_by_action.values())
+        else:
+            seen_actions: set[str] = set()
+            scored = []
+            for section in self.reference_sections:
+                canonical_title = _canonical_reference_title(section["title"])
+                if canonical_title in seen_actions:
+                    continue
+                seen_actions.add(canonical_title)
+                scored.append((0.0, section))
+                if len(scored) >= self.reference_top_k:
+                    break
+
+        scored.sort(key=lambda item: (-item[0], _canonical_reference_title(item[1]["title"]), item[1]["title"]))
+        parts = [
+            "## Reference Lookup Results",
+            "Use these mined dialogue snippets as examples; do not copy private slot values unless they match the current scenario.",
+        ]
+        used_chars = sum(len(p) for p in parts)
+        selected_sections: list[dict[str, Any]] = []
+        for _, section in scored[:self.reference_top_k]:
+            display_title = _canonical_reference_title(section["title"])
+            snippet = section["body"].strip()
+            if len(snippet) > 600:
+                snippet = snippet[:600].rstrip() + "\n..."
+            block = f"\n### {display_title}\n{snippet}"
+            if used_chars + len(block) > self.reference_max_chars:
+                remaining = self.reference_max_chars - used_chars
+                if remaining > 120:
+                    parts.append(block[:remaining].rstrip() + "\n...")
+                    selected_sections.append({
+                        "title": section["title"],
+                        "canonical_title": display_title,
+                        "truncated": True,
+                    })
+                break
+            parts.append(block)
+            selected_sections.append({
+                "title": section["title"],
+                "canonical_title": display_title,
+                "truncated": False,
+            })
+            used_chars += len(block)
+
+        return {
+            "tool": "retrieve_reference",
+            "query": query,
+            "selected_sections": selected_sections,
+            "observation": "\n".join(parts).strip(),
+        }
 
     def generate_all_turn_predictions(
         self, conversations: list[dict[str, Any]], verbose: bool = True,
@@ -372,6 +558,9 @@ class ABCDAgent(AbstractTodAgent):
 
         if extra_parts:
             base = "\n".join(extra_parts) + "\n\n" + base
+
+        if self.reference_sections and self.reference_top_k > 0:
+            base = base + "\n\n" + _REFERENCE_TOOL_PROMPT
 
         return base
 

@@ -24,6 +24,7 @@ from typing import Any
 from .agent_tool import ToolBasedTodAgent
 from .kb import MultiWOZKB
 from .schemas import Dialogue, Prediction
+from .reference_lookup import load_trace2skill_references
 
 
 # ── Skill discovery ──────────────────────────────────────────────
@@ -105,6 +106,24 @@ def render_skill_section(skills: list[dict[str, str]], skills_dir: str) -> str:
     return "\n".join(lines)
 
 
+def render_reference_section(skills_dir: str) -> str:
+    """Render Trace2Skill ``references/*.md`` files into the system prompt."""
+    reference_text = load_trace2skill_references(skills_dir)
+    if not reference_text:
+        return ""
+    return "\n".join([
+        "## Loaded Skill References",
+        "",
+        "The following reference notes/snippets are available alongside the loaded skills. "
+        "Use them as supporting examples, but follow the main SKILL.md instructions first.",
+        "",
+        reference_text,
+        "",
+        "---",
+        "",
+    ])
+
+
 # ── Agent ─────────────────────────────────────────────────────────
 
 class SkillPreloadedAgent(ToolBasedTodAgent):
@@ -139,6 +158,7 @@ class SkillPreloadedAgent(ToolBasedTodAgent):
             print(f"Warning: No skills discovered in {self.skills_dir}")
 
         skill_section = render_skill_section(self.skills, self.skills_dir)
+        reference_section = render_reference_section(self.skills_dir)
 
         super().__init__(
             kb=kb,
@@ -149,7 +169,7 @@ class SkillPreloadedAgent(ToolBasedTodAgent):
             delay=delay,
             ontology_path=ontology_path,
             log_dir=log_dir,
-            extra_system_prompt=skill_section,
+            extra_system_prompt="\n\n".join(x for x in [skill_section, reference_section] if x),
             response_logger=response_logger,
         )
 
@@ -157,5 +177,6 @@ class SkillPreloadedAgent(ToolBasedTodAgent):
         """Re-discover skills from disk (useful after evolution)."""
         self.skills = discover_skills(self.skills_dir)
         skill_section = render_skill_section(self.skills, self.skills_dir)
-        self.extra_system_prompt = skill_section
+        reference_section = render_reference_section(self.skills_dir)
+        self.extra_system_prompt = "\n\n".join(x for x in [skill_section, reference_section] if x)
         print(f"Reloaded {len(self.skills)} skill(s) from {self.skills_dir}")

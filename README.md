@@ -347,6 +347,17 @@ values, then mines a weighted action-sequence workflow:
 python scripts/run_subflow_eval.py --subflow recover_password --mining-method sequence
 ```
 
+The mined ABCD agent also retrieves compact snippets from the generated
+`reference.md` on each turn and injects them into the prompt.  Disable this for
+ablation with:
+
+```bash
+python scripts/run_subflow_eval.py \
+  --subflow recover_password \
+  --mining-method sequence \
+  --disable-reference-lookup
+```
+
 The original hypergraph vertex-cover method is still available:
 
 ```bash
