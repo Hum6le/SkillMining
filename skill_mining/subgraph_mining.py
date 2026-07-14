@@ -186,7 +186,7 @@ def find_main_pathway(
     for entry in entry_nodes[:top_k]:
         path = _greedy_walk(entry, outgoing, nodes, max_steps=20)
         if len(path) > 1:
-            total_weight = sum(s["weight"] for s in path if "weight" in s)
+            total_weight = sum(s.get("edge_weight", 0) for s in path)
             pathways.append({
                 "entry": entry,
                 "steps": path,

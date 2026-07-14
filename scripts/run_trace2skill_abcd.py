@@ -197,6 +197,14 @@ def _load_skill_text(skill_path: Path) -> str:
     return skill_path.read_text(encoding="utf-8")
 
 
+def _chunk_list(items: list[Any], batch_size: int) -> list[list[Any]]:
+    if not items:
+        return []
+    if batch_size <= 0 or batch_size >= len(items):
+        return [items]
+    return [items[i:i + batch_size] for i in range(0, len(items), batch_size)]
+
+
 def _build_agent(model: str, workflow_text: str, response_logger: ResponseLogger) -> ABCDAgent:
     from awm import MemoryStore, WorkflowStore
 
@@ -907,39 +915,129 @@ def run_pipeline(args) -> PipelineOutputs:
     )
     log.info("Seed train: %s", train_eval["summary"])
 
-    failed_cases = _build_ast_failure_cases(
+    seed_failed_cases = _build_ast_failure_cases(
         train_convs,
         seed_train_turns,
         train_ast_scores,
-        log_dir=out_dir / "failure_logs",
+        log_dir=out_dir / "seed_failure_logs",
     )
-    log.info("AST failures on train: %d / %d", len(failed_cases), len(train_convs))
+    log.info("Seed AST failures on train: %d / %d", len(seed_failed_cases), len(train_convs))
+
+    # Stage 2: iterative batch evolution.  Unlike the internal MAP batches in
+    # ParallelSkillEvolver, these outer batches update the skill on disk after
+    # each batch.  The next batch therefore reads and patches the already
+    # evolved skill, matching the official Trace2Skill training loop.
+    train_batches = _chunk_list(train_convs, args.evolution_batch_size)
+    if args.max_evolution_batches:
+        train_batches = train_batches[:args.max_evolution_batches]
+    log.info(
+        "Stage 2: iterative batch evolution (%d batches, batch_size=%s)",
+        len(train_batches),
+        args.evolution_batch_size if args.evolution_batch_size > 0 else "all",
+    )
 
     changelog: list[str] = []
-    if failed_cases:
-        # Stage 2: error analysis
-        log.info("Stage 2: error analysis")
-        error_dir = out_dir / "error_analysis" / "train_seed_failures"
-        parsed_path = _run_error_analysis(
-            failed_cases,
-            error_dir,
-            model,
-            response_logger,
-        )
-        log.info("Parsed error analysis -> %s", parsed_path)
+    batch_history: list[dict[str, Any]] = []
+    total_failed_cases = 0
 
-        # Stage 3: evolve skill
-        log.info("Stage 3: skill evolution")
-        changelog = _run_skill_evolution(
-            parsed_path,
-            evolved_skill_path,
-            out_dir / "intermediates",
-            model,
-            response_logger,
+    for batch_idx, batch_convs in enumerate(train_batches, start=1):
+        label = f"batch_{batch_idx:04d}"
+        batch_dir = out_dir / "train_batches" / label
+        batch_dir.mkdir(parents=True, exist_ok=True)
+
+        current_skill_text = evolved_skill_path.read_text(encoding="utf-8")
+        pre_skill_lines = len(current_skill_text.splitlines())
+        log.info(
+            "Stage 2.%d: %s with %d conversations (pre-skill lines=%d)",
+            batch_idx,
+            label,
+            len(batch_convs),
+            pre_skill_lines,
         )
-        log.info("Applied %d evolution changes", len(changelog))
-    else:
-        log.info("No train AST failures, skip evolution")
+
+        batch_agent = _build_agent(model, current_skill_text, response_logger)
+        batch_turns = batch_agent.generate_all_turn_predictions(
+            batch_convs,
+            predict_actions=True,
+        )
+        (batch_dir / "turns.json").write_text(
+            json.dumps(batch_turns, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        batch_ast_scores = compute_ast_from_turn_results(batch_convs, batch_turns)
+        batch_eval = _evaluate_turn_results(batch_convs, batch_turns, label)
+        (batch_dir / "eval.json").write_text(
+            json.dumps(batch_eval, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        log.info("%s eval: %s", label, batch_eval["summary"])
+
+        batch_failed_cases = _build_ast_failure_cases(
+            batch_convs,
+            batch_turns,
+            batch_ast_scores,
+            log_dir=batch_dir / "failure_logs",
+        )
+        total_failed_cases += len(batch_failed_cases)
+        log.info(
+            "%s AST failures: %d / %d",
+            label,
+            len(batch_failed_cases),
+            len(batch_convs),
+        )
+
+        batch_changelog: list[str] = []
+        parsed_path: Path | None = None
+        if batch_failed_cases:
+            error_dir = out_dir / "error_analysis" / label
+            parsed_path = _run_error_analysis(
+                batch_failed_cases,
+                error_dir,
+                model,
+                response_logger,
+            )
+            log.info("%s parsed error analysis -> %s", label, parsed_path)
+
+            batch_changelog = _run_skill_evolution(
+                parsed_path,
+                evolved_skill_path,
+                out_dir / "intermediates" / label,
+                model,
+                response_logger,
+            )
+            changelog.extend(f"{label}: {entry}" for entry in batch_changelog)
+            log.info("%s applied %d evolution changes", label, len(batch_changelog))
+        else:
+            log.info("%s has no AST failures; skill unchanged", label)
+
+        post_skill_lines = len(evolved_skill_path.read_text(encoding="utf-8").splitlines())
+        batch_record = {
+            "batch": label,
+            "num_conversations": len(batch_convs),
+            "failed_cases": len(batch_failed_cases),
+            "eval": batch_eval,
+            "parsed_error_analysis": str(parsed_path) if parsed_path else None,
+            "changelog": batch_changelog,
+            "pre_skill_lines": pre_skill_lines,
+            "post_skill_lines": post_skill_lines,
+        }
+        batch_history.append(batch_record)
+        (batch_dir / "batch_summary.json").write_text(
+            json.dumps(batch_record, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    (out_dir / "batch_history.json").write_text(
+        json.dumps(batch_history, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    log.info(
+        "Iterative evolution complete: %d failed cases across %d batches, %d changelog entries",
+        total_failed_cases,
+        len(train_batches),
+        len(changelog),
+    )
 
     seed_test_eval = None
     if args.skip_seed_test:
@@ -994,11 +1092,15 @@ def run_pipeline(args) -> PipelineOutputs:
             "llm_qps": args.llm_qps,
             "skill_path": str(seed_skill_path),
             "skip_seed_test": args.skip_seed_test,
+            "evolution_batch_size": args.evolution_batch_size,
+            "max_evolution_batches": args.max_evolution_batches,
         },
         "seed_train": train_eval,
         "seed_test": seed_test_eval,
         "evolved_test": evolved_test_eval,
-        "failed_train_cases": len(failed_cases),
+        "seed_failed_train_cases": len(seed_failed_cases),
+        "iterative_failed_train_cases": total_failed_cases,
+        "batch_history": batch_history,
         "changelog": changelog,
     }
     (out_dir / "summary.json").write_text(
@@ -1035,6 +1137,22 @@ def main() -> None:
     parser.add_argument("--test-split", default="test", choices=["train", "dev", "test"])
     parser.add_argument("--max-train", type=int, default=200)
     parser.add_argument("--max-test", type=int, default=100)
+    parser.add_argument(
+        "--evolution-batch-size",
+        type=int,
+        default=25,
+        help=(
+            "Outer training batch size for iterative skill evolution. "
+            "Each batch patches the skill on disk before the next batch runs; "
+            "set <=0 to evolve once over all training conversations."
+        ),
+    )
+    parser.add_argument(
+        "--max-evolution-batches",
+        type=int,
+        default=None,
+        help="Optional cap on outer evolution batches for debugging",
+    )
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument(
         "--llm-qps",

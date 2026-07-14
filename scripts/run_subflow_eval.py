@@ -136,6 +136,47 @@ def mine_subflow_skill(subflow: str, train_convs: list) -> dict:
             "reference_md": reference_md, "skill_md": skill_md}
 
 
+def mine_subflow_skill_sequence(
+    subflow: str,
+    train_convs: list,
+    min_edge_support: int = 2,
+    min_edge_ratio: float = 0.1,
+    max_nodes: int = 30,
+) -> dict:
+    """Mine skill from canonical action sequences."""
+    from skill_mining.sequence_workflow_mining import mine_sequence_workflow
+    from skill_mining.skill_writer import (
+        _find_operator_snippets, build_reference_md,
+        build_skill_md_from_subgraph,
+    )
+
+    mined = mine_sequence_workflow(
+        subflow,
+        train_convs,
+        min_edge_support=min_edge_support,
+        min_edge_ratio=min_edge_ratio,
+        max_nodes=max_nodes,
+    )
+
+    operators = mined["skill_info"]["selected_vertices"]
+    op_snippets = _find_operator_snippets(train_convs, subflow, operators)
+    reference_md = build_reference_md(subflow, op_snippets, max_snippets_per_op=5)
+
+    log.info("  Compiling sequence skill.md via LLM...")
+    skill_md = build_skill_md_from_subgraph(
+        subflow,
+        mined["subgraph"],
+        op_snippets,
+        use_llm=True,
+    )
+
+    return {
+        **mined,
+        "reference_md": reference_md,
+        "skill_md": skill_md,
+    }
+
+
 def evaluate_agent_on_subflow(
     agent, test_convs: list, label: str, subflow: str = "",
     save_dir: Path | None = None,
@@ -199,6 +240,15 @@ def main():
                         help="Path to pre-built skill.md (for --skip-mining)")
     parser.add_argument("--skip-seed", action="store_true",
                         help="Skip seed baseline evaluation")
+    parser.add_argument("--mining-method", choices=["sequence", "legacy"],
+                        default="sequence",
+                        help="Skill mining method: sequence keeps canonical action order; legacy uses HG vertex cover")
+    parser.add_argument("--sequence-min-edge-support", type=int, default=2,
+                        help="Min transition support for sequence mining")
+    parser.add_argument("--sequence-min-edge-ratio", type=float, default=0.1,
+                        help="Min transition support ratio for sequence mining")
+    parser.add_argument("--sequence-max-nodes", type=int, default=30,
+                        help="Max canonical operator nodes for sequence mining")
     parser.add_argument("--model", default=MODEL)
     parser.add_argument("--max-train", type=int, default=None)
     parser.add_argument("--max-test", type=int, default=None)
@@ -256,7 +306,16 @@ def main():
                     skill_text = sf_skill.read_text(encoding="utf-8")
             skill_info = {"selected_vertices": [], "coverage_pct": 0, "num_sessions": 0}
         else:
-            mined = mine_subflow_skill(subflow, train_convs)
+            if args.mining_method == "sequence":
+                mined = mine_subflow_skill_sequence(
+                    subflow,
+                    train_convs,
+                    min_edge_support=args.sequence_min_edge_support,
+                    min_edge_ratio=args.sequence_min_edge_ratio,
+                    max_nodes=args.sequence_max_nodes,
+                )
+            else:
+                mined = mine_subflow_skill(subflow, train_convs)
             skill_info = mined["skill_info"]
             skill_text = mined.get("skill_md", "")
 
@@ -308,6 +367,7 @@ def main():
         all_results[subflow] = {
             "train_sessions": len(train_convs),
             "test_sessions": len(test_convs),
+            "mining_method": args.mining_method,
             "skill_vertices": skill_info.get("num_selected", 0),
             "coverage_pct": skill_info.get("coverage_pct", 0),
             "seed": seed_result,

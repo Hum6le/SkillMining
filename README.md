@@ -305,6 +305,17 @@ slot/success workflow. For ABCD we now keep a separate AST-driven pipeline:
 python scripts/run_trace2skill_abcd.py --max-train 200 --max-test 100
 ```
 
+ABCD Trace2Skill now evolves the copied skill iteratively over outer training
+batches.  Each batch reads the current `evolved_skill/SKILL.md`, applies any
+new patch to disk, and the next batch continues from that updated skill:
+
+```bash
+python scripts/run_trace2skill_abcd.py \
+  --max-train 200 \
+  --max-test 100 \
+  --evolution-batch-size 25
+```
+
 It also supports explicit pre-split files, using the same style as
 `run_full_experiment.py`:
 
@@ -325,6 +336,31 @@ This pipeline:
 Seed skill path:
 
 [`eval_tod/skills/abcd_trace2skill/SKILL.md`](/D:/paper/Skill_Baseline/eval_tod/skills/abcd_trace2skill/SKILL.md)
+
+## ABCD Subflow Skill Mining
+
+`scripts/run_subflow_eval.py` now supports two mining methods.  The default
+`sequence` method canonicalizes action nodes by removing instance-specific slot
+values, then mines a weighted action-sequence workflow:
+
+```bash
+python scripts/run_subflow_eval.py --subflow recover_password --mining-method sequence
+```
+
+The original hypergraph vertex-cover method is still available:
+
+```bash
+python scripts/run_subflow_eval.py --subflow recover_password --mining-method legacy
+```
+
+Useful sequence-mining knobs:
+
+```bash
+python scripts/run_subflow_eval.py --subflow recover_password \
+  --sequence-min-edge-support 2 \
+  --sequence-min-edge-ratio 0.1 \
+  --sequence-max-nodes 30
+```
 
 ## Agent Types
 
