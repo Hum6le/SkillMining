@@ -10,6 +10,7 @@ exemplars are injected into the system prompt.
 from __future__ import annotations
 
 import re
+import json
 import sys
 import time
 from pathlib import Path
@@ -50,12 +51,63 @@ Your reply should be:
 {order_info}
 """
 
-_REFERENCE_TOOL_PROMPT = """## Available Deterministic Tool
-Before each response, the runtime may call `retrieve_reference(context, subflow)`.
-This tool searches the mined `reference.md` for dialogue snippets relevant to
-the current conversation and returns compact examples. Treat the returned
-snippets as evidence for action/slot patterns, but do not copy private slot
-values unless they match the current scenario."""
+_REFERENCE_TOOL_PROMPT = """## MCP Tools
+You can use the following local MCP-style tool before answering.
+
+### retrieve_reference
+Searches the mined `reference.md` for dialogue snippets relevant to this turn.
+
+Input JSON schema:
+```json
+{
+  "query": "short search query describing the needed action/slot pattern",
+  "subflow": "current ABCD subflow",
+  "top_k": 3
+}
+```
+
+Use this ReAct pattern when reference snippets may help:
+1. Think about the next backend action/slot pattern needed by the current turn.
+2. Call `retrieve_reference` with a concise query, not the full dialogue.
+3. Use the returned observation as supporting evidence. Do not copy private
+   slot values unless they match the current scenario."""
+
+_REFERENCE_QUERY_PROMPT = """## Conversation So Far
+{context}
+
+## Current Scenario
+- flow: {flow}
+- subflow: {subflow}
+
+## MCP Tool Interface
+Tool: `retrieve_reference`
+Input JSON schema:
+```json
+{{
+  "query": "short search query describing the needed action/slot pattern",
+  "subflow": "{subflow}",
+  "top_k": {top_k}
+}}
+```
+
+## Instruction
+Write the MCP tool call you want to make before answering. Use the current
+dialogue state to create a concise query. Prefer action names, slot names,
+verification state, account/order/refund/shipping keywords, and the customer's
+latest request. Do not include the full transcript.
+
+Return ONLY valid JSON:
+```json
+{{
+  "thought": "why this reference lookup is useful",
+  "action": "retrieve_reference",
+  "action_input": {{
+    "query": "...",
+    "subflow": "{subflow}",
+    "top_k": {top_k}
+  }}
+}}
+```"""
 
 _TASK_PROMPT = """## Conversation So Far
 {context}
@@ -222,7 +274,13 @@ class ABCDAgent(AbstractTodAgent):
 
         context = "\n".join(history_lines[:-1]) if len(history_lines) > 1 else history_lines[0] if history_lines else ""
 
-        reference_lookup = self._lookup_reference(context, scenario)
+        reference_plan = self._plan_reference_lookup(context, scenario, verbose=False)
+        reference_lookup = self._lookup_reference(
+            reference_plan.get("query_text", ""),
+            context,
+            scenario,
+            top_k=reference_plan.get("top_k"),
+        )
         prompt_context = context
         if reference_lookup["observation"]:
             prompt_context += "\n\n" + reference_lookup["observation"]
@@ -303,7 +361,13 @@ class ABCDAgent(AbstractTodAgent):
             if not context or not reference:
                 continue
 
-            reference_lookup = self._lookup_reference(context, scenario)
+            reference_plan = self._plan_reference_lookup(context, scenario, verbose=verbose)
+            reference_lookup = self._lookup_reference(
+                reference_plan.get("query_text", ""),
+                context,
+                scenario,
+                top_k=reference_plan.get("top_k"),
+            )
             prompt_context = context
             if reference_lookup["observation"]:
                 prompt_context += "\n\n" + reference_lookup["observation"]
@@ -337,14 +401,25 @@ class ABCDAgent(AbstractTodAgent):
                 "react_trace": [
                     {
                         "turn": 1,
-                        "thought": "Use the current dialogue context and subflow to retrieve mined reference snippets before predicting the next action.",
+                        "thought": "Plan a concise MCP retrieve_reference query for the current dialogue state.",
+                        "action": "llm_plan_reference_query",
+                        "action_input": {
+                            "messages": reference_plan.get("messages", []),
+                        },
+                        "observation": reference_plan.get("raw_output", ""),
+                        "parsed_tool_call": reference_plan.get("tool_call", {}),
+                        "fallback_used": reference_plan.get("fallback_used", False),
+                    },
+                    {
+                        "turn": 2,
+                        "thought": reference_plan.get("thought", ""),
                         "action": "retrieve_reference",
                         "action_input": reference_lookup["query"],
                         "observation": reference_lookup["observation"],
                         "selected_sections": reference_lookup["selected_sections"],
                     },
                     {
-                        "turn": 2,
+                        "turn": 3,
                         "thought": "Predict the backend action, ordered slots, and response using the workflow, scenario, dialogue context, and retrieved snippets.",
                         "action": "llm_generate",
                         "action_input": {
@@ -373,14 +448,147 @@ class ABCDAgent(AbstractTodAgent):
 
         return results
 
-    def _lookup_reference(self, context: str, scenario: dict[str, Any]) -> dict[str, Any]:
-        """Return compact reference snippets relevant to the current turn."""
+    def _recent_context_excerpt(self, context: str, max_lines: int = 6) -> str:
+        lines = [line for line in context.splitlines() if line.strip()]
+        return "\n".join(lines[-max_lines:])
+
+    def _parse_reference_tool_call(
+        self,
+        raw_output: str,
+        scenario: dict[str, Any],
+        context: str,
+    ) -> dict[str, Any]:
+        """Parse the model's MCP-style retrieve_reference tool call."""
+        payload = raw_output.strip()
+        fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", payload, re.DOTALL)
+        if fenced:
+            payload = fenced.group(1)
+        else:
+            start = payload.find("{")
+            end = payload.rfind("}")
+            payload = payload[start:end + 1] if start != -1 and end > start else ""
+
+        fallback_query = " ".join(
+            self._recent_context_excerpt(context, max_lines=4).split()
+        )[:240]
+        if not fallback_query:
+            fallback_query = str(scenario.get("subflow", ""))
+
+        try:
+            parsed = json.loads(payload)
+        except Exception:
+            return {
+                "thought": "Fallback: the model did not return parseable MCP JSON.",
+                "action": "retrieve_reference",
+                "action_input": {
+                    "query": fallback_query,
+                    "subflow": str(scenario.get("subflow", "")),
+                    "top_k": self.reference_top_k,
+                },
+                "fallback_used": True,
+            }
+
+        action_input = parsed.get("action_input", {})
+        if not isinstance(action_input, dict):
+            action_input = {}
+        query_text = str(action_input.get("query") or parsed.get("query") or "").strip()
+        if not query_text:
+            query_text = fallback_query
+            fallback_used = True
+        else:
+            fallback_used = False
+        try:
+            top_k = int(action_input.get("top_k", self.reference_top_k))
+        except Exception:
+            top_k = self.reference_top_k
+
+        return {
+            "thought": str(parsed.get("thought", "")).strip(),
+            "action": "retrieve_reference",
+            "action_input": {
+                "query": query_text,
+                "subflow": str(action_input.get("subflow") or scenario.get("subflow", "")),
+                "top_k": max(1, top_k),
+            },
+            "fallback_used": fallback_used,
+        }
+
+    def _plan_reference_lookup(
+        self,
+        context: str,
+        scenario: dict[str, Any],
+        verbose: bool = False,
+    ) -> dict[str, Any]:
+        """Ask the model to produce an MCP-style reference lookup query."""
+        if not self.reference_sections or self.reference_top_k <= 0:
+            return {
+                "thought": "No reference sections are available.",
+                "query_text": "",
+                "top_k": self.reference_top_k,
+                "raw_output": "",
+                "tool_call": {},
+                "messages": [],
+                "fallback_used": False,
+            }
+
+        flow = str(scenario.get("flow", ""))
+        subflow = str(scenario.get("subflow", ""))
+        recent_context = self._recent_context_excerpt(context)
+        user_prompt = _REFERENCE_QUERY_PROMPT.format(
+            context=recent_context,
+            flow=flow,
+            subflow=subflow,
+            top_k=self.reference_top_k,
+        )
+        messages = [
+            {"role": "system", "content": self._build_system_prompt(scenario)},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        raw_output = ""
+        try:
+            from llm import chat
+            raw_output = chat(
+                messages,
+                model=self.model,
+                api_key=self.api_key,
+                base_url=self.base_url,
+                temperature=0.0,
+                max_tokens=256,
+                response_logger=self._response_logger,
+            ).strip()
+        except Exception as exc:
+            if verbose:
+                print(f"    reference query planning error: {exc}")
+
+        tool_call = self._parse_reference_tool_call(raw_output, scenario, context)
+        action_input = tool_call.get("action_input", {})
+        return {
+            "thought": tool_call.get("thought", ""),
+            "query_text": str(action_input.get("query", "")),
+            "top_k": int(action_input.get("top_k", self.reference_top_k)),
+            "raw_output": raw_output,
+            "tool_call": tool_call,
+            "messages": messages,
+            "fallback_used": bool(tool_call.get("fallback_used", False)),
+        }
+
+    def _lookup_reference(
+        self,
+        query_text: str,
+        context: str,
+        scenario: dict[str, Any],
+        top_k: int | None = None,
+    ) -> dict[str, Any]:
+        """Return compact reference snippets relevant to the model-written query."""
+        requested_top_k = max(1, int(top_k or self.reference_top_k))
         query = {
+            "query_text": query_text,
             "subflow": str(scenario.get("subflow", "")),
-            "top_k": self.reference_top_k,
+            "top_k": requested_top_k,
             "max_chars": self.reference_max_chars,
         }
-        if not self.reference_sections or self.reference_top_k <= 0:
+        if not self.reference_sections or requested_top_k <= 0:
             return {
                 "tool": "retrieve_reference",
                 "query": query,
@@ -389,7 +597,10 @@ class ABCDAgent(AbstractTodAgent):
             }
 
         subflow = str(scenario.get("subflow", "")).replace("_", " ")
-        query_tokens = _tokenize_for_lookup(context + " " + subflow)
+        query_tokens = _tokenize_for_lookup(query_text + " " + subflow)
+        context_tokens = _tokenize_for_lookup(self._recent_context_excerpt(context, max_lines=4))
+        if not query_tokens:
+            query_tokens = context_tokens | _tokenize_for_lookup(subflow)
         query["query_tokens"] = sorted(query_tokens)[:80]
         if not query_tokens:
             return {
@@ -411,6 +622,7 @@ class ABCDAgent(AbstractTodAgent):
             score += 4.0 * len(query_tokens & title_tokens)
             score += 5.0 * len(query_tokens & canonical_tokens)
             score += 1.0 * len(query_tokens & body_tokens)
+            score += 0.25 * len(context_tokens & body_tokens)
             # Common action names are especially useful for AST guidance.
             if any(tok in canonical_tokens for tok in ("verify", "identity", "account", "order")):
                 score += 0.25
@@ -430,7 +642,7 @@ class ABCDAgent(AbstractTodAgent):
                     continue
                 seen_actions.add(canonical_title)
                 scored.append((0.0, section))
-                if len(scored) >= self.reference_top_k:
+                if len(scored) >= requested_top_k:
                     break
 
         scored.sort(key=lambda item: (-item[0], _canonical_reference_title(item[1]["title"]), item[1]["title"]))
@@ -440,7 +652,7 @@ class ABCDAgent(AbstractTodAgent):
         ]
         used_chars = sum(len(p) for p in parts)
         selected_sections: list[dict[str, Any]] = []
-        for _, section in scored[:self.reference_top_k]:
+        for _, section in scored[:requested_top_k]:
             display_title = _canonical_reference_title(section["title"])
             snippet = section["body"].strip()
             if len(snippet) > 600:
