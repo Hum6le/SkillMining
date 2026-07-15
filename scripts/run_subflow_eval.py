@@ -220,9 +220,18 @@ def evaluate_agent_on_subflow(
     text_result = evaluate_text_records(preds, refs)
 
     # AST from turn results
-    from eval_tod.abcd.agent import compute_ast_from_turn_results
+    from eval_tod.abcd.agent import (
+        compute_ast_from_turn_results,
+        turn_results_to_abcd_predictions,
+    )
+    from eval_tod.abcd.data import extract_ground_truth
+    from eval_tod.abcd.metrics import evaluate_abcd
+
     ast_scores = compute_ast_from_turn_results(test_convs, turn_results)
     ast_mean = sum(s["ast_score"] for s in ast_scores) / max(len(ast_scores), 1)
+    abcd_preds = turn_results_to_abcd_predictions(turn_results, test_convs)
+    all_gt = [extract_ground_truth(conv) for conv in test_convs]
+    abcd_eval = evaluate_abcd(all_gt, abcd_preds)
 
     return {
         "label": label,
@@ -237,6 +246,13 @@ def evaluate_agent_on_subflow(
             "meteor": round(text_result["meteor"], 4),
         },
         "ast_mean": round(ast_mean, 4),
+        "ast_cds": {
+            "ast_joint": round(abcd_eval.ast.joint_accuracy, 4),
+            "ast_action_name": round(abcd_eval.ast.action_name_accuracy, 4),
+            "ast_slot_value": round(abcd_eval.ast.slot_value_accuracy, 4),
+            "cds_overall": round(abcd_eval.cds.overall_cds, 4),
+            "num_action_turns": abcd_eval.ast.total_action_turns,
+        },
     }
 
 
@@ -381,7 +397,9 @@ def main():
                      f"BLEU-4={seed_result['text']['bleu_4']:.1f}  "
                      f"ROUGE-L={seed_result['text']['rouge_l']:.4f}  "
                      f"METEOR={seed_result['text']['meteor']:.4f}  "
-                     f"AST={seed_result['ast_mean']:.4f}")
+                     f"AST={seed_result['ast_cds']['ast_joint']:.4f}  "
+                     f"Action={seed_result['ast_cds']['ast_action_name']:.4f}  "
+                     f"Slot={seed_result['ast_cds']['ast_slot_value']:.4f}")
 
         # ── 4. Mined Skill ────────────────────────────────────
         log.info("  Mined skill evaluation...")
@@ -402,14 +420,19 @@ def main():
                  f"BLEU-4={mined_result['text']['bleu_4']:.1f}  "
                  f"ROUGE-L={mined_result['text']['rouge_l']:.4f}  "
                  f"METEOR={mined_result['text']['meteor']:.4f}  "
-                 f"AST={mined_result['ast_mean']:.4f}")
+                 f"AST={mined_result['ast_cds']['ast_joint']:.4f}  "
+                 f"Action={mined_result['ast_cds']['ast_action_name']:.4f}  "
+                 f"Slot={mined_result['ast_cds']['ast_slot_value']:.4f}")
 
         # ── 5. Delta ──────────────────────────────────────────
         delta = {}
         if seed_result:
             delta["bert_f1"] = round(mined_result['text']['bert_f1'] - seed_result['text']['bert_f1'], 4)
-            delta["ast"] = round(mined_result['ast_mean'] - seed_result['ast_mean'], 4)
-            log.info(f"  Δ BERT={delta['bert_f1']:+.4f}  Δ AST={delta['ast']:+.4f}")
+            delta["ast"] = round(mined_result['ast_cds']['ast_joint'] - seed_result['ast_cds']['ast_joint'], 4)
+            delta["action"] = round(mined_result['ast_cds']['ast_action_name'] - seed_result['ast_cds']['ast_action_name'], 4)
+            delta["slot"] = round(mined_result['ast_cds']['ast_slot_value'] - seed_result['ast_cds']['ast_slot_value'], 4)
+            log.info(f"  Δ BERT={delta['bert_f1']:+.4f}  Δ AST={delta['ast']:+.4f}  "
+                     f"ΔAction={delta['action']:+.4f}  ΔSlot={delta['slot']:+.4f}")
 
         all_results[subflow] = {
             "train_sessions": len(train_convs),
@@ -428,22 +451,26 @@ def main():
     print(f"{'='*55}")
     has_seed = any(r.get("seed") for r in all_results.values())
     if has_seed:
-        print(f"{'Subflow':35s} {'ΔBERT':>8s} {'ΔAST':>8s} {'Seed':>8s} {'Mined':>8s}")
+        print(f"{'Subflow':35s} {'ΔBERT':>8s} {'ΔAST':>8s} {'ΔAct':>8s} {'ΔSlot':>8s} {'Seed':>8s} {'Mined':>8s}")
     else:
-        print(f"{'Subflow':35s} {'BERT':>8s} {'BLEU-4':>8s} {'ROUGE-L':>8s} {'METEOR':>8s} {'AST':>8s}")
+        print(f"{'Subflow':35s} {'BERT':>8s} {'BLEU-4':>8s} {'ROUGE-L':>8s} {'METEOR':>8s} {'AST':>8s} {'Action':>8s} {'Slot':>8s}")
     print("-" * 72)
     for sf, r in sorted(all_results.items(),
                         key=lambda x: -(x[1]["mined"]["text"]["bert_f1"])):
         m = r["mined"]["text"]["bert_f1"]
         if has_seed and r.get("seed"):
             d = r["delta"]
-            s = r["seed"]["text"]["bert_f1"]
-            print(f"{sf:35s} {d.get('bert_f1', 0):+.4f} {d.get('ast', 0):+.4f} {s:.4f} {m:.4f}")
+            s = r["seed"]["ast_cds"]["ast_joint"]
+            mined_ast = r["mined"]["ast_cds"]["ast_joint"]
+            print(f"{sf:35s} {d.get('bert_f1', 0):+.4f} {d.get('ast', 0):+.4f} "
+                  f"{d.get('action', 0):+.4f} {d.get('slot', 0):+.4f} {s:.4f} {mined_ast:.4f}")
         else:
             print(f"{sf:35s} {m:.4f} {r['mined']['text']['bleu_4']:8.1f} "
                   f"{r['mined']['text']['rouge_l']:8.4f} "
                   f"{r['mined']['text']['meteor']:8.4f} "
-                  f"{r['mined']['ast_mean']:.4f}")
+                  f"{r['mined']['ast_cds']['ast_joint']:.4f} "
+                  f"{r['mined']['ast_cds']['ast_action_name']:.4f} "
+                  f"{r['mined']['ast_cds']['ast_slot_value']:.4f}")
 
     (OUT_DIR / "summary.json").write_text(
         json.dumps(all_results, indent=2, ensure_ascii=False), encoding="utf-8")

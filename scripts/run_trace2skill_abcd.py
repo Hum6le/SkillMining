@@ -24,6 +24,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -79,15 +80,47 @@ class _RateLimitedChat:
         return self._chat_fn(*args, **kwargs)
 
 
-def _install_rate_limited_chat(qps: float):
-    """Patch llm.chat so all project calls in this process share one limiter."""
+class _RetryingChat:
+    """Thread-safe-ish retry wrapper for transient LLM transport failures."""
+
+    def __init__(self, chat_fn, max_retries: int, base_delay: float):
+        self._chat_fn = chat_fn
+        self._max_retries = max(0, max_retries)
+        self._base_delay = max(0.0, base_delay)
+
+    def __call__(self, *args, **kwargs):
+        last_exc: Exception | None = None
+        for attempt in range(self._max_retries + 1):
+            try:
+                return self._chat_fn(*args, **kwargs)
+            except Exception as exc:
+                last_exc = exc
+                if attempt >= self._max_retries:
+                    break
+                delay = self._base_delay * (2 ** attempt)
+                logging.getLogger("abcd_trace2skill").warning(
+                    "LLM call failed (%s); retry %d/%d after %.1fs",
+                    exc,
+                    attempt + 1,
+                    self._max_retries,
+                    delay,
+                )
+                if delay > 0:
+                    time.sleep(delay)
+        raise last_exc  # type: ignore[misc]
+
+
+def _install_llm_wrappers(qps: float, max_retries: int, retry_base_delay: float):
+    """Patch llm.chat so project calls share rate limits and retry policy."""
     import llm
 
     global chat
     original_chat = llm.chat
-    limited_chat = _RateLimitedChat(original_chat, qps)
-    llm.chat = limited_chat
-    chat = limited_chat
+    wrapped_chat = _RateLimitedChat(original_chat, qps)
+    if max_retries > 0:
+        wrapped_chat = _RetryingChat(wrapped_chat, max_retries, retry_base_delay)
+    llm.chat = wrapped_chat
+    chat = wrapped_chat
     return original_chat
 
 
@@ -859,7 +892,7 @@ def _run_skill_evolution(
 
 def run_pipeline(args) -> PipelineOutputs:
     model = args.model
-    _install_rate_limited_chat(args.llm_qps)
+    _install_llm_wrappers(args.llm_qps, args.llm_max_retries, args.llm_retry_base_delay)
 
     train_convs, test_convs, source_info = _load_conversations(args)
     if args.max_train:
@@ -867,8 +900,14 @@ def run_pipeline(args) -> PipelineOutputs:
     if args.max_test:
         test_convs = test_convs[:args.max_test]
 
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    out_dir = (Path(args.output_dir) / f"abcd_trace2skill_{timestamp}").resolve()
+    resume_dir = getattr(args, "resume_dir", None)
+    if resume_dir:
+        out_dir = Path(resume_dir).resolve()
+        if not out_dir.exists():
+            raise FileNotFoundError(f"--resume-dir does not exist: {out_dir}")
+    else:
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        out_dir = (Path(args.output_dir) / f"abcd_trace2skill_{timestamp}").resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
     logging.basicConfig(
@@ -876,13 +915,20 @@ def run_pipeline(args) -> PipelineOutputs:
         format="%(asctime)s %(levelname)s: %(message)s",
         datefmt="%H:%M:%S",
         handlers=[
-            logging.FileHandler(out_dir / "run.log"),
+            logging.FileHandler(out_dir / "run.log", mode="a" if resume_dir else "w"),
             logging.StreamHandler(sys.stdout),
         ],
     )
     log = logging.getLogger("abcd_trace2skill")
+    if resume_dir:
+        log.info("Resuming existing run from %s", out_dir)
 
     response_logger = ResponseLogger(out_dir / "llm_responses")
+
+    previous_summary: dict[str, Any] = {}
+    summary_path = out_dir / "summary.json"
+    if resume_dir and summary_path.exists():
+        previous_summary = json.loads(summary_path.read_text(encoding="utf-8"))
 
     seed_skill_path = Path(args.skill_path).resolve()
     seed_skill_text = _load_skill_text(seed_skill_path)
@@ -891,9 +937,12 @@ def run_pipeline(args) -> PipelineOutputs:
     evolved_skill_dir = out_dir / "evolved_skill"
     evolved_skill_dir.mkdir(parents=True, exist_ok=True)
     evolved_skill_path = evolved_skill_dir / "SKILL.md"
-    evolved_skill_path.write_text(seed_skill_text, encoding="utf-8")
+    if resume_dir and evolved_skill_path.exists():
+        log.info("Using existing evolved skill: %s", evolved_skill_path)
+    else:
+        evolved_skill_path.write_text(seed_skill_text, encoding="utf-8")
     seed_references_dir = seed_skill_path.parent / "references"
-    if seed_references_dir.exists() and seed_references_dir.is_dir():
+    if seed_references_dir.exists() and seed_references_dir.is_dir() and not resume_dir:
         shutil.copytree(seed_references_dir, evolved_skill_dir / "references", dirs_exist_ok=True)
 
     if source_info["mode"] == "files":
@@ -913,25 +962,38 @@ def run_pipeline(args) -> PipelineOutputs:
             source_info["test_split"],
         )
     log.info("LLM rate limit: %.2f QPS", args.llm_qps)
+    log.info(
+        "LLM retries: max_retries=%d, base_delay=%.1fs",
+        args.llm_max_retries,
+        args.llm_retry_base_delay,
+    )
 
     # Stage 1: seed run on training set to mine failures
-    log.info("Stage 1: seed run on training set")
-    seed_train_agent = _build_agent(model, seed_skill_text, response_logger, seed_reference_text)
-    seed_train_turns = seed_train_agent.generate_all_turn_predictions(
-        train_convs,
-        predict_actions=True,
-    )
-    (out_dir / "seed_train_turns.json").write_text(
-        json.dumps(seed_train_turns, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    train_ast_scores = compute_ast_from_turn_results(train_convs, seed_train_turns)
-    train_eval = _evaluate_turn_results(train_convs, seed_train_turns, "seed_train")
-    (out_dir / "seed_train_eval.json").write_text(
-        json.dumps(train_eval, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    log.info("Seed train: %s", train_eval["summary"])
+    seed_train_turns_path = out_dir / "seed_train_turns.json"
+    seed_train_eval_path = out_dir / "seed_train_eval.json"
+    if resume_dir and seed_train_turns_path.exists() and seed_train_eval_path.exists():
+        log.info("Stage 1: reusing existing seed train outputs")
+        seed_train_turns = json.loads(seed_train_turns_path.read_text(encoding="utf-8"))
+        train_ast_scores = compute_ast_from_turn_results(train_convs, seed_train_turns)
+        train_eval = json.loads(seed_train_eval_path.read_text(encoding="utf-8"))
+    else:
+        log.info("Stage 1: seed run on training set")
+        seed_train_agent = _build_agent(model, seed_skill_text, response_logger, seed_reference_text)
+        seed_train_turns = seed_train_agent.generate_all_turn_predictions(
+            train_convs,
+            predict_actions=True,
+        )
+        seed_train_turns_path.write_text(
+            json.dumps(seed_train_turns, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        train_ast_scores = compute_ast_from_turn_results(train_convs, seed_train_turns)
+        train_eval = _evaluate_turn_results(train_convs, seed_train_turns, "seed_train")
+        seed_train_eval_path.write_text(
+            json.dumps(train_eval, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        log.info("Seed train: %s", train_eval["summary"])
 
     seed_failed_cases = _build_ast_failure_cases(
         train_convs,
@@ -954,14 +1016,47 @@ def run_pipeline(args) -> PipelineOutputs:
         args.evolution_batch_size if args.evolution_batch_size > 0 else "all",
     )
 
-    changelog: list[str] = []
-    batch_history: list[dict[str, Any]] = []
-    total_failed_cases = 0
+    existing_batch_history: list[dict[str, Any]] = []
+    batch_history_path = out_dir / "batch_history.json"
+    if resume_dir and batch_history_path.exists():
+        existing_batch_history = json.loads(batch_history_path.read_text(encoding="utf-8"))
+    elif resume_dir and previous_summary.get("batch_history"):
+        existing_batch_history = previous_summary.get("batch_history", [])
+    if resume_dir:
+        by_batch = {
+            str(row.get("batch")): row
+            for row in existing_batch_history
+            if row.get("batch")
+        }
+        for batch_summary_path in sorted((out_dir / "train_batches").glob("batch_*/batch_summary.json")):
+            row = json.loads(batch_summary_path.read_text(encoding="utf-8"))
+            if row.get("batch"):
+                by_batch[str(row["batch"])] = row
+        existing_batch_history = [by_batch[key] for key in sorted(by_batch)]
+
+    completed_batches = {
+        str(row.get("batch")): row
+        for row in existing_batch_history
+        if row.get("batch") and row.get("status", "completed") != "error"
+    }
+    changelog: list[str] = list(previous_summary.get("changelog", [])) if resume_dir else []
+    if resume_dir and not changelog:
+        for row in existing_batch_history:
+            label = str(row.get("batch", "batch_unknown"))
+            changelog.extend(f"{label}: {entry}" for entry in row.get("changelog", []))
+    batch_history: list[dict[str, Any]] = [
+        row for row in existing_batch_history if row.get("status", "completed") != "error"
+    ]
+    total_failed_cases = sum(int(row.get("failed_cases", 0)) for row in batch_history)
 
     for batch_idx, batch_convs in enumerate(train_batches, start=1):
         label = f"batch_{batch_idx:04d}"
         batch_dir = out_dir / "train_batches" / label
         batch_dir.mkdir(parents=True, exist_ok=True)
+
+        if label in completed_batches:
+            log.info("Stage 2.%d: %s already completed; skipping", batch_idx, label)
+            continue
 
         current_skill_text = evolved_skill_path.read_text(encoding="utf-8")
         current_reference_text = load_trace2skill_references(evolved_skill_path)
@@ -1014,30 +1109,55 @@ def run_pipeline(args) -> PipelineOutputs:
         batch_changelog: list[str] = []
         parsed_path: Path | None = None
         if batch_failed_cases:
-            error_dir = out_dir / "error_analysis" / label
-            parsed_path = _run_error_analysis(
-                batch_failed_cases,
-                error_dir,
-                model,
-                response_logger,
-            )
-            log.info("%s parsed error analysis -> %s", label, parsed_path)
+            try:
+                error_dir = out_dir / "error_analysis" / label
+                parsed_path = _run_error_analysis(
+                    batch_failed_cases,
+                    error_dir,
+                    model,
+                    response_logger,
+                )
+                log.info("%s parsed error analysis -> %s", label, parsed_path)
 
-            batch_changelog = _run_skill_evolution(
-                parsed_path,
-                evolved_skill_path,
-                out_dir / "intermediates" / label,
-                model,
-                response_logger,
-            )
-            changelog.extend(f"{label}: {entry}" for entry in batch_changelog)
-            log.info("%s applied %d evolution changes", label, len(batch_changelog))
+                batch_changelog = _run_skill_evolution(
+                    parsed_path,
+                    evolved_skill_path,
+                    out_dir / "intermediates" / label,
+                    model,
+                    response_logger,
+                )
+                changelog.extend(f"{label}: {entry}" for entry in batch_changelog)
+                log.info("%s applied %d evolution changes", label, len(batch_changelog))
+            except Exception as exc:
+                error_record = {
+                    "batch": label,
+                    "status": "error",
+                    "num_conversations": len(batch_convs),
+                    "failed_cases": len(batch_failed_cases),
+                    "eval": batch_eval,
+                    "parsed_error_analysis": str(parsed_path) if parsed_path else None,
+                    "changelog": batch_changelog,
+                    "pre_skill_lines": pre_skill_lines,
+                    "post_skill_lines": len(evolved_skill_path.read_text(encoding="utf-8").splitlines()),
+                    "error": str(exc),
+                    "traceback": traceback.format_exc(),
+                }
+                (batch_dir / "batch_summary.json").write_text(
+                    json.dumps(error_record, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                if args.continue_on_batch_error:
+                    batch_history.append(error_record)
+                    log.exception("%s failed; continuing because --continue-on-batch-error is set", label)
+                    continue
+                raise
         else:
             log.info("%s has no AST failures; skill unchanged", label)
 
         post_skill_lines = len(evolved_skill_path.read_text(encoding="utf-8").splitlines())
         batch_record = {
             "batch": label,
+            "status": "completed",
             "num_conversations": len(batch_convs),
             "failed_cases": len(batch_failed_cases),
             "eval": batch_eval,
@@ -1120,11 +1240,15 @@ def run_pipeline(args) -> PipelineOutputs:
             "max_test": args.max_test,
             "model": model,
             "llm_qps": args.llm_qps,
+            "llm_max_retries": args.llm_max_retries,
+            "llm_retry_base_delay": args.llm_retry_base_delay,
             "skill_path": str(seed_skill_path),
             "seed_reference_chars": len(seed_reference_text),
             "skip_seed_test": args.skip_seed_test,
             "evolution_batch_size": args.evolution_batch_size,
             "max_evolution_batches": args.max_evolution_batches,
+            "resume_dir": str(out_dir) if resume_dir else None,
+            "continue_on_batch_error": args.continue_on_batch_error,
         },
         "seed_train": train_eval,
         "seed_test": seed_test_eval,
@@ -1192,8 +1316,33 @@ def main() -> None:
         default=DEFAULT_LLM_QPS,
         help="Maximum LLM requests per second in this process; set <=0 to disable",
     )
+    parser.add_argument(
+        "--llm-max-retries",
+        type=int,
+        default=3,
+        help="Retry each failed LLM call up to this many times before surfacing the error",
+    )
+    parser.add_argument(
+        "--llm-retry-base-delay",
+        type=float,
+        default=2.0,
+        help="Base delay in seconds for exponential LLM retry backoff",
+    )
     parser.add_argument("--skill-path", default=DEFAULT_SKILL_PATH)
     parser.add_argument("--output-dir", default="outputs")
+    parser.add_argument(
+        "--resume-dir",
+        default=None,
+        help=(
+            "Resume an existing output directory. Reuses evolved_skill/SKILL.md, "
+            "seed train outputs, and skips completed train_batches/*/batch_summary.json entries."
+        ),
+    )
+    parser.add_argument(
+        "--continue-on-batch-error",
+        action="store_true",
+        help="Record a failed training batch and continue with the next batch",
+    )
     parser.add_argument(
         "--skip-seed-test",
         action="store_true",
