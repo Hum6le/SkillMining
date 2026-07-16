@@ -69,8 +69,6 @@ class ModelSettings:
     
     def to_dict(self) -> dict:
         result = {"temperature": self.temperature}
-        if self.max_tokens:
-            result["max_tokens"] = self.max_tokens
         if self.stop:
             result["stop"] = self.stop
         if self.extra_body:
@@ -355,6 +353,8 @@ class OpenAIClient(LLMClient):
         if settings:
             settings_dict = settings.to_dict()
             config.update(settings_dict)
+        config.pop("max_tokens", None)
+        config.pop("max_completion_tokens", None)
         
         # Check cache
         cache_key = _make_cache_key(self.model, openai_messages)
@@ -533,12 +533,17 @@ class ApiChatClient(LLMClient):
 
     def _build_params(self, settings: ModelSettings | None) -> dict:
         params = self.generation_config.copy()
-        if not settings:
-            return params
-        settings_dict = settings.to_dict()
-        extra_body = settings_dict.pop("extra_body", {})
-        params.update(settings_dict)
+        if settings:
+            settings_dict = settings.to_dict()
+            extra_body = settings_dict.pop("extra_body", {})
+            params.update(settings_dict)
+        else:
+            extra_body = {}
+        params.pop("max_tokens", None)
+        params.pop("max_completion_tokens", None)
         if extra_body:
+            extra_body.pop("max_tokens", None)
+            extra_body.pop("max_completion_tokens", None)
             params.update(extra_body)
         return params
 

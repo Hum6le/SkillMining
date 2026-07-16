@@ -141,12 +141,10 @@ class _ChatClientAdapter:
 
     def chat(self, messages, settings=None) -> str:
         temperature = getattr(settings, "temperature", 0.3) if settings is not None else 0.3
-        max_tokens = getattr(settings, "max_tokens", None) if settings is not None else None
         return chat(
             messages,
             model=self.model,
             temperature=temperature,
-            max_tokens=max_tokens,
             response_logger=self.response_logger,
         )
 
@@ -677,7 +675,6 @@ def _run_verified_abcd_error_analysis(
                 ],
                 model=model,
                 temperature=0.2,
-                max_tokens=4096,
                 response_logger=response_logger,
             ).strip()
             corrections = _extract_corrections(report)
@@ -876,7 +873,6 @@ def _run_skill_evolution(
         max_workers=3,
         max_merge_levels=5,
         temperature=0.3,
-        max_tokens=None,
         verbose=True,
         dry_run=False,
         prompt_variant="generic",

@@ -258,7 +258,6 @@ class ErrorAnalyzer:
             model=self.model,
             api_key=self.api_key,
             base_url=self.base_url,
-            max_tokens=2048,
             temperature=0.3,
             response_logger=self._response_logger,
         )

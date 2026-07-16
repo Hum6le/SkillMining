@@ -217,7 +217,7 @@ def build_classify_prompt(
 
 def call_llm(prompt: str) -> str:
     """调用 LLM API 并返回文本。"""
-    return _chat(prompt, temperature=0.0, max_tokens=3072)
+    return _chat(prompt, temperature=0.0)
 
 
 def parse_classify_output(text: str) -> Tuple[List[str], List[str]]:

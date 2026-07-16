@@ -45,7 +45,6 @@ def _call_deepseek_api(prompt: str) -> Dict[str, Any]:
         "model": DEEPSEEK_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.3,
-        "max_tokens": 8192,
     }
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")

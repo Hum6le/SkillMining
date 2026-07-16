@@ -243,7 +243,6 @@ class SkillSelectingAgent(AbstractTodAgent):
                 api_key=self.api_key,
                 base_url=self.base_url,
                 temperature=0.3,
-                max_tokens=512,
                 response_logger=self._response_logger,
             ).strip()
         except Exception as exc:

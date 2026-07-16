@@ -10,7 +10,7 @@ def call_llm(
     system_prompt: str,
     user_message: str,
     model: str = "deepseek-chat",
-    max_tokens: int = 1024,
+    max_tokens: int | None = None,
     temperature: float = 0.3,
     api_key: str | None = None,
     base_url: str | None = None,
@@ -28,7 +28,6 @@ def call_llm(
         model=model,
         api_key=api_key,
         base_url=base_url,
-        max_tokens=max_tokens,
         temperature=temperature,
     )
 
@@ -37,7 +36,7 @@ def call_llm_structured(
     system_prompt: str,
     user_message: str,
     model: str = "deepseek-chat",
-    max_tokens: int = 1024,
+    max_tokens: int | None = None,
     temperature: float = 0.3,
     api_key: str | None = None,
     base_url: str | None = None,
@@ -48,7 +47,6 @@ def call_llm_structured(
             system_prompt=system_prompt,
             user_message=user_message,
             model=model,
-            max_tokens=max_tokens,
             temperature=temperature,
             api_key=api_key,
             base_url=base_url,

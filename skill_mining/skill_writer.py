@@ -233,7 +233,7 @@ def build_skill_md_from_subgraph(
         )
         try:
             from llm import chat
-            text = chat(prompt, temperature=0.0, max_tokens=3072).strip()
+            text = chat(prompt, temperature=0.0).strip()
             if text.startswith("```markdown"):
                 text = text[len("```markdown"):].strip()
             if text.startswith("```"):
@@ -494,7 +494,7 @@ def generate_skill_md_llm(
     prompt = build_skill_md_prompt(subflow, operators, op_snippets, coverage_pct, num_sessions)
     try:
         from llm import chat
-        text = chat(prompt, temperature=0.0, max_tokens=2048).strip()
+        text = chat(prompt, temperature=0.0).strip()
         if text.startswith("```markdown"):
             text = text[len("```markdown"):].strip()
         if text.startswith("```"):

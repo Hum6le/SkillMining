@@ -104,6 +104,5 @@ COMBINER_DEFINITION: dict[str, str] = {
 # ═══════════════════════════════════════════════════════════════════
 LLM_CONFIG: dict = {
     "model": "deepseek-chat",
-    "max_tokens": 1024,
     "temperature": 0.3,
 }

@@ -244,7 +244,7 @@ def analyze_case(
 """
 
     try:
-        return chat(prompt, temperature=0.0, max_tokens=1024).strip()
+        return chat(prompt, temperature=0.0).strip()
     except Exception as e:
         return f"*LLM error: {e}*"
 
@@ -299,7 +299,7 @@ def generate_summary(
 Markdown 格式。"""
 
     try:
-        return chat(prompt, temperature=0.0, max_tokens=2048).strip()
+        return chat(prompt, temperature=0.0).strip()
     except Exception as e:
         return f"*LLM error: {e}*\n\n{summaries}"
 

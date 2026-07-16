@@ -373,7 +373,6 @@ class ToolBasedTodAgent:
             model=self.model,
             api_key=self.api_key,
             base_url=self.base_url,
-            max_tokens=1024,
             temperature=0.3,
             response_logger=self._response_logger,
         )

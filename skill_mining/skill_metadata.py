@@ -33,7 +33,7 @@ _OUTPUT_DIR = _SKILL_DIR / "output" / "abcd_intent"
 
 
 def call_llm(prompt: str) -> str:
-    return _chat(prompt, temperature=0.0, max_tokens=3072)
+    return _chat(prompt, temperature=0.0)
 
 
 def generate_skill_metadata(

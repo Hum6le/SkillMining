@@ -25,6 +25,7 @@ from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from config import LLM_CONFIG_GPT
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) in sys.path:
@@ -270,8 +271,6 @@ def analyze_case(
     reference_text: str,
     model: str,
 ) -> str:
-    from llm import chat
-
     prompt = f"""Analyze one ABCD action-turn error for a single method.
 
 Method: {method_name}
@@ -328,9 +327,88 @@ Respond in Chinese. Use this markdown format:
 **改进建议**: concrete skill/workflow/reference edit.
 """
     try:
-        return chat(prompt, model=model, temperature=0.0, max_tokens=1200).strip()
+        return _chat_nonempty(prompt, model, purpose=f"case analysis {entry['convo_id']} action@{entry['action_turn']}")
     except Exception as exc:
         return f"### {entry['convo_id']} action@{entry['action_turn']}\n\n*LLM error: {exc}*"
+
+
+def _chat_nonempty(prompt: str, model: str, *, purpose: str) -> str:
+    from llm import chat
+
+    response = chat(prompt, model=model, temperature=0.0, config=LLM_CONFIG_GPT).strip()
+    if not response:
+        raise RuntimeError(f"LLM returned an empty response during {purpose}")
+    return response
+
+
+def _chunk_texts(texts: list[str], max_chars: int = 12000) -> list[str]:
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    sep = "\n\n---\n\n"
+    for text in texts:
+        item = text.strip()
+        if not item:
+            continue
+        extra = len(item) + (len(sep) if current else 0)
+        if current and current_len + extra > max_chars:
+            chunks.append(sep.join(current))
+            current = [item]
+            current_len = len(item)
+        else:
+            current.append(item)
+            current_len += extra
+    if current:
+        chunks.append(sep.join(current))
+    return chunks
+
+
+def _summarize_analysis_chunks(
+    method_name: str,
+    subflow: str,
+    stats: dict[str, Any],
+    analyses: list[str],
+    model: str,
+    prompt_dir: Path | None = None,
+) -> str:
+    chunks = _chunk_texts(analyses)
+    if len(chunks) <= 1:
+        return chunks[0] if chunks else ""
+
+    log = logging.getLogger("error_analysis_single")
+    summaries: list[str] = []
+    for idx, chunk in enumerate(chunks, start=1):
+        log.info("Summarizing case-analysis chunk %d/%d", idx, len(chunks))
+        prompt = f"""Summarize one chunk of ABCD single-method error analyses.
+
+Method: {method_name}
+Subflow: {subflow}
+Overall metrics:
+- AST joint: {stats['ast_joint']}
+- Action-name accuracy: {stats['ast_action_name']}
+- Slot-value accuracy: {stats['ast_slot_value']}
+
+Chunk {idx}/{len(chunks)} case analyses:
+{chunk}
+
+Respond in Chinese. Extract:
+1. repeated root causes
+2. repeated ReAct/retrieval problems
+3. repeated action/slot failure patterns
+4. concrete skill/reference fixes
+"""
+        if prompt_dir is not None:
+            prompt_dir.mkdir(parents=True, exist_ok=True)
+            (prompt_dir / f"chunk_summary_{idx:04d}_prompt.md").write_text(
+                prompt,
+                encoding="utf-8",
+            )
+        try:
+            summaries.append(_chat_nonempty(prompt, model, purpose=f"chunk summary {idx}"))
+        except Exception as exc:
+            log.warning("Chunk summary %d failed: %s", idx, exc)
+            summaries.append(f"## Chunk {idx} summary failed\n\n{chunk[:3000]}")
+    return "\n\n---\n\n".join(summaries)
 
 
 def generate_report(
@@ -339,9 +417,20 @@ def generate_report(
     stats: dict[str, Any],
     analyses: list[str],
     model: str,
+    prompt_dir: Path | None = None,
 ) -> str:
-    summaries = "\n\n---\n\n".join(analyses[:40])
     worst_actions = stats["action_breakdown"][:15]
+    if not analyses:
+        return _fallback_report(method_name, subflow, stats)
+
+    summaries = _summarize_analysis_chunks(
+        method_name,
+        subflow,
+        stats,
+        analyses,
+        model,
+        prompt_dir=prompt_dir,
+    )
 
     prompt = f"""Synthesize a single-method ABCD error analysis report.
 
@@ -360,7 +449,7 @@ Frequent actions:
 {json.dumps(worst_actions, indent=2, ensure_ascii=False)}
 
 Case analyses:
-{summaries[:14000]}
+{summaries}
 
 Respond in Chinese with markdown sections:
 1. Overall conclusion
@@ -370,11 +459,11 @@ Respond in Chinese with markdown sections:
 5. ReAct/retrieval failure patterns, if traces are available
 6. Top 5 concrete improvements to the skill/workflow/reference
 """
-    if not analyses:
-        return _fallback_report(method_name, subflow, stats)
+    if prompt_dir is not None:
+        prompt_dir.mkdir(parents=True, exist_ok=True)
+        (prompt_dir / "final_report_prompt.md").write_text(prompt, encoding="utf-8")
     try:
-        from llm import chat
-        return chat(prompt, model=model, temperature=0.0, max_tokens=2400).strip()
+        return _chat_nonempty(prompt, model, purpose="final report synthesis")
     except Exception as exc:
         return f"*LLM error while generating report: {exc}*\n\n" + _fallback_report(method_name, subflow, stats)
 
@@ -426,7 +515,6 @@ def main() -> None:
     parser.add_argument("--method-name", default="method")
     parser.add_argument("--subflow", default="unknown")
     parser.add_argument("--model", default="deepseek-chat")
-    parser.add_argument("--max-cases", type=int, default=20)
     parser.add_argument("--no-llm", action="store_true", help="Only compute stats and JSON cases")
     parser.add_argument("--output-dir", default="", help="Optional explicit output directory")
     args = parser.parse_args()
@@ -492,12 +580,11 @@ def main() -> None:
     analyses: list[str] = []
     if not args.no_llm:
         cases_to_analyze = (
-            categories["action_ok_slot_wrong"][:args.max_cases]
-            + categories["action_wrong_slot_ok"][:args.max_cases]
-            + categories["both_wrong"][:args.max_cases]
-            + categories["missing_prediction"][:args.max_cases]
+            categories["action_ok_slot_wrong"]
+            + categories["action_wrong_slot_ok"]
+            + categories["both_wrong"]
+            + categories["missing_prediction"]
         )
-        cases_to_analyze = cases_to_analyze[:args.max_cases]
         log.info("LLM analyzing %d cases", len(cases_to_analyze))
         for idx, entry in enumerate(cases_to_analyze, start=1):
             log.info(
@@ -517,7 +604,15 @@ def main() -> None:
         "\n\n---\n\n".join(analyses),
         encoding="utf-8",
     )
-    report = generate_report(args.method_name, args.subflow, stats, analyses, args.model)
+    prompt_dir = out_dir / "prompts"
+    report = generate_report(
+        args.method_name,
+        args.subflow,
+        stats,
+        analyses,
+        args.model,
+        prompt_dir=prompt_dir,
+    )
     (out_dir / "error_report.md").write_text(report, encoding="utf-8")
 
     print("\n" + "=" * 60)
@@ -526,6 +621,7 @@ def main() -> None:
     print(f"Action acc: {stats['ast_action_name']:.4f}")
     print(f"Slot acc:   {stats['ast_slot_value']:.4f}")
     print("Files: stats.json, error_report.md, case_analyses.md, joint_fail.json")
+    print(f"Prompts: {prompt_dir}")
     print("=" * 60)
 
 

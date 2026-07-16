@@ -83,7 +83,8 @@ def chat(
                   of ``{"role": "...", "content": "..."}`` dicts.
         model: Model name (default ``"deepseek-chat"``).
         temperature: Sampling temperature.
-        max_tokens: Max tokens in response (None = model default).
+        max_tokens: Deprecated compatibility argument. Generation length is
+                    intentionally left unrestricted by this wrapper.
         api_key: API key (resolved from env if None).
         base_url: API base URL (resolved from env if None).
         response_logger: Optional ``ResponseLogger`` to record raw I/O.
@@ -122,9 +123,9 @@ def chat(
         "messages": clean,
         "temperature": temperature,
     }
-    if max_tokens is not None:
-        request_kwargs["max_tokens"] = max_tokens
     request_kwargs.update(kwargs)
+    request_kwargs.pop("max_tokens", None)
+    request_kwargs.pop("max_completion_tokens", None)
 
     # Call
     try:

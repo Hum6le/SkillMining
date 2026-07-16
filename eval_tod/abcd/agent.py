@@ -301,7 +301,6 @@ class ABCDAgent(AbstractTodAgent):
                 api_key=self.api_key,
                 base_url=self.base_url,
                 temperature=0.7,
-                max_tokens=256,
                 response_logger=self._response_logger,
             ).strip()
             # Clean up quotes if the model wraps in them
@@ -382,7 +381,7 @@ class ABCDAgent(AbstractTodAgent):
             try:
                 raw_output = chat(
                     messages, model=self.model, api_key=self.api_key,
-                    base_url=self.base_url, temperature=0.7, max_tokens=384,
+                    base_url=self.base_url, temperature=0.7,
                     response_logger=self._response_logger,
                 ).strip()
             except Exception as exc:
@@ -554,7 +553,6 @@ class ABCDAgent(AbstractTodAgent):
                 api_key=self.api_key,
                 base_url=self.base_url,
                 temperature=0.0,
-                max_tokens=256,
                 response_logger=self._response_logger,
             ).strip()
         except Exception as exc:
@@ -844,7 +842,6 @@ class ABCDAgent(AbstractTodAgent):
                 api_key=self.api_key,
                 base_url=self.base_url,
                 temperature=0.0,
-                max_tokens=3072,
             ).strip()
         except Exception as exc:
             print(f"  [ABCD induce] LLM error: {exc}")
