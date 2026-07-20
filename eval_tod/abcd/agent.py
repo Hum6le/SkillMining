@@ -173,6 +173,35 @@ def _canonical_reference_title(title: str) -> str:
     return title.split(":", 1)[0].strip()
 
 
+def _get_original_turn(
+    conversation: dict[str, Any],
+    turn_index: int,
+    fallback_turn: dict[str, Any] | None = None,
+) -> tuple[str, str]:
+    """Return the raw speaker/text for a turn aligned with ``delexed``.
+
+    ABCD stores labels and targets in ``delexed`` but keeps the real entity
+    values in ``original``.  Runtime prompts should use the latter so slot
+    values are observable; action labels still come from ``delexed``.
+    """
+    original = conversation.get("original") or []
+    if 0 <= turn_index < len(original):
+        raw_turn = original[turn_index]
+        if isinstance(raw_turn, dict):
+            return (
+                str(raw_turn.get("speaker", "unknown")),
+                str(raw_turn.get("text", "")).strip(),
+            )
+        if isinstance(raw_turn, (list, tuple)) and len(raw_turn) >= 2:
+            return str(raw_turn[0]), str(raw_turn[1]).strip()
+
+    fallback_turn = fallback_turn or {}
+    return (
+        str(fallback_turn.get("speaker", "unknown")),
+        str(fallback_turn.get("text", "")).strip(),
+    )
+
+
 # ── Agent ──────────────────────────────────────────────────────
 
 class ABCDAgent(AbstractTodAgent):
@@ -263,8 +292,7 @@ class ABCDAgent(AbstractTodAgent):
         history_lines: list[str] = []
         last_agent_idx = -1
         for i, turn in enumerate(delexed):
-            spk = turn.get("speaker", "unknown")
-            txt = turn.get("text", "").strip()
+            spk, txt = _get_original_turn(conversation, i, turn)
             if not txt:
                 continue
             label = {"agent": "Agent", "customer": "Customer", "action": "System"}.get(spk, spk)
@@ -348,8 +376,7 @@ class ABCDAgent(AbstractTodAgent):
             context_lines: list[str] = []
             for i in range(turn_idx):
                 t = delexed[i]
-                spk = t.get("speaker", "unknown")
-                txt = t.get("text", "").strip()
+                spk, txt = _get_original_turn(conversation, i, t)
                 if not txt:
                     continue
                 label_map = {"agent": "Agent", "customer": "Customer", "action": "System"}
@@ -357,6 +384,9 @@ class ABCDAgent(AbstractTodAgent):
 
             context = "\n".join(context_lines)
             reference = str(delexed[turn_idx].get("text", "")).strip()
+            _, reference_original = _get_original_turn(
+                conversation, turn_idx, delexed[turn_idx]
+            )
             if not context or not reference:
                 continue
 
@@ -396,6 +426,7 @@ class ABCDAgent(AbstractTodAgent):
                 "subflow": str(scenario.get("subflow", "")),
                 "flow": str(scenario.get("flow", "")),
                 "context": context,
+                "context_view": "original",
                 "reference_lookup": reference_lookup,
                 "react_trace": [
                     {
@@ -428,6 +459,7 @@ class ABCDAgent(AbstractTodAgent):
                     },
                 ],
                 "reference": reference,
+                "reference_original": reference_original,
                 "prediction": raw_output,
             }
 

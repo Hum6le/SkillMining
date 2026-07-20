@@ -216,7 +216,9 @@ def evaluate_agent_on_subflow(
 
     turn_results = all_turn_results
     preds = [r["prediction"] for r in turn_results]
-    refs = [r["reference"] for r in turn_results]
+    # Runtime prompts use original utterances, so compare generated text
+    # against the aligned original agent utterance when it is available.
+    refs = [r.get("reference_original") or r["reference"] for r in turn_results]
     text_result = evaluate_text_records(preds, refs)
 
     # AST from turn results

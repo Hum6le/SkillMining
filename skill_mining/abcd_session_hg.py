@@ -49,9 +49,13 @@ def abcd_to_operator_results(
 ) -> list[dict]:
     """Convert ABCD action turns to operator_results format.
 
-    Each ABCD ``action`` turn yields one operator pair:
+    Each ABCD ``action`` turn yields one canonical operator pair:
         role = subflow name
         operation = next_action name (e.g. ``pull-up-account``)
+
+    Slot values are deliberately kept outside the operator ID.  They are
+    session evidence, not graph identity: two ``verify-identity`` turns with
+    different customer credentials must map to the same graph node.
 
     Only action turns (``speaker == "action"``) are included; agent
     utterance turns and customer turns are skipped.
@@ -66,7 +70,9 @@ def abcd_to_operator_results(
         convo_id = str(conv.get("convo_id", "?"))
 
         ordered_ops: list[list[str]] = []
-        for turn in conv.get("delexed", []):
+        ordered_operation_slots: list[list[str]] = []
+        operation_details: list[dict[str, Any]] = []
+        for turn_index, turn in enumerate(conv.get("delexed", [])):
             targets = turn.get("targets", [])
             if len(targets) < 3:
                 continue
@@ -77,11 +83,19 @@ def abcd_to_operator_results(
             if not next_action:
                 continue
             slot_values = targets[3] if len(targets) > 3 else []
-            # Build a human-readable operation name
+            # Keep the node canonical; store observed values separately.
             op_name = str(next_action).strip()
-            if slot_values and isinstance(slot_values, list):
-                op_name += ":" + ",".join(str(v)[:20] for v in slot_values)
             ordered_ops.append([subflow, op_name])
+            normalized_slots = (
+                [str(v) for v in slot_values]
+                if isinstance(slot_values, list) else []
+            )
+            ordered_operation_slots.append(normalized_slots)
+            operation_details.append({
+                "turn_index": turn_index,
+                "action": op_name,
+                "slot_values": normalized_slots,
+            })
 
         if not ordered_ops:
             continue
@@ -90,6 +104,8 @@ def abcd_to_operator_results(
             "session_id": convo_id,
             "index": len(results),
             "ordered_operations": ordered_ops,
+            "ordered_operation_slots": ordered_operation_slots,
+            "operation_details": operation_details,
             "dialogue": " ".join(
                 t.get("text", "") for t in conv.get("delexed", [])
             )[:500],
