@@ -85,15 +85,23 @@ class MemoryStore:
             filtered = [e for s, e in scored[:k]]
         return filtered[:k]
 
-    def format_prompt(self, domains: list[str], k: int | None = None) -> str:
+    def format_prompt(
+        self,
+        domains: list[str],
+        k: int | None = None,
+        include_metadata: bool = True,
+    ) -> str:
         """Format retrieved exemplars as few-shot prompt section."""
         exemplars = self.retrieve(domains, k)
         if not exemplars:
             return ""
         lines = ["## Past Successful Examples"]
         for i, ex in enumerate(exemplars, 1):
-            lines.append(f"\n### Example {i}: {', '.join(ex['domains'])}")
-            lines.append(f"Goal: {ex['goal'][:300]}")
+            if include_metadata:
+                lines.append(f"\n### Example {i}: {', '.join(ex['domains'])}")
+                lines.append(f"Goal: {ex['goal'][:300]}")
+            else:
+                lines.append(f"\n### Example {i}")
             if ex.get("trajectory"):
                 lines.append(f"Trajectory:\n{ex['trajectory'][:1000]}")
         return "\n".join(lines) + "\n"

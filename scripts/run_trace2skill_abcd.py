@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import re
 import shutil
 import subprocess
@@ -241,6 +242,7 @@ def _build_agent(
     workflow_text: str,
     response_logger: ResponseLogger,
     reference_text: str = "",
+    expose_scenario_labels: bool = True,
 ) -> ABCDAgent:
     from awm import MemoryStore, WorkflowStore
 
@@ -252,6 +254,7 @@ def _build_agent(
         workflow=workflow,
         memory=MemoryStore(),
         reference_text=reference_text,
+        expose_scenario_labels=expose_scenario_labels,
         response_logger=response_logger,
     )
 
@@ -728,6 +731,7 @@ def _build_ast_failure_cases(
     ast_scores: list[dict[str, Any]],
     *,
     log_dir: Path,
+    hide_scenario_labels: bool = False,
 ) -> list[dict[str, Any]]:
     log_dir = log_dir.resolve()
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -767,13 +771,21 @@ def _build_ast_failure_cases(
             encoding="utf-8",
         )
 
+        scenario = conv.get("scenario", {})
         failed_cases.append({
             "dialogue_id": f"abcd-{convo_id}",
             "failure_log_path": str(log_path),
             "ast_mismatches": ast_mismatches,
             "ast_mismatch_report": ast_mismatch_report,
-            "domains": [str(conv.get("scenario", {}).get("subflow", "unknown"))],
-            "goal_description": json.dumps(conv.get("scenario", {}), ensure_ascii=False),
+            "domains": (
+                [str(scenario.get("subflow", "unknown"))]
+                if not hide_scenario_labels else ["mixed_abcd"]
+            ),
+            "goal_description": (
+                json.dumps(scenario, ensure_ascii=False)
+                if not hide_scenario_labels
+                else "Mixed ABCD customer-service dialogue; infer the task from the trajectory and verified action labels."
+            ),
             "info_rate": ast.get("ast_score", 0.0),
             "success": False,
             "inform_correct": ast.get("action_correct", 0),
@@ -891,6 +903,20 @@ def run_pipeline(args) -> PipelineOutputs:
     _install_llm_wrappers(args.llm_qps, args.llm_max_retries, args.llm_retry_base_delay)
 
     train_convs, test_convs, source_info = _load_conversations(args)
+    selected_subflows = {
+        item.strip() for item in args.subflows.split(",") if item.strip()
+    }
+    if selected_subflows:
+        train_convs = [
+            conv for conv in train_convs
+            if str(conv.get("scenario", {}).get("subflow", "")) in selected_subflows
+        ]
+        test_convs = [
+            conv for conv in test_convs
+            if str(conv.get("scenario", {}).get("subflow", "")) in selected_subflows
+        ]
+    if args.mixed_subflows:
+        random.Random(42).shuffle(train_convs)
     if args.max_train:
         train_convs = train_convs[:args.max_train]
     if args.max_test:
@@ -926,6 +952,33 @@ def run_pipeline(args) -> PipelineOutputs:
     if resume_dir and summary_path.exists():
         previous_summary = json.loads(summary_path.read_text(encoding="utf-8"))
 
+    current_resume_config = {
+        "train_split": args.train_split,
+        "test_split": args.test_split,
+        "train_file": str(Path(args.train_file).resolve()) if args.train_file else None,
+        "test_file": str(Path(args.test_file).resolve()) if args.test_file else None,
+        "subflows": sorted(selected_subflows),
+        "mixed_subflows": bool(args.mixed_subflows),
+        "hide_subflow": bool(args.hide_subflow),
+        "max_train": args.max_train,
+        "max_test": args.max_test,
+        "evolution_batch_size": args.evolution_batch_size,
+        "max_evolution_batches": args.max_evolution_batches,
+    }
+    if resume_dir and previous_summary.get("config"):
+        previous_config = previous_summary["config"]
+        mismatches = []
+        for key, value in current_resume_config.items():
+            if key in previous_config and previous_config[key] != value:
+                mismatches.append(
+                    f"{key}: previous={previous_config[key]!r}, current={value!r}"
+                )
+        if mismatches:
+            raise ValueError(
+                "Resume configuration does not match the existing run:\n"
+                + "\n".join(f"- {item}" for item in mismatches)
+            )
+
     seed_skill_path = Path(args.skill_path).resolve()
     seed_skill_text = _load_skill_text(seed_skill_path)
     from eval_tod.reference_lookup import load_trace2skill_references
@@ -940,6 +993,10 @@ def run_pipeline(args) -> PipelineOutputs:
     seed_references_dir = seed_skill_path.parent / "references"
     if seed_references_dir.exists() and seed_references_dir.is_dir() and not resume_dir:
         shutil.copytree(seed_references_dir, evolved_skill_dir / "references", dirs_exist_ok=True)
+    seed_reference_file = seed_skill_path.parent / "reference.md"
+    evolved_reference_file = evolved_skill_dir / "reference.md"
+    if seed_reference_file.exists() and not evolved_reference_file.exists():
+        shutil.copy2(seed_reference_file, evolved_reference_file)
 
     if source_info["mode"] == "files":
         log.info(
@@ -974,7 +1031,10 @@ def run_pipeline(args) -> PipelineOutputs:
         train_eval = json.loads(seed_train_eval_path.read_text(encoding="utf-8"))
     else:
         log.info("Stage 1: seed run on training set")
-        seed_train_agent = _build_agent(model, seed_skill_text, response_logger, seed_reference_text)
+        seed_train_agent = _build_agent(
+            model, seed_skill_text, response_logger, seed_reference_text,
+            expose_scenario_labels=not (args.mixed_subflows or args.hide_subflow),
+        )
         seed_train_turns = seed_train_agent.generate_all_turn_predictions(
             train_convs,
             predict_actions=True,
@@ -996,6 +1056,7 @@ def run_pipeline(args) -> PipelineOutputs:
         seed_train_turns,
         train_ast_scores,
         log_dir=out_dir / "seed_failure_logs",
+        hide_scenario_labels=args.mixed_subflows or args.hide_subflow,
     )
     log.info("Seed AST failures on train: %d / %d", len(seed_failed_cases), len(train_convs))
 
@@ -1070,6 +1131,7 @@ def run_pipeline(args) -> PipelineOutputs:
             current_skill_text,
             response_logger,
             current_reference_text,
+            expose_scenario_labels=not (args.mixed_subflows or args.hide_subflow),
         )
         batch_turns = batch_agent.generate_all_turn_predictions(
             batch_convs,
@@ -1093,6 +1155,7 @@ def run_pipeline(args) -> PipelineOutputs:
             batch_turns,
             batch_ast_scores,
             log_dir=batch_dir / "failure_logs",
+            hide_scenario_labels=args.mixed_subflows or args.hide_subflow,
         )
         total_failed_cases += len(batch_failed_cases)
         log.info(
@@ -1184,7 +1247,10 @@ def run_pipeline(args) -> PipelineOutputs:
         log.info("Stage 4: skipping seed evaluation on test (--skip-seed-test)")
     else:
         log.info("Stage 4: seed evaluation on test")
-        seed_test_agent = _build_agent(model, seed_skill_text, response_logger, seed_reference_text)
+        seed_test_agent = _build_agent(
+            model, seed_skill_text, response_logger, seed_reference_text,
+            expose_scenario_labels=not (args.mixed_subflows or args.hide_subflow),
+        )
         seed_test_turns = seed_test_agent.generate_all_turn_predictions(
             test_convs,
             predict_actions=True,
@@ -1209,6 +1275,7 @@ def run_pipeline(args) -> PipelineOutputs:
         evolved_skill_text,
         response_logger,
         evolved_reference_text,
+        expose_scenario_labels=not (args.mixed_subflows or args.hide_subflow),
     )
     evolved_test_turns = evolved_test_agent.generate_all_turn_predictions(
         test_convs,
@@ -1234,6 +1301,9 @@ def run_pipeline(args) -> PipelineOutputs:
             "test_file": source_info["test_file"],
             "max_train": args.max_train,
             "max_test": args.max_test,
+            "subflows": sorted(selected_subflows),
+            "mixed_subflows": bool(args.mixed_subflows),
+            "hide_subflow": bool(args.hide_subflow),
             "model": model,
             "llm_qps": args.llm_qps,
             "llm_max_retries": args.llm_max_retries,
@@ -1287,6 +1357,21 @@ def main() -> None:
     )
     parser.add_argument("--train-split", default="train", choices=["train", "dev", "test"])
     parser.add_argument("--test-split", default="test", choices=["train", "dev", "test"])
+    parser.add_argument(
+        "--subflows",
+        default="",
+        help="Comma-separated subflows to mix; empty means all ABCD subflows",
+    )
+    parser.add_argument(
+        "--mixed-subflows",
+        action="store_true",
+        help="Mix selected subflows and hide flow/subflow labels from the agent",
+    )
+    parser.add_argument(
+        "--hide-subflow",
+        action="store_true",
+        help="Hide flow/subflow labels from the agent prompt",
+    )
     parser.add_argument("--max-train", type=int, default=200)
     parser.add_argument("--max-test", type=int, default=100)
     parser.add_argument(

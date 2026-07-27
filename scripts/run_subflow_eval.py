@@ -78,7 +78,11 @@ def load_subflow_data(subflow: str) -> tuple[list, list]:
     return train, test
 
 
-def mine_subflow_skill(subflow: str, train_convs: list) -> dict:
+def mine_subflow_skill(
+    subflow: str,
+    train_convs: list,
+    artifact_dir: Path | None = None,
+) -> dict:
     """Mine skill from subflow training data: HG → vertex cover → subgraph."""
     from skill_mining.abcd_session_hg import (
         SessionHypergraph, greedy_vertex_cover, abcd_to_operator_results,
@@ -127,6 +131,17 @@ def mine_subflow_skill(subflow: str, train_convs: list) -> dict:
     op_snippets = _find_operator_snippets(train_convs, subflow, operators)
     reference_md = build_reference_md(subflow, op_snippets, max_snippets_per_op=5)
 
+    # Persist deterministic mining artifacts before optional LLM compilation.
+    if artifact_dir is not None:
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        (artifact_dir / "reference.md").write_text(reference_md, encoding="utf-8")
+        (artifact_dir / "subgraph.json").write_text(
+            json.dumps(subgraph, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        (artifact_dir / "operator_results.json").write_text(
+            json.dumps(op_results, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+
     # Generate skill.md — LLM compile with fallback
     log.info("  Compiling skill.md via LLM...")
     skill_md = build_skill_md_from_subgraph(subflow, subgraph, op_snippets, use_llm=True)
@@ -142,6 +157,7 @@ def mine_subflow_skill_sequence(
     min_edge_support: int = 2,
     min_edge_ratio: float = 0.1,
     max_nodes: int = 30,
+    artifact_dir: Path | None = None,
 ) -> dict:
     """Mine skill from canonical action sequences."""
     from skill_mining.sequence_workflow_mining import mine_sequence_workflow
@@ -161,6 +177,20 @@ def mine_subflow_skill_sequence(
     operators = mined["skill_info"]["selected_vertices"]
     op_snippets = _find_operator_snippets(train_convs, subflow, operators)
     reference_md = build_reference_md(subflow, op_snippets, max_snippets_per_op=5)
+
+    # Sequence mining is deterministic; save its artifacts before the
+    # optional LLM compiler so a slow/failed API call cannot hide them.
+    if artifact_dir is not None:
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        (artifact_dir / "reference.md").write_text(reference_md, encoding="utf-8")
+        (artifact_dir / "subgraph.json").write_text(
+            json.dumps(mined["subgraph"], indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        (artifact_dir / "operator_results.json").write_text(
+            json.dumps(mined["operator_results"], indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
 
     log.info("  Compiling sequence skill.md via LLM...")
     skill_md = build_skill_md_from_subgraph(
@@ -365,9 +395,10 @@ def main():
                     min_edge_support=args.sequence_min_edge_support,
                     min_edge_ratio=args.sequence_min_edge_ratio,
                     max_nodes=args.sequence_max_nodes,
+                    artifact_dir=sf_out,
                 )
             else:
-                mined = mine_subflow_skill(subflow, train_convs)
+                mined = mine_subflow_skill(subflow, train_convs, artifact_dir=sf_out)
             skill_info = mined["skill_info"]
             skill_text = mined.get("skill_md", "")
             reference_text = mined.get("reference_md", "")

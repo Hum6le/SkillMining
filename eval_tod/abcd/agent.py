@@ -227,6 +227,7 @@ class ABCDAgent(AbstractTodAgent):
         reference_max_chars: int = 1800,
         delay: float = 0.3,
         response_logger=None,
+        expose_scenario_labels: bool = True,
     ):
         from llm import resolve_config
         cfg = resolve_config(api_key=api_key, base_url=base_url, model=model)
@@ -242,6 +243,7 @@ class ABCDAgent(AbstractTodAgent):
         self.reference_top_k = max(0, reference_top_k)
         self.reference_max_chars = max(200, reference_max_chars)
         self._response_logger = response_logger
+        self.expose_scenario_labels = expose_scenario_labels
 
     def set_reference_text(self, reference_text: str | None) -> None:
         """Replace prompt-time mined-reference material."""
@@ -445,6 +447,8 @@ class ABCDAgent(AbstractTodAgent):
                         "thought": reference_plan.get("thought", ""),
                         "action": "retrieve_reference",
                         "action_input": reference_lookup["query"],
+                        "executed": reference_lookup.get("executed", False),
+                        "status": reference_lookup.get("status", "unknown"),
                         "observation": reference_lookup["observation"],
                         "selected_sections": reference_lookup["selected_sections"],
                     },
@@ -502,8 +506,13 @@ class ABCDAgent(AbstractTodAgent):
         fallback_query = " ".join(
             self._recent_context_excerpt(context, max_lines=4).split()
         )[:240]
-        if not fallback_query:
+        if not fallback_query and self.expose_scenario_labels:
             fallback_query = str(scenario.get("subflow", ""))
+
+        visible_subflow = (
+            str(scenario.get("subflow", ""))
+            if self.expose_scenario_labels else ""
+        )
 
         try:
             parsed = json.loads(payload)
@@ -513,7 +522,7 @@ class ABCDAgent(AbstractTodAgent):
                 "action": "retrieve_reference",
                 "action_input": {
                     "query": fallback_query,
-                    "subflow": str(scenario.get("subflow", "")),
+                    "subflow": visible_subflow,
                     "top_k": self.reference_top_k,
                 },
                 "fallback_used": True,
@@ -538,7 +547,7 @@ class ABCDAgent(AbstractTodAgent):
             "action": "retrieve_reference",
             "action_input": {
                 "query": query_text,
-                "subflow": str(action_input.get("subflow") or scenario.get("subflow", "")),
+                "subflow": str(action_input.get("subflow") or visible_subflow),
                 "top_k": max(1, top_k),
             },
             "fallback_used": fallback_used,
@@ -562,8 +571,12 @@ class ABCDAgent(AbstractTodAgent):
                 "fallback_used": False,
             }
 
-        flow = str(scenario.get("flow", ""))
-        subflow = str(scenario.get("subflow", ""))
+        if self.expose_scenario_labels:
+            flow = str(scenario.get("flow", ""))
+            subflow = str(scenario.get("subflow", ""))
+        else:
+            flow = ""
+            subflow = ""
         recent_context = self._recent_context_excerpt(context)
         user_prompt = _REFERENCE_QUERY_PROMPT.format(
             context=recent_context,
@@ -612,21 +625,31 @@ class ABCDAgent(AbstractTodAgent):
     ) -> dict[str, Any]:
         """Return compact reference snippets relevant to the model-written query."""
         requested_top_k = max(1, int(top_k or self.reference_top_k))
+        visible_subflow = (
+            str(scenario.get("subflow", ""))
+            if self.expose_scenario_labels else ""
+        )
         query = {
             "query_text": query_text,
-            "subflow": str(scenario.get("subflow", "")),
+            "subflow": visible_subflow,
             "top_k": requested_top_k,
             "max_chars": self.reference_max_chars,
+            "reference_available": bool(self.reference_sections),
         }
         if not self.reference_sections or requested_top_k <= 0:
             return {
                 "tool": "retrieve_reference",
                 "query": query,
+                "executed": False,
+                "status": "no_reference_loaded",
                 "selected_sections": [],
                 "observation": "",
             }
 
-        subflow = str(scenario.get("subflow", "")).replace("_", " ")
+        subflow = (
+            str(scenario.get("subflow", "")).replace("_", " ")
+            if self.expose_scenario_labels else ""
+        )
         query_tokens = _tokenize_for_lookup(query_text + " " + subflow)
         context_tokens = _tokenize_for_lookup(self._recent_context_excerpt(context, max_lines=4))
         if not query_tokens:
@@ -636,6 +659,8 @@ class ABCDAgent(AbstractTodAgent):
             return {
                 "tool": "retrieve_reference",
                 "query": query,
+                "executed": False,
+                "status": "empty_query",
                 "selected_sections": [],
                 "observation": "",
             }
@@ -709,6 +734,8 @@ class ABCDAgent(AbstractTodAgent):
         return {
             "tool": "retrieve_reference",
             "query": query,
+            "executed": True,
+            "status": "matched" if selected_sections else "no_match",
             "selected_sections": selected_sections,
             "observation": "\n".join(parts).strip(),
         }
@@ -753,8 +780,13 @@ class ABCDAgent(AbstractTodAgent):
         personal = scenario.get("personal", {})
         order = scenario.get("order", {})
 
-        # Scenario description
-        subflow_desc = f"Flow: {flow} / Subflow: {subflow}"
+        # Scenario labels are optional: mixed training must infer the task
+        # from the dialogue instead of receiving the dataset category.
+        subflow_desc = (
+            f"Flow: {flow} / Subflow: {subflow}"
+            if self.expose_scenario_labels
+            else "Infer the customer's task from the conversation; no task label is provided."
+        )
 
         # Customer info
         cust_parts = []
@@ -794,7 +826,11 @@ class ABCDAgent(AbstractTodAgent):
         if wf:
             extra_parts.append(wf)
         # For memory, we need domains — use flow as domain
-        ex = self.memory.format_prompt([flow, subflow])
+        memory_domains = [flow, subflow] if self.expose_scenario_labels else []
+        ex = self.memory.format_prompt(
+            memory_domains,
+            include_metadata=self.expose_scenario_labels,
+        )
         if ex:
             extra_parts.append(ex)
 
@@ -831,8 +867,13 @@ class ABCDAgent(AbstractTodAgent):
             gt_actions = _extract_action_sequence(conv)
             gt_str = " → ".join(gt_actions) if gt_actions else "(no actions)"
 
+            header = (
+                f"### {flow}/{subflow} (convo={convo_id})"
+                if self.expose_scenario_labels
+                else f"### Conversation {convo_id}"
+            )
             lines.append(
-                f"### {flow}/{subflow} (convo={convo_id})\n"
+                f"{header}\n"
                 f"- Ground Truth Actions: {gt_str}\n"
                 f"- Agent Generated: {pred.response_text[:200] if pred.response_text else '(empty)'}\n"
             )
@@ -859,9 +900,13 @@ class ABCDAgent(AbstractTodAgent):
             + "\n\n## Existing Workflow\n"
             + existing
             + "\n\n## Output: Updated Workflow\n"
-            "Output the COMPLETE updated workflow (not a diff). Use this format:\n\n"
-            "### [Flow/Subflow] - [Pattern Name]\n"
-            "**When**: [condition that triggers this pattern]\n"
+            + "Output the COMPLETE updated workflow (not a diff). Use this format:\n\n"
+            + (
+                "### [Flow/Subflow] - [Pattern Name]\n"
+                if self.expose_scenario_labels
+                else "### [Pattern Name]\n"
+            )
+            + "**When**: [condition that triggers this pattern]\n" +
             "**Do**: [concrete strategy — what actions to take, what to say]\n"
             "**Avoid**: [common mistakes to avoid]\n"
         )
@@ -893,10 +938,19 @@ class ABCDAgent(AbstractTodAgent):
             ast = metrics.get("ast_score", 0)
             if ast > 0.5 or metrics.get("success") or metrics.get("info_rate", 0) > 0.8:
                 scenario = conv.get("scenario", {})
+                domains = (
+                    [scenario.get("flow", "?"), scenario.get("subflow", "?")]
+                    if self.expose_scenario_labels
+                    else []
+                )
                 self.memory.add_dict({
                     "dialogue_id": f"abcd-{conv.get('convo_id', '?')}",
-                    "domains": [scenario.get("flow", "?"), scenario.get("subflow", "?")],
-                    "goal": f"{scenario.get('flow', '?')}/{scenario.get('subflow', '?')}",
+                    "domains": domains,
+                    "goal": (
+                        f"{scenario.get('flow', '?')}/{scenario.get('subflow', '?')}"
+                        if self.expose_scenario_labels
+                        else "customer-service dialogue"
+                    ),
                     "trajectory": pred.response_text[:1000],
                 })
 

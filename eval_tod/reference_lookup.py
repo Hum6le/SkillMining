@@ -54,12 +54,7 @@ def load_skill_mining_reference(root: str | Path | None) -> str:
 
 
 def load_trace2skill_references(root: str | Path | None) -> str:
-    """Load official Trace2Skill ``references/*.md`` files.
-
-    This mirrors ``Trace2Skill/skill_evolver/skill_evolving_agent.py``:
-    the evolver reads ``SKILL.md`` plus files under ``references/`` only.
-    It deliberately ignores sibling ``reference.md`` files.
-    """
+    """Load Trace2Skill references from official and legacy layouts."""
     if not root:
         return ""
 
@@ -68,10 +63,16 @@ def load_trace2skill_references(root: str | Path | None) -> str:
 
     if path.is_file():
         candidates.extend(sorted((path.parent / "references").glob("*.md")))
+        if not candidates:
+            candidates.append(path.parent / "reference.md")
     elif path.is_dir():
         candidates.extend(sorted((path / "references").glob("*.md")))
         for skill_file in sorted(path.glob("*/SKILL.md")):
             candidates.extend(sorted((skill_file.parent / "references").glob("*.md")))
+        if not candidates:
+            candidates.append(path / "reference.md")
+            for skill_file in sorted(path.glob("*/SKILL.md")):
+                candidates.append(skill_file.parent / "reference.md")
 
     return _read_markdown_files(candidates)
 

@@ -21,6 +21,7 @@ import argparse
 import json
 import re
 import sys
+import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -37,6 +38,9 @@ sys.path.insert(0, str(_SKILL_DIR))
 from eval_tod.abcd.data import load_abcd_data
 
 _OUTPUT_DIR = _PROJECT_ROOT / "outputs" / "skills"
+
+_SKILL_LLM_MAX_RETRIES = 3
+_SKILL_LLM_RETRY_BASE_DELAY = 2.0
 
 
 def _short_label(node_id: str) -> str:
@@ -231,23 +235,47 @@ def build_skill_md_from_subgraph(
             subflow, nodes, edges, pathways, branches, op_snippets,
             coverage_pct, num_sessions,
         )
+        return _compile_skill_with_retry(prompt, subflow)
+
+    return _build_skill_md_from_subgraph_fallback(
+        subflow, nodes, edges, pathways, branches, op_snippets,
+        coverage_pct, num_sessions,
+    )
+
+
+def _compile_skill_with_retry(prompt: str, subflow: str) -> str:
+    """Compile skill markdown; retry failures instead of silently falling back."""
+    from llm import chat
+
+    last_error: Exception | None = None
+    for attempt in range(1, _SKILL_LLM_MAX_RETRIES + 1):
         try:
-            from llm import chat
             text = chat(prompt, temperature=0.0).strip()
+            if not text:
+                raise RuntimeError("LLM returned an empty response")
             if text.startswith("```markdown"):
                 text = text[len("```markdown"):].strip()
             if text.startswith("```"):
                 text = text[3:].strip()
             if text.endswith("```"):
                 text = text[:-3].strip()
-            if text:
-                return text
-        except Exception as e:
-            print(f"  LLM error for {subflow}: {e}")
+            if not text:
+                raise RuntimeError("LLM returned an empty markdown document")
+            return text
+        except Exception as exc:
+            last_error = exc
+            if attempt < _SKILL_LLM_MAX_RETRIES:
+                delay = _SKILL_LLM_RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                print(
+                    f"  LLM skill compile failed for {subflow} "
+                    f"(attempt {attempt}/{_SKILL_LLM_MAX_RETRIES}): {exc}; "
+                    f"retrying in {delay:.1f}s"
+                )
+                time.sleep(delay)
 
-    return _build_skill_md_from_subgraph_fallback(
-        subflow, nodes, edges, pathways, branches, op_snippets,
-        coverage_pct, num_sessions,
+    raise RuntimeError(
+        f"LLM skill compilation failed for {subflow} after "
+        f"{_SKILL_LLM_MAX_RETRIES} attempts: {last_error}"
     )
 
 
@@ -264,17 +292,17 @@ def _build_subgraph_skill_prompt(
     """Build LLM prompt from subgraph structure."""
     # Node list
     node_lines = []
-    for n in nodes[:20]:
+    for n in nodes:
         node_lines.append(f"  - `{n['id']}` (freq={n['frequency']})")
 
     # Edge list
     edge_lines = []
-    for e in edges[:30]:
+    for e in edges:
         edge_lines.append(f"  - `{e['source']}` → `{e['target']}` (weight={e['weight']})")
 
     # Main pathway
     path_lines = []
-    for i, p in enumerate(pathways[:2]):
+    for i, p in enumerate(pathways):
         steps_str = " → ".join(
             s.get("next", s["node"]) if "next" in s else s["node"]
             for s in p["steps"]
@@ -283,7 +311,7 @@ def _build_subgraph_skill_prompt(
 
     # Branch points
     branch_lines = []
-    for bp in branches[:5]:
+    for bp in branches:
         targets = []
         for b in bp["branches"]:
             targets.append(f"`{b['target']}` (weight={b['weight']})")
@@ -292,7 +320,7 @@ def _build_subgraph_skill_prompt(
     # Snippet examples
     snippet_text = ""
     if op_snippets:
-        sample_ops = list(op_snippets.keys())[:3]
+        sample_ops = list(op_snippets.keys())
         parts = []
         for op in sample_ops:
             snips = op_snippets[op][:1]
@@ -402,7 +430,7 @@ def _build_skill_md_from_subgraph_fallback(
     if branches:
         lines.append("### Decision Points")
         lines.append("")
-        for bp in branches[:8]:
+        for bp in branches:
             lines.append(f"At **`{bp['label']}`**:")
             for b in bp["branches"]:
                 lines.append(f"- → `{b['label']}` (weight={b['weight']})")
@@ -412,14 +440,14 @@ def _build_skill_md_from_subgraph_fallback(
     if edges:
         lines.append("### All Transitions")
         lines.append("")
-        for e in edges[:20]:
+        for e in edges:
             lines.append(f"- `{_short_label(e['source'])}` → `{_short_label(e['target'])}` (w={e['weight']})")
         lines.append("")
 
     # Operator reference
     lines.append("## Operator Reference")
     lines.append("")
-    for n in nodes[:20]:
+    for n in nodes:
         nid = n["id"]
         label = n.get("label", nid)
         anchor = label.replace(":", "-").replace(" ", "-").lower()
@@ -450,7 +478,7 @@ def build_skill_md_prompt(
         ops_clean.append(parts[1] if len(parts) == 2 else op)
 
     snippet_examples = []
-    for op, snippets in list(op_snippets.items())[:5]:
+    for op, snippets in op_snippets.items():
         if snippets:
             snippet_examples.append(f"**{op}**:\n```\n{snippets[0]['snippet_text'][:300]}\n```")
     snippets_text = "\n\n".join(snippet_examples) if snippet_examples else "(no snippets available)"
@@ -492,19 +520,7 @@ def generate_skill_md_llm(
 ) -> str:
     """Use LLM to generate skill.md content (legacy flat version)."""
     prompt = build_skill_md_prompt(subflow, operators, op_snippets, coverage_pct, num_sessions)
-    try:
-        from llm import chat
-        text = chat(prompt, temperature=0.0).strip()
-        if text.startswith("```markdown"):
-            text = text[len("```markdown"):].strip()
-        if text.startswith("```"):
-            text = text[3:].strip()
-        if text.endswith("```"):
-            text = text[:-3].strip()
-        return text
-    except Exception as e:
-        print(f"  LLM error for {subflow}: {e}")
-        return ""
+    return _compile_skill_with_retry(prompt, subflow)
 
 
 def build_skill_md_fallback(
@@ -530,7 +546,7 @@ def build_skill_md_fallback(
     for p in name_parts[:5]:
         lines.append(f"- customer mentions \"{p}\"")
     lines.extend(["", "## Actions"])
-    for i, op in enumerate(ops_clean[:15], 1):
+    for i, op in enumerate(ops_clean, 1):
         lines.append(f"{i}. **{op}**")
     lines.extend([
         "", "## Strategy",
