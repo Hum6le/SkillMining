@@ -429,6 +429,9 @@ class ABCDAgent(AbstractTodAgent):
                 "flow": str(scenario.get("flow", "")),
                 "context": context,
                 "context_view": "original",
+                "workflow_injected": bool(self.workflow.text.strip()),
+                "workflow_chars": len(self.workflow.text),
+                "memory_exemplars": len(self.memory),
                 "reference_lookup": reference_lookup,
                 "react_trace": [
                     {
@@ -912,16 +915,25 @@ class ABCDAgent(AbstractTodAgent):
         )
 
         updated = ""
-        try:
-            updated = chat(
-                prompt,
-                model=self.model,
-                api_key=self.api_key,
-                base_url=self.base_url,
-                temperature=0.0,
-            ).strip()
-        except Exception as exc:
-            print(f"  [ABCD induce] LLM error: {exc}")
+        for attempt in range(3):
+            try:
+                updated = chat(
+                    prompt,
+                    model=self.model,
+                    api_key=self.api_key,
+                    base_url=self.base_url,
+                    temperature=0.0,
+                ).strip()
+                if updated:
+                    break
+                print(f"  [ABCD induce] empty response, retry {attempt + 1}/3")
+            except Exception as exc:
+                print(f"  [ABCD induce] LLM error ({attempt + 1}/3): {exc}")
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+
+        if not updated:
+            print("  [ABCD induce] failed after 3 attempts; workflow unchanged")
             return ""
 
         if updated.strip():

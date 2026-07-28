@@ -62,11 +62,40 @@ def _build_batches(items: list, size: int, max_batches: int | None = None) -> li
     return batches
 
 
+def _exemplars_to_reference_text(memory, hide_labels: bool) -> str:
+    """Expose accumulated AWM exemplars to the shared reference tool."""
+    sections = []
+    for index, exemplar in enumerate(memory.exemplars, start=1):
+        lines = [f"## AWM Exemplar {index}"]
+        if not hide_labels:
+            domains = ", ".join(str(x) for x in exemplar.get("domains", []))
+            if domains:
+                lines.append(f"Domains: {domains}")
+            if exemplar.get("goal"):
+                lines.append(f"Goal: {exemplar['goal']}")
+        if exemplar.get("trajectory"):
+            lines.append("Trajectory:")
+            lines.append(str(exemplar["trajectory"]))
+        sections.append("\n".join(lines))
+    return "\n\n".join(sections)
+
+
 def main():
     import argparse as _ap
     _parser = _ap.ArgumentParser(description="AWM training on ABCD")
     _parser.add_argument("--resume-from", type=str, default=None,
                          help="Resume from a checkpoint directory (e.g. outputs/awm_abcd_xxx/checkpoints/batch_0050)")
+    _parser.add_argument(
+        "--eval-only",
+        action="store_true",
+        help="Skip training and evaluate a saved AWM run/checkpoint",
+    )
+    _parser.add_argument(
+        "--eval-from",
+        type=str,
+        default=None,
+        help="Completed AWM output directory or checkpoint to evaluate",
+    )
     _parser.add_argument(
         "--subflows",
         default="",
@@ -85,11 +114,22 @@ def main():
     _parser.add_argument("--max-train", type=int, default=None)
     _parser.add_argument("--max-dev", type=int, default=None)
     _parser.add_argument("--max-test", type=int, default=None)
+    _parser.add_argument(
+        "--reference-path",
+        default=None,
+        help="Optional reference.md or Trace2Skill skill directory to load",
+    )
     _args, _unknown = _parser.parse_known_args()
+
+    if _args.eval_only and not _args.eval_from:
+        _parser.error("--eval-only requires --eval-from")
+    if _args.eval_only and _args.resume_from:
+        _parser.error("Use --eval-from with --eval-only, not --resume-from")
 
     from eval_tod.abcd.data import load_abcd_data
     from eval_tod.abcd.agent import ABCDAgent
     from eval_tod.response_logger import ResponseLogger
+    from eval_tod.reference_lookup import load_skill_mining_reference, load_trace2skill_references
     from awm import MemoryStore, WorkflowStore
 
     # ── Load data ─────────────────────────────────────────────
@@ -135,6 +175,36 @@ def main():
     logger = ResponseLogger(str(OUT_DIR / "llm_responses"))
     workflow = WorkflowStore()
     memory = MemoryStore()
+    external_reference_text = ""
+    if _args.reference_path:
+        external_reference_text = load_skill_mining_reference(_args.reference_path)
+        if not external_reference_text:
+            external_reference_text = load_trace2skill_references(_args.reference_path)
+        log.info("Loaded external reference: %d chars", len(external_reference_text))
+    reference_text = external_reference_text
+
+    eval_source_dir = None
+    if _args.eval_only:
+        eval_source_dir = Path(_args.eval_from).resolve()
+        if not eval_source_dir.exists():
+            raise FileNotFoundError(f"Evaluation source not found: {eval_source_dir}")
+        saved_workflow = eval_source_dir / "awm_workflow.txt"
+        saved_memory = eval_source_dir / "awm_exemplars.json"
+        if not saved_workflow.exists():
+            saved_workflow = eval_source_dir / "workflow.txt"
+        if not saved_memory.exists():
+            saved_memory = eval_source_dir / "exemplars.json"
+        if saved_workflow.exists():
+            workflow.load(str(saved_workflow))
+        if saved_memory.exists():
+            memory.load(str(saved_memory))
+        saved_reference = eval_source_dir / "awm_reference.md"
+        if saved_reference.exists():
+            reference_text = saved_reference.read_text(encoding="utf-8")
+        log.info(
+            "Eval-only state loaded: workflow=%d lines, exemplars=%d, reference=%d chars",
+            len(workflow), len(memory), len(reference_text),
+        )
 
     # ── Resume from checkpoint ────────────────────────────────
     start_batch = 1
@@ -178,13 +248,15 @@ def main():
 
     agent = ABCDAgent(
         model=MODEL, workflow=workflow, memory=memory,
+        reference_text=reference_text,
         expose_scenario_labels=not (_args.mixed_subflows or _args.hide_subflow),
         response_logger=logger,
     )
 
     # ── Batch training loop ───────────────────────────────────
 
-    for batch_idx, batch in enumerate(batches, start=1):
+    training_batches = [] if _args.eval_only else batches
+    for batch_idx, batch in enumerate(training_batches, start=1):
         if batch_idx < start_batch:
             continue  # skip already processed batches
 
@@ -208,8 +280,26 @@ def main():
                 inform_slots={}, request_slots={}, booking={},
                 response_text=last,
             ))
-        agent.induce(batch, preds, eval_dicts)
+        updated_workflow = agent.induce(batch, preds, eval_dicts)
         agent.update_memory(batch, preds, eval_dicts)
+        reference_text = "\n\n".join(
+            part for part in [
+                external_reference_text,
+                _exemplars_to_reference_text(
+                    memory,
+                    hide_labels=_args.mixed_subflows or _args.hide_subflow,
+                ),
+            ] if part
+        )
+        agent.set_reference_text(reference_text)
+        log.info(
+            "Batch %d state: workflow_lines=%d, exemplars=%d, reference_chars=%d, induced=%s",
+            batch_idx,
+            len(workflow),
+            len(memory),
+            len(reference_text),
+            bool(updated_workflow.strip()),
+        )
 
         # 3. Checkpoint (with state for resume)
         if batch_idx % CHECKPOINT_EVERY == 0:
@@ -231,6 +321,7 @@ def main():
     log.info("Final test evaluation")
     test_agent = ABCDAgent(
         model=MODEL, workflow=workflow, memory=memory,
+        reference_text=reference_text,
         expose_scenario_labels=not (_args.mixed_subflows or _args.hide_subflow),
         response_logger=logger,
     )
@@ -264,6 +355,7 @@ def main():
     # ── Save everything ───────────────────────────────────────
     agent.save_workflow(str(OUT_DIR / "awm_workflow.txt"))
     agent.save_memory(str(OUT_DIR / "awm_exemplars.json"))
+    (OUT_DIR / "awm_reference.md").write_text(reference_text, encoding="utf-8")
 
     summary = {
         "config": {
@@ -276,6 +368,9 @@ def main():
             "hide_subflow": bool(_args.hide_subflow),
             "max_train": _args.max_train, "max_dev": _args.max_dev,
             "max_test": _args.max_test,
+            "reference_path": str(Path(_args.reference_path).resolve()) if _args.reference_path else None,
+            "eval_only": bool(_args.eval_only),
+            "eval_from": str(eval_source_dir) if eval_source_dir else None,
         },
         "data": {
             "train": len(train_convs), "dev": len(dev_convs),
@@ -284,6 +379,7 @@ def main():
         "final_test": test_result,
         "workflow_lines": len(workflow),
         "memory_exemplars": len(memory),
+        "reference_chars": len(reference_text),
         "llm_calls_logged": logger.count,
     }
     with open(OUT_DIR / "summary.json", "w", encoding="utf-8") as f:
