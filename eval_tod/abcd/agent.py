@@ -72,6 +72,34 @@ Use this ReAct pattern when reference snippets may help:
 3. Use the returned observation as supporting evidence. Do not copy private
    slot values unless they match the current scenario."""
 
+_AWM_RESOURCE_POLICY_PROMPT = """## Learned Resource Use (AWM)
+
+The workflow and memory below are learned resources. Use them as guidance, not
+as values to copy blindly.
+
+### Exemplar memory
+Past Successful Examples are retrieved automatically by the runtime using
+domain overlap with the current `flow` and `subflow` (top-k exemplars). There
+is no model-written tool call for this lookup. Treat retrieved exemplars as
+procedural evidence and transfer their action/slot structure only when the
+current dialogue supports it. Copy current slot values from the current
+dialogue, not from an exemplar.
+
+The runtime records this lookup as `exemplar_lookup` in the turn trace.
+
+### Reference lookup
+When the action boundary, slot schema, or state transition is uncertain, use
+the `retrieve_reference` MCP-style tool described below. Write a concise query
+about the current action, slots, and state. Use the result as evidence; do not
+copy private values from a reference example unless they match the current
+dialogue."""
+
+_AWM_WORKFLOW_RESOURCE_SECTION = """## Resource Use
+- Successful exemplars are retrieved automatically by domain overlap with the current flow/subflow. Use them as procedural evidence, and copy slot values only from the current dialogue.
+- When action schema, slot ordering, or state transition is uncertain, call the MCP-style `retrieve_reference` lookup with a concise query grounded in the current dialogue.
+- Reference and exemplar content are evidence, not instructions to copy private instance values blindly.
+"""
+
 _REFERENCE_QUERY_PROMPT = """## Conversation So Far
 {context}
 
@@ -244,6 +272,13 @@ class ABCDAgent(AbstractTodAgent):
         self.reference_max_chars = max(200, reference_max_chars)
         self._response_logger = response_logger
         self.expose_scenario_labels = expose_scenario_labels
+        self._last_exemplar_lookup: dict[str, Any] = {
+            "tool": "retrieve_exemplar",
+            "executed": False,
+            "status": "not_started",
+            "query": {},
+            "selected_exemplars": [],
+        }
 
     def set_reference_text(self, reference_text: str | None) -> None:
         """Replace prompt-time mined-reference material."""
@@ -433,9 +468,19 @@ class ABCDAgent(AbstractTodAgent):
                 "workflow_chars": len(self.workflow.text),
                 "memory_exemplars": len(self.memory),
                 "reference_lookup": reference_lookup,
+                "exemplar_lookup": getattr(self, "_last_exemplar_lookup", {}),
                 "react_trace": [
                     {
                         "turn": 1,
+                        "thought": "Use the runtime's domain-overlap exemplar lookup as procedural evidence.",
+                        "action": "retrieve_exemplar",
+                        "action_input": self._last_exemplar_lookup.get("query", {}),
+                        "executed": self._last_exemplar_lookup.get("executed", False),
+                        "status": self._last_exemplar_lookup.get("status", "unknown"),
+                        "selected_exemplars": self._last_exemplar_lookup.get("selected_exemplars", []),
+                    },
+                    {
+                        "turn": 2,
                         "thought": "Plan a concise MCP retrieve_reference query for the current dialogue state.",
                         "action": "llm_plan_reference_query",
                         "action_input": {
@@ -446,7 +491,7 @@ class ABCDAgent(AbstractTodAgent):
                         "fallback_used": reference_plan.get("fallback_used", False),
                     },
                     {
-                        "turn": 2,
+                        "turn": 3,
                         "thought": reference_plan.get("thought", ""),
                         "action": "retrieve_reference",
                         "action_input": reference_lookup["query"],
@@ -456,7 +501,7 @@ class ABCDAgent(AbstractTodAgent):
                         "selected_sections": reference_lookup["selected_sections"],
                     },
                     {
-                        "turn": 3,
+                        "turn": 4,
                         "thought": "Predict the backend action, ordered slots, and response using the workflow, scenario, dialogue context, and retrieved snippets.",
                         "action": "llm_generate",
                         "action_input": {
@@ -823,13 +868,46 @@ class ABCDAgent(AbstractTodAgent):
             order_info=order_info,
         )
 
-        # Inject workflow + exemplars (AWM)
-        extra_parts = []
+        # Inject the resource policy plus workflow and exemplars (AWM).
+        extra_parts = [_AWM_RESOURCE_POLICY_PROMPT]
         wf = self.workflow.format_prompt()
         if wf:
             extra_parts.append(wf)
         # For memory, we need domains — use flow as domain
         memory_domains = [flow, subflow] if self.expose_scenario_labels else []
+        selected_exemplars = (
+            self.memory.retrieve(memory_domains, k=self.memory.max_exemplars)
+            if self.memory else []
+        )
+        overlap_count = sum(
+            1 for exemplar in selected_exemplars
+            if set(memory_domains) & set(exemplar.get("domains", []))
+        )
+        if not self.memory:
+            lookup_status = "no_memory_loaded"
+        elif not selected_exemplars:
+            lookup_status = "no_exemplar_match"
+        elif overlap_count:
+            lookup_status = "matched_domain_overlap"
+        else:
+            lookup_status = "fallback_top_k"
+        self._last_exemplar_lookup = {
+            "tool": "retrieve_exemplar",
+            "executed": bool(self.memory),
+            "status": lookup_status,
+            "query": {
+                "domains": memory_domains,
+                "top_k": self.memory.max_exemplars if self.memory else 0,
+                "strategy": "domain_overlap",
+            },
+            "selected_exemplars": [
+                {
+                    "dialogue_id": exemplar.get("dialogue_id", ""),
+                    "domains": exemplar.get("domains", []),
+                }
+                for exemplar in selected_exemplars
+            ],
+        }
         ex = self.memory.format_prompt(
             memory_domains,
             include_metadata=self.expose_scenario_labels,
@@ -899,6 +977,14 @@ class ABCDAgent(AbstractTodAgent):
             "- **Delete** patterns that consistently don't match the ground truth.\n"
             "- Keep the workflow concise and actionable (aim for 10-20 patterns max).\n"
             "- Preserve patterns that are still valid even if not seen in this batch.\n\n"
+            "## Resource Use Requirement\n"
+            "Include a concise `## Resource Use` section in the updated workflow. "
+            "State that successful exemplars are automatically retrieved by current "
+            "flow/subflow domain overlap and must be used as procedural evidence, "
+            "not copied for private slot values. State that `retrieve_reference` "
+            "is the MCP-style lookup for uncertain action schemas, slot patterns, "
+            "or state transitions, and that its query must be concise and grounded "
+            "in the current dialogue.\n\n"
             + "\n".join(lines[:60])
             + "\n\n## Existing Workflow\n"
             + existing
@@ -935,6 +1021,11 @@ class ABCDAgent(AbstractTodAgent):
         if not updated:
             print("  [ABCD induce] failed after 3 attempts; workflow unchanged")
             return ""
+
+        # Make resource usage part of the persisted workflow contract even if
+        # the induction model omits the requested section.
+        if "## Resource Use" not in updated:
+            updated = updated.rstrip() + "\n\n" + _AWM_WORKFLOW_RESOURCE_SECTION.strip()
 
         if updated.strip():
             old_lines = len(existing.splitlines()) if existing and existing != "(empty — first batch)" else 0

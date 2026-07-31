@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""AWM full training run on ABCD dataset — generative end-to-end.
+"""AWM training and evaluation for one ABCD subflow.
 
 Usage:
-    python scripts/run_awm_abcd.py
+    python scripts/run_awm_abcd.py --subflow recover_username
 
 What it does:
-    1. Load ABCD train/dev/test splits
+    1. Load one ABCD subflow from train/dev/test splits
     2. Batch-train ABCDAgent with iterative workflow induction
     3. After each batch: evaluate → induce workflows → update memory
     4. Periodic validation on held-out set
@@ -15,7 +15,6 @@ What it does:
 
 import json
 import logging
-import random
 import re
 import sys
 from datetime import datetime
@@ -97,19 +96,9 @@ def main():
         help="Completed AWM output directory or checkpoint to evaluate",
     )
     _parser.add_argument(
-        "--subflows",
-        default="",
-        help="Comma-separated subflows to mix; empty means all ABCD subflows",
-    )
-    _parser.add_argument(
-        "--mixed-subflows",
-        action="store_true",
-        help="Mix selected subflows and hide flow/subflow labels from the agent",
-    )
-    _parser.add_argument(
-        "--hide-subflow",
-        action="store_true",
-        help="Hide flow/subflow labels from the agent prompt",
+        "--subflow",
+        required=True,
+        help="Run exactly one ABCD subflow; repeat this command for each subflow",
     )
     _parser.add_argument("--max-train", type=int, default=None)
     _parser.add_argument("--max-dev", type=int, default=None)
@@ -138,17 +127,16 @@ def main():
     dev_convs = load_abcd_data("dev", ABCD_DIR)
     test_convs = load_abcd_data("test", ABCD_DIR)
 
-    selected_subflows = {
-        item.strip() for item in _args.subflows.split(",") if item.strip()
-    }
-    if selected_subflows:
-        def keep(conv):
-            return str(conv.get("scenario", {}).get("subflow", "")) in selected_subflows
-        train_convs = [conv for conv in train_convs if keep(conv)]
-        dev_convs = [conv for conv in dev_convs if keep(conv)]
-        test_convs = [conv for conv in test_convs if keep(conv)]
-    if _args.mixed_subflows:
-        random.Random(SEED).shuffle(train_convs)
+    subflow = _args.subflow.strip()
+    def keep(conv):
+        return str(conv.get("scenario", {}).get("subflow", "")) == subflow
+    train_convs = [conv for conv in train_convs if keep(conv)]
+    dev_convs = [conv for conv in dev_convs if keep(conv)]
+    test_convs = [conv for conv in test_convs if keep(conv)]
+    if not train_convs or not test_convs:
+        raise ValueError(
+            f"Subflow {subflow!r} has no train/test conversations in the ABCD split"
+        )
     if _args.max_train:
         train_convs = train_convs[:_args.max_train]
     if _args.max_dev:
@@ -161,9 +149,7 @@ def main():
     batches = _build_batches(train_convs, BATCH_SIZE, MAX_BATCHES)
     log.info(f"Batches: {len(batches)} (batch_size={BATCH_SIZE})")
     run_config = {
-        "subflows": sorted(selected_subflows),
-        "mixed_subflows": bool(_args.mixed_subflows),
-        "hide_subflow": bool(_args.hide_subflow),
+        "subflow": subflow,
         "max_train": _args.max_train,
         "max_dev": _args.max_dev,
         "max_test": _args.max_test,
@@ -249,7 +235,7 @@ def main():
     agent = ABCDAgent(
         model=MODEL, workflow=workflow, memory=memory,
         reference_text=reference_text,
-        expose_scenario_labels=not (_args.mixed_subflows or _args.hide_subflow),
+        expose_scenario_labels=True,
         response_logger=logger,
     )
 
@@ -287,7 +273,7 @@ def main():
                 external_reference_text,
                 _exemplars_to_reference_text(
                     memory,
-                    hide_labels=_args.mixed_subflows or _args.hide_subflow,
+                    hide_labels=False,
                 ),
             ] if part
         )
@@ -322,7 +308,7 @@ def main():
     test_agent = ABCDAgent(
         model=MODEL, workflow=workflow, memory=memory,
         reference_text=reference_text,
-        expose_scenario_labels=not (_args.mixed_subflows or _args.hide_subflow),
+        expose_scenario_labels=True,
         response_logger=logger,
     )
 
@@ -362,10 +348,8 @@ def main():
             "batch_size": BATCH_SIZE, "max_batches": MAX_BATCHES,
             "checkpoint_every": CHECKPOINT_EVERY,
             "model": MODEL, "seed": SEED,
-            "dataset": "abcd", "eval_mode": "all",
-            "subflows": sorted(selected_subflows),
-            "mixed_subflows": bool(_args.mixed_subflows),
-            "hide_subflow": bool(_args.hide_subflow),
+            "dataset": "abcd", "eval_mode": "single_subflow",
+            "subflow": subflow,
             "max_train": _args.max_train, "max_dev": _args.max_dev,
             "max_test": _args.max_test,
             "reference_path": str(Path(_args.reference_path).resolve()) if _args.reference_path else None,
@@ -380,6 +364,11 @@ def main():
         "workflow_lines": len(workflow),
         "memory_exemplars": len(memory),
         "reference_chars": len(reference_text),
+        "resource_policy": {
+            "reference_lookup": "llm_planned_retrieve_reference",
+            "exemplar_lookup": "runtime_domain_overlap_top_k",
+            "exemplar_lookup_is_react_tool": False,
+        },
         "llm_calls_logged": logger.count,
     }
     with open(OUT_DIR / "summary.json", "w", encoding="utf-8") as f:

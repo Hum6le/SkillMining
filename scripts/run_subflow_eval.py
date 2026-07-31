@@ -276,6 +276,7 @@ def evaluate_agent_on_subflow(
             "rouge_2": round(text_result["rouge_2"], 4),
             "rouge_l": round(text_result["rouge_l"], 4),
             "meteor": round(text_result["meteor"], 4),
+            "num_samples": len(preds),
         },
         "ast_mean": round(ast_mean, 4),
         "ast_cds": {
@@ -505,8 +506,53 @@ def main():
                   f"{r['mined']['ast_cds']['ast_action_name']:.4f} "
                   f"{r['mined']['ast_cds']['ast_slot_value']:.4f}")
 
+    # Keep per-subflow results intact and also provide a weighted global view.
+    # Text metrics are weighted by evaluated conversations; AST by action turns;
+    # CDS by test conversations. This avoids treating tiny and large subflows
+    # as equally representative.
+    global_metrics = {}
+    for phase in ("seed", "mined"):
+        rows = [row for row in all_results.values() if row.get(phase)]
+        if not rows:
+            continue
+        text_weight = lambda row: max(int(row.get(phase, {}).get("text", {}).get("num_samples", 0)), 1)
+        ast_weight = lambda row: max(int(row.get(phase, {}).get("ast_cds", {}).get("num_action_turns", 0)), 1)
+        cds_weight = lambda row: max(int(row.get("test_sessions", 0)), 1)
+
+        def weighted(metric, weight_fn):
+            values = [
+                (float(row[phase]["text" if metric in row[phase].get("text", {}) else "ast_cds"][metric]), weight_fn(row))
+                for row in rows
+                if metric in row[phase].get("text", {}) or metric in row[phase].get("ast_cds", {})
+            ]
+            return sum(value * weight for value, weight in values) / sum(weight for _, weight in values) if values else None
+
+        metrics = {
+            metric: weighted(metric, text_weight)
+            for metric in ("bert_f1", "bleu_1", "bleu_4", "rouge_1", "rouge_2", "rouge_l", "meteor")
+        }
+        metrics.update({
+            metric: weighted(metric, ast_weight)
+            for metric in ("ast_joint", "ast_action_name", "ast_slot_value")
+        })
+        metrics["cds_overall"] = weighted("cds_overall", cds_weight)
+        global_metrics[phase] = {
+            "num_subflows": len(rows),
+            "metrics": {key: round(value, 6) for key, value in metrics.items() if value is not None},
+            "weights": {
+                "text_samples": sum(text_weight(row) for row in rows),
+                "action_turns": sum(ast_weight(row) for row in rows),
+                "test_sessions": sum(cds_weight(row) for row in rows),
+            },
+        }
+
+    summary_payload = dict(all_results)
+    summary_payload["__global__"] = {
+        "protocol": "independent_subflow_runs",
+        "aggregate": global_metrics,
+    }
     (OUT_DIR / "summary.json").write_text(
-        json.dumps(all_results, indent=2, ensure_ascii=False), encoding="utf-8")
+        json.dumps(summary_payload, indent=2, ensure_ascii=False), encoding="utf-8")
     log.info(f"\nDone. Output: {OUT_DIR}")
 
 

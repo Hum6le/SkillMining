@@ -43,3 +43,7 @@ parse_failures/
 
 # External repos (clone/configure manually per README)
 /ExpeL/
+/workdoc/
+
+# Vendored third-party python packages for local pptx generation
+/.pptx_deps/

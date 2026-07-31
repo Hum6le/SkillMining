@@ -1,5 +1,8 @@
 # Skill Baseline
 
+当前 ABCD 实验设计、共享模块、各方法流程、运行命令、输出和可复现性检查见
+[`EXPERIMENT_PIPELINE_OVERVIEW.md`](EXPERIMENT_PIPELINE_OVERVIEW.md).
+
 Task-oriented Dialogue (ToD) agent evaluation and skill evolution framework, built
 on top of the [Trace2Skill](https://github.com/Qwen-Applications/Trace2Skill)
 methodology.
@@ -302,7 +305,13 @@ The original `Trace2Skill` pipeline in this repo is still the MultiWOZ-style
 slot/success workflow. For ABCD we now keep a separate AST-driven pipeline:
 
 ```bash
-python scripts/run_trace2skill_abcd.py --max-train 200 --max-test 100
+python scripts/run_trace2skill_abcd.py --subflow recover_password
+```
+
+每次运行必须指定一个 subflow，例如：
+
+```bash
+python scripts/run_trace2skill_abcd.py --subflow recover_password
 ```
 
 ABCD Trace2Skill now evolves the copied skill iteratively over outer training
@@ -311,6 +320,7 @@ new patch to disk, and the next batch continues from that updated skill:
 
 ```bash
 python scripts/run_trace2skill_abcd.py \
+  --subflow recover_password \
   --max-train 200 \
   --max-test 100 \
   --evolution-batch-size 25
@@ -321,6 +331,7 @@ It also supports explicit pre-split files, using the same style as
 
 ```bash
 python scripts/run_trace2skill_abcd.py \
+  --subflow recover_password \
   --train-file data/eval/abcd/splits/recover_password/train.json \
   --test-file data/eval/abcd/splits/recover_password/test.json
 ```
@@ -338,6 +349,20 @@ Seed skill path:
 [`eval_tod/skills/abcd_trace2skill/SKILL.md`](/D:/paper/Skill_Baseline/eval_tod/skills/abcd_trace2skill/SKILL.md)
 
 ## ABCD Subflow Skill Mining
+
+当前 ABCD 实验统一采用“每个 subflow 独立运行、最后统计全局结果”的协议。
+AWM 和 Trace2Skill 必须通过 `--subflow` 指定一个 subflow，Graph Mining 的
+`--all` 也只是依次运行相互独立的 subflow。多个运行的结果可用下面的脚本
+进行加权汇总：
+
+```bash
+python scripts/aggregate_subflow_results.py \
+  --runs outputs/awm_abcd_recover_username outputs/awm_abcd_recover_password \
+  --output outputs/awm_global.json
+```
+
+详细的共享模块、训练流程、输出核验和指标定义见
+[`EXPERIMENT_PIPELINE_OVERVIEW.md`](EXPERIMENT_PIPELINE_OVERVIEW.md)。
 
 `scripts/run_subflow_eval.py` now supports two mining methods.  The default
 `sequence` method canonicalizes action nodes by removing instance-specific slot

@@ -2,6 +2,8 @@
 r"""ABCD Trace2Skill-style pipeline driven by AST.
 
 This is a separate pipeline from the original Trace2Skill MultiWOZ flow.
+Each run is restricted to exactly one ABCD subflow; global results are
+aggregated across independent subflow runs by a separate script.
 It keeps the same high-level loop:
 
 1. Run a seed agent with a skill/workflow prompt
@@ -18,7 +20,6 @@ from __future__ import annotations
 
 import json
 import logging
-import random
 import re
 import shutil
 import subprocess
@@ -903,20 +904,19 @@ def run_pipeline(args) -> PipelineOutputs:
     _install_llm_wrappers(args.llm_qps, args.llm_max_retries, args.llm_retry_base_delay)
 
     train_convs, test_convs, source_info = _load_conversations(args)
-    selected_subflows = {
-        item.strip() for item in args.subflows.split(",") if item.strip()
-    }
-    if selected_subflows:
-        train_convs = [
-            conv for conv in train_convs
-            if str(conv.get("scenario", {}).get("subflow", "")) in selected_subflows
-        ]
-        test_convs = [
-            conv for conv in test_convs
-            if str(conv.get("scenario", {}).get("subflow", "")) in selected_subflows
-        ]
-    if args.mixed_subflows:
-        random.Random(42).shuffle(train_convs)
+    subflow = args.subflow.strip()
+    train_convs = [
+        conv for conv in train_convs
+        if str(conv.get("scenario", {}).get("subflow", "")) == subflow
+    ]
+    test_convs = [
+        conv for conv in test_convs
+        if str(conv.get("scenario", {}).get("subflow", "")) == subflow
+    ]
+    if not train_convs or not test_convs:
+        raise ValueError(
+            f"Subflow {subflow!r} has no train/test conversations in the ABCD split"
+        )
     if args.max_train:
         train_convs = train_convs[:args.max_train]
     if args.max_test:
@@ -957,9 +957,7 @@ def run_pipeline(args) -> PipelineOutputs:
         "test_split": args.test_split,
         "train_file": str(Path(args.train_file).resolve()) if args.train_file else None,
         "test_file": str(Path(args.test_file).resolve()) if args.test_file else None,
-        "subflows": sorted(selected_subflows),
-        "mixed_subflows": bool(args.mixed_subflows),
-        "hide_subflow": bool(args.hide_subflow),
+        "subflow": subflow,
         "max_train": args.max_train,
         "max_test": args.max_test,
         "evolution_batch_size": args.evolution_batch_size,
@@ -1033,7 +1031,7 @@ def run_pipeline(args) -> PipelineOutputs:
         log.info("Stage 1: seed run on training set")
         seed_train_agent = _build_agent(
             model, seed_skill_text, response_logger, seed_reference_text,
-            expose_scenario_labels=not (args.mixed_subflows or args.hide_subflow),
+            expose_scenario_labels=True,
         )
         seed_train_turns = seed_train_agent.generate_all_turn_predictions(
             train_convs,
@@ -1056,7 +1054,7 @@ def run_pipeline(args) -> PipelineOutputs:
         seed_train_turns,
         train_ast_scores,
         log_dir=out_dir / "seed_failure_logs",
-        hide_scenario_labels=args.mixed_subflows or args.hide_subflow,
+        hide_scenario_labels=False,
     )
     log.info("Seed AST failures on train: %d / %d", len(seed_failed_cases), len(train_convs))
 
@@ -1131,7 +1129,7 @@ def run_pipeline(args) -> PipelineOutputs:
             current_skill_text,
             response_logger,
             current_reference_text,
-            expose_scenario_labels=not (args.mixed_subflows or args.hide_subflow),
+            expose_scenario_labels=True,
         )
         batch_turns = batch_agent.generate_all_turn_predictions(
             batch_convs,
@@ -1155,7 +1153,7 @@ def run_pipeline(args) -> PipelineOutputs:
             batch_turns,
             batch_ast_scores,
             log_dir=batch_dir / "failure_logs",
-            hide_scenario_labels=args.mixed_subflows or args.hide_subflow,
+            hide_scenario_labels=False,
         )
         total_failed_cases += len(batch_failed_cases)
         log.info(
@@ -1249,7 +1247,7 @@ def run_pipeline(args) -> PipelineOutputs:
         log.info("Stage 4: seed evaluation on test")
         seed_test_agent = _build_agent(
             model, seed_skill_text, response_logger, seed_reference_text,
-            expose_scenario_labels=not (args.mixed_subflows or args.hide_subflow),
+            expose_scenario_labels=True,
         )
         seed_test_turns = seed_test_agent.generate_all_turn_predictions(
             test_convs,
@@ -1275,7 +1273,7 @@ def run_pipeline(args) -> PipelineOutputs:
         evolved_skill_text,
         response_logger,
         evolved_reference_text,
-        expose_scenario_labels=not (args.mixed_subflows or args.hide_subflow),
+        expose_scenario_labels=True,
     )
     evolved_test_turns = evolved_test_agent.generate_all_turn_predictions(
         test_convs,
@@ -1301,9 +1299,7 @@ def run_pipeline(args) -> PipelineOutputs:
             "test_file": source_info["test_file"],
             "max_train": args.max_train,
             "max_test": args.max_test,
-            "subflows": sorted(selected_subflows),
-            "mixed_subflows": bool(args.mixed_subflows),
-            "hide_subflow": bool(args.hide_subflow),
+            "subflow": subflow,
             "model": model,
             "llm_qps": args.llm_qps,
             "llm_max_retries": args.llm_max_retries,
@@ -1358,22 +1354,12 @@ def main() -> None:
     parser.add_argument("--train-split", default="train", choices=["train", "dev", "test"])
     parser.add_argument("--test-split", default="test", choices=["train", "dev", "test"])
     parser.add_argument(
-        "--subflows",
-        default="",
-        help="Comma-separated subflows to mix; empty means all ABCD subflows",
+        "--subflow",
+        required=True,
+        help="Run exactly one ABCD subflow; repeat this command for each subflow",
     )
-    parser.add_argument(
-        "--mixed-subflows",
-        action="store_true",
-        help="Mix selected subflows and hide flow/subflow labels from the agent",
-    )
-    parser.add_argument(
-        "--hide-subflow",
-        action="store_true",
-        help="Hide flow/subflow labels from the agent prompt",
-    )
-    parser.add_argument("--max-train", type=int, default=200)
-    parser.add_argument("--max-test", type=int, default=100)
+    parser.add_argument("--max-train", type=int, default=None)
+    parser.add_argument("--max-test", type=int, default=None)
     parser.add_argument(
         "--evolution-batch-size",
         type=int,
