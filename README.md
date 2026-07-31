@@ -3,6 +3,30 @@
 当前 ABCD 实验设计、共享模块、各方法流程、运行命令、输出和可复现性检查见
 [`EXPERIMENT_PIPELINE_OVERVIEW.md`](EXPERIMENT_PIPELINE_OVERVIEW.md).
 
+全量 ABCD 实验可以使用统一 shell runner。它会进入 `skillmining310` conda
+环境，设置 `HF_ENDPOINT=https://hf-mirror.com`，逐个 subflow 运行 AWM、
+Trace2Skill 和 Graph Mining，并在最后生成加权全局汇总：
+
+```bash
+bash scripts/launch_full_abcd_experiments.sh
+```
+
+launcher 使用 `nohup` 后台运行，并立即打印 PID、日志路径和输出根目录；
+实验结束时，主 runner 会在日志中打印每个方法的产物目录、全局汇总 JSON 和
+manifest 文件。也可以直接运行前台版本：
+
+```bash
+bash scripts/run_full_abcd_experiments.sh
+```
+
+只运行一种方法或一个 subflow：
+
+```bash
+bash scripts/launch_full_abcd_experiments.sh --method awm
+bash scripts/launch_full_abcd_experiments.sh --method trace2skill
+bash scripts/launch_full_abcd_experiments.sh --subflow recover_username
+```
+
 Task-oriented Dialogue (ToD) agent evaluation and skill evolution framework, built
 on top of the [Trace2Skill](https://github.com/Qwen-Applications/Trace2Skill)
 methodology.
