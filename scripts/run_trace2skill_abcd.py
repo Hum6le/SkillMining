@@ -265,13 +265,49 @@ def _evaluate_turn_results(
     turn_results: list[dict[str, Any]],
     label: str,
 ) -> dict[str, Any]:
-    preds = [r["prediction"] for r in turn_results]
-    refs = [r["reference"] for r in turn_results]
+    text_turns = [
+        r for r in turn_results if r.get("target_type", "utterance") == "utterance"
+    ]
+    preds = [r["prediction"] for r in text_turns]
+    refs = [r["reference"] for r in text_turns]
     text_eval = evaluate_text_records(preds, refs)
 
     abcd_preds = turn_results_to_abcd_predictions(turn_results, conversations)
     all_gt = [extract_ground_truth(conv) for conv in conversations]
     abcd_eval = evaluate_abcd(all_gt, abcd_preds)
+    parsed_actions = sum(1 for r in turn_results if r.get("predicted_action"))
+    direct_actions = sum(
+        1 for r in turn_results
+        if r.get("target_type") == "action" and r.get("predicted_action")
+    )
+    log.info(
+        "%s diagnostics: all_targets=%d utterance_targets=%d parsed_actions=%d "
+        "direct_action_predictions=%d gt_action_turns=%d",
+        label, len(turn_results), len(text_turns), parsed_actions,
+        direct_actions, abcd_eval.ast.total_action_turns,
+    )
+    if abcd_eval.ast.total_action_turns and direct_actions == 0:
+        log.warning(
+            "%s produced zero direct action predictions although the set "
+            "contains %d action turns. Check raw LLM outputs and parser.",
+            label, abcd_eval.ast.total_action_turns,
+        )
+    records = [
+        {
+            "conversation_id": pred.conversation_id,
+            "turns": [
+                {
+                    "turn_index": t.turn_index,
+                    "turn_type": t.turn_type,
+                    "predicted_action": t.predicted_action,
+                    "predicted_slots": t.predicted_slots,
+                    "predicted_utterance_id": t.predicted_utterance_id,
+                }
+                for t in pred.turns
+            ],
+        }
+        for pred in abcd_preds
+    ]
 
     return {
         "label": label,
@@ -293,6 +329,11 @@ def _evaluate_turn_results(
             "cds_overall": round(abcd_eval.cds.overall_cds, 4),
             "num_action_turns": abcd_eval.ast.total_action_turns,
         },
+        "num_all_targets": len(turn_results),
+        "num_text_targets": len(text_turns),
+        "num_parsed_action_predictions": parsed_actions,
+        "num_direct_action_predictions": direct_actions,
+        "abcd_predictions": records,
         "summary": (
             f"AST={abcd_eval.ast.joint_accuracy:.4f} "
             f"Action={abcd_eval.ast.action_name_accuracy:.4f} "
@@ -1262,6 +1303,10 @@ def run_pipeline(args) -> PipelineOutputs:
             json.dumps(seed_test_eval, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
+        (out_dir / "seed_test_abcd_predictions.json").write_text(
+            json.dumps(seed_test_eval["abcd_predictions"], indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
         log.info("Seed test: %s", seed_test_eval["summary"])
 
     # Stage 5: evolved test evaluation
@@ -1286,6 +1331,10 @@ def run_pipeline(args) -> PipelineOutputs:
     )
     (out_dir / "evolved_test_eval.json").write_text(
         json.dumps(evolved_test_eval, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (out_dir / "evolved_test_abcd_predictions.json").write_text(
+        json.dumps(evolved_test_eval["abcd_predictions"], indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
     log.info("Evolved test: %s", evolved_test_eval["summary"])

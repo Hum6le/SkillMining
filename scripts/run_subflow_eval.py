@@ -245,10 +245,15 @@ def evaluate_agent_on_subflow(
             )
 
     turn_results = all_turn_results
-    preds = [r["prediction"] for r in turn_results]
+    # Action targets are generated for AST only.  Keep them out of response
+    # metrics, which are defined over agent utterance turns.
+    text_turns = [
+        r for r in turn_results if r.get("target_type", "utterance") == "utterance"
+    ]
+    preds = [r["prediction"] for r in text_turns]
     # Runtime prompts use original utterances, so compare generated text
     # against the aligned original agent utterance when it is available.
-    refs = [r.get("reference_original") or r["reference"] for r in turn_results]
+    refs = [r.get("reference_original") or r["reference"] for r in text_turns]
     text_result = evaluate_text_records(preds, refs)
 
     # AST from turn results
@@ -264,6 +269,44 @@ def evaluate_agent_on_subflow(
     abcd_preds = turn_results_to_abcd_predictions(turn_results, test_convs)
     all_gt = [extract_ground_truth(conv) for conv in test_convs]
     abcd_eval = evaluate_abcd(all_gt, abcd_preds)
+
+    if save_dir:
+        records = []
+        for pred in abcd_preds:
+            records.append({
+                "conversation_id": pred.conversation_id,
+                "turns": [
+                    {
+                        "turn_index": t.turn_index,
+                        "turn_type": t.turn_type,
+                        "predicted_action": t.predicted_action,
+                        "predicted_slots": t.predicted_slots,
+                        "predicted_utterance_id": t.predicted_utterance_id,
+                    }
+                    for t in pred.turns
+                ],
+            })
+        (save_dir / f"{label}_abcd_predictions.json").write_text(
+            json.dumps(records, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+
+    parsed_actions = sum(1 for r in turn_results if r.get("predicted_action"))
+    direct_actions = sum(
+        1 for r in turn_results
+        if r.get("target_type") == "action" and r.get("predicted_action")
+    )
+    log.info(
+        "  %s diagnostics: all_targets=%d, utterance_targets=%d, "
+        "parsed_actions=%d, direct_action_predictions=%d, gt_action_turns=%d",
+        label, len(turn_results), len(text_turns), parsed_actions, direct_actions,
+        abcd_eval.ast.total_action_turns,
+    )
+    if abcd_eval.ast.total_action_turns and direct_actions == 0:
+        log.warning(
+            "  %s produced zero direct action predictions although the test "
+            "set contains %d action turns. Check raw LLM outputs and parser.",
+            label, abcd_eval.ast.total_action_turns,
+        )
 
     return {
         "label": label,

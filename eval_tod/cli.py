@@ -242,6 +242,16 @@ def _parse_abcd_prediction_records(records: list[dict[str, Any]]) -> list[Any]:
     for item in records:
         if not isinstance(item, dict):
             continue
+        if "turns" not in item and (
+            "predicted_action" in item
+            or "predicted_slots" in item
+            or "turn_index" in item
+        ):
+            raise ValueError(
+                "ABCD action records must be grouped by conversation with a "
+                "'turns' list. Received flat turn records; call "
+                "turn_results_to_abcd_predictions() first."
+            )
         turns = []
         for turn in item.get("turns", []):
             if not isinstance(turn, dict):

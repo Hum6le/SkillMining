@@ -123,16 +123,30 @@ def main():
 
     # ── Load data ─────────────────────────────────────────────
     log.info("Loading ABCD dataset...")
-    train_convs = load_abcd_data("train", ABCD_DIR)
-    dev_convs = load_abcd_data("dev", ABCD_DIR)
-    test_convs = load_abcd_data("test", ABCD_DIR)
-
     subflow = _args.subflow.strip()
-    def keep(conv):
-        return str(conv.get("scenario", {}).get("subflow", "")) == subflow
-    train_convs = [conv for conv in train_convs if keep(conv)]
-    dev_convs = [conv for conv in dev_convs if keep(conv)]
-    test_convs = [conv for conv in test_convs if keep(conv)]
+    # Use the same deterministic per-subflow session split as Graph Mining
+    # and Trace2Skill.  The flattened turn targets are built later by
+    # ABCDAgent.generate_all_turn_predictions(); these files remain at the
+    # conversation/session level so workflow induction sees full dialogues.
+    split_dir = Path("data/eval/abcd/splits") / subflow
+    split_train = split_dir / "train.json"
+    split_test = split_dir / "test.json"
+    if split_train.exists() and split_test.exists():
+        train_convs = json.loads(split_train.read_text(encoding="utf-8"))
+        test_convs = json.loads(split_test.read_text(encoding="utf-8"))
+        # AWM does not currently use dev turns for model selection, but keep
+        # the field populated for a stable summary and future validation.
+        dev_convs = []
+        log.info("Using shared subflow split files: %s", split_dir)
+    else:
+        log.warning("Shared split files not found; falling back to source splits")
+        all_train = load_abcd_data("train", ABCD_DIR)
+        all_dev = load_abcd_data("dev", ABCD_DIR)
+        all_test = load_abcd_data("test", ABCD_DIR)
+        keep = lambda conv: str(conv.get("scenario", {}).get("subflow", "")) == subflow
+        train_convs = [conv for conv in all_train if keep(conv)]
+        dev_convs = [conv for conv in all_dev if keep(conv)]
+        test_convs = [conv for conv in all_test if keep(conv)]
     if not train_convs or not test_convs:
         raise ValueError(
             f"Subflow {subflow!r} has no train/test conversations in the ABCD split"
@@ -321,19 +335,65 @@ def main():
         encoding="utf-8")
     log.info(f"  Saved {len(test_turns)} turn predictions")
 
-    # Also save plain predictions for text metrics
-    test_preds = test_agent.predict_and_save(test_convs, str(OUT_DIR / "test_final_preds.json"))
+    # Derive dialogue-level text predictions from the same full turn run.
+    # ``predict_and_save`` only evaluates the final agent utterance and would
+    # launch a second, inconsistent generation pass.  Keep that final-turn
+    # artifact for compatibility, but make the full turn file above the
+    # source of truth for this evaluation.
+    text_by_convo = {}
+    for row in test_turns:
+        if row.get("target_type", "utterance") != "utterance":
+            continue
+        text_by_convo[str(row["convo_id"])] = row.get("prediction", "")
     text_records = [
         {
-            "dialogue_id": pred.dialogue_id,
-            "response_text": pred.response_text,
+            "dialogue_id": f"abcd-{conv.get('convo_id', '?')}",
+            "response_text": text_by_convo.get(str(conv.get("convo_id", "?")), ""),
         }
-        for pred in test_preds
+        for conv in test_convs
     ]
+    (OUT_DIR / "test_final_preds.json").write_text(
+        json.dumps(text_records, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    (OUT_DIR / "test_turn_text_predictions.json").write_text(
+        json.dumps(
+            [r for r in test_turns if r.get("target_type", "utterance") == "utterance"],
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    # ``test_turns`` is a flat list of per-agent-turn records, while the
+    # shared evaluator consumes one ABCD prediction object per dialogue.
+    # Convert before serializing so action turns are aligned consistently with
+    # the training-time ``compute_ast_from_turn_results`` path.
+    from eval_tod.abcd.agent import turn_results_to_abcd_predictions
+
+    grouped_abcd_preds = turn_results_to_abcd_predictions(test_turns, test_convs)
+    abcd_records = [
+        {
+            "conversation_id": pred.conversation_id,
+            "turns": [
+                {
+                    "turn_index": turn.turn_index,
+                    "turn_type": turn.turn_type,
+                    "predicted_utterance_id": turn.predicted_utterance_id,
+                    "predicted_action": turn.predicted_action,
+                    "predicted_slots": turn.predicted_slots,
+                }
+                for turn in pred.turns
+            ],
+        }
+        for pred in grouped_abcd_preds
+    ]
+    (OUT_DIR / "test_abcd_predictions.json").write_text(
+        json.dumps(abcd_records, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     test_result = evaluate_abcd_bundle(
         test_convs,
         text_records=text_records,
-        abcd_records=test_turns,
+        abcd_records=abcd_records,
         text_prediction_key="response_text",
     )
     log.info(f"Final test: {test_result['summary']}")

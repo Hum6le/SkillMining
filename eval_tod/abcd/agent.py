@@ -402,14 +402,25 @@ class ABCDAgent(AbstractTodAgent):
         system = self._build_system_prompt(scenario)
         results: list[dict] = []
 
+        # Keep both target types.  Agent turns are used for response metrics;
+        # action turns are separate ABCD targets and must be predicted at
+        # their own turn index for AST.  Mapping every action back to the
+        # previous agent utterance loses alignment when several utterances
+        # occur before one backend action.
         agent_indices = [
             i for i, t in enumerate(delexed)
             if t.get("speaker") == "agent" and t.get("text", "").strip()
         ]
+        action_indices = [
+            i for i, t in enumerate(delexed)
+            if len(t.get("targets", [])) >= 3
+            and t.get("targets", [None, None])[1] == "take_action"
+        ]
+        target_indices = sorted(set(agent_indices) | set(action_indices))
 
         task_template = _TASK_PROMPT_WITH_ACTION if predict_actions else _TASK_PROMPT
 
-        for agent_num, turn_idx in enumerate(agent_indices, 1):
+        for target_num, turn_idx in enumerate(target_indices, 1):
             context_lines: list[str] = []
             for i in range(turn_idx):
                 t = delexed[i]
@@ -458,7 +469,11 @@ class ABCDAgent(AbstractTodAgent):
             entry = {
                 "convo_id": convo_id,
                 "turn_index": turn_idx,
-                "agent_turn_num": agent_num,
+                "agent_turn_num": (
+                    agent_indices.index(turn_idx) + 1
+                    if turn_idx in agent_indices else None
+                ),
+                "target_type": "action" if turn_idx in action_indices else "utterance",
                 "total_agent_turns": len(agent_indices),
                 "subflow": str(scenario.get("subflow", "")),
                 "flow": str(scenario.get("flow", "")),
@@ -518,7 +533,7 @@ class ABCDAgent(AbstractTodAgent):
             if predict_actions:
                 action, slots, resp = _parse_action_response(raw_output)
                 # Debug: log first few parses
-                if agent_num == 1 and len(results) == 0:
+                if target_num == 1 and len(results) == 0:
                     print(f"  [DEBUG predict_actions] raw(200): {raw_output[:200]}")
                     print(f"  [DEBUG predict_actions] parsed: action={action!r} slots={slots!r} resp={resp[:80]!r}")
                 entry["predicted_action"] = action
@@ -1094,24 +1109,53 @@ def _parse_action_response(raw: str) -> tuple[str, list[str], str]:
 
     Returns (action_name, slot_list, response_text).
     """
+    import json
     import re
     action = ""
     slots: list[str] = []
     response = raw  # fallback: whole text
 
-    m = re.search(r"ACTION:\s*(.+)", raw)
+    # Accept JSON and fenced JSON as well as the documented line format.
+    # Some OpenAI-compatible endpoints ignore the line-format instruction
+    # and return a structured object instead.
+    payload = raw.strip()
+    if payload.startswith("```"):
+        payload = re.sub(r"^```(?:json)?\s*|\s*```$", "", payload,
+                         flags=re.IGNORECASE | re.DOTALL).strip()
+    try:
+        obj = json.loads(payload)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        obj = None
+    if isinstance(obj, dict):
+        action_value = obj.get("action", obj.get("predicted_action", ""))
+        slot_value = obj.get("slots", obj.get("predicted_slots", []))
+        response_value = obj.get("response", obj.get("prediction", raw))
+        action = str(action_value or "").strip()
+        if action.lower() in {"none", "null", "no_action", "no-action"}:
+            action = ""
+        if isinstance(slot_value, list):
+            slots = [str(s).strip() for s in slot_value if str(s).strip()]
+        elif slot_value and str(slot_value).lower() != "none":
+            slots = [s.strip() for s in str(slot_value).split(",") if s.strip()]
+        response = str(response_value or "").strip().strip('"').strip("'")
+        return action, slots, response
+
+    m = re.search(r"^\s*ACTION\s*:\s*(.+?)\s*$", raw,
+                  re.IGNORECASE | re.MULTILINE)
     if m:
         action = m.group(1).strip()
         if action.lower() == "none":
             action = ""
 
-    m = re.search(r"SLOTS:\s*(.+)", raw)
+    m = re.search(r"^\s*SLOTS\s*:\s*(.+?)\s*$", raw,
+                  re.IGNORECASE | re.MULTILINE)
     if m:
         slots_text = m.group(1).strip()
         if slots_text.lower() != "none":
             slots = [s.strip() for s in slots_text.split(",") if s.strip()]
 
-    m = re.search(r"RESPONSE:\s*\n?(.*?)$", raw, re.DOTALL)
+    m = re.search(r"^\s*RESPONSE\s*:\s*\n?(.*?)$", raw,
+                  re.IGNORECASE | re.MULTILINE | re.DOTALL)
     if m:
         response = m.group(1).strip().strip('"').strip("'")
 
@@ -1146,22 +1190,33 @@ def turn_results_to_abcd_predictions(
     total_action_turns = 0
     total_mapped = 0
 
-    for cid, turns in by_convo.items():
-        conv = conv_index.get(cid)
-        if conv is None:
-            continue
+    missing_conversations = 0
+    # Preserve the input conversation order and emit an empty prediction for
+    # a dialogue with no generated agent turns.  This keeps callers that zip
+    # conversations with predictions aligned instead of silently shifting all
+    # subsequent AST results.
+    for conv in conversations:
+        cid = str(conv.get("convo_id", "?"))
+        turns = by_convo.get(cid, [])
+        if not turns:
+            missing_conversations += 1
 
         delexed = conv.get("delexed", [])
         turn_preds: list[ABCDTurnPrediction] = []
 
         agent_preds: dict[int, str] = {}
-        agent_slots: dict[int, str] = {}
+        agent_slots: dict[int, list[str]] = {}
+        direct_action_preds: dict[int, tuple[str, list[str]]] = {}
         for r in sorted(turns, key=lambda x: x["turn_index"]):
             pa = r.get("predicted_action", "")
             ps = r.get("predicted_slots", [])
             if pa:
-                agent_preds[r["turn_index"]] = pa
-                agent_slots[r["turn_index"]] = ps
+                idx = int(r["turn_index"])
+                if r.get("target_type") == "action":
+                    direct_action_preds[idx] = (pa, list(ps or []))
+                else:
+                    agent_preds[idx] = pa
+                    agent_slots[idx] = list(ps or [])
         total_agent_preds += len(agent_preds)
 
         agent_indices = sorted(agent_preds.keys())
@@ -1172,14 +1227,17 @@ def turn_results_to_abcd_predictions(
                 continue
             total_action_turns += 1
 
-            pred_action = ""
-            pred_slots: list[str] = []
-            for ai in agent_indices:
-                if ai < turn_idx:
-                    pred_action = agent_preds[ai]
-                    pred_slots = agent_slots[ai]
-                else:
-                    break
+            if turn_idx in direct_action_preds:
+                pred_action, pred_slots = direct_action_preds[turn_idx]
+            else:
+                pred_action = ""
+                pred_slots = []
+                for ai in agent_indices:
+                    if ai < turn_idx:
+                        pred_action = agent_preds[ai]
+                        pred_slots = agent_slots[ai]
+                    else:
+                        break
 
             if pred_action:
                 total_mapped += 1
@@ -1196,10 +1254,18 @@ def turn_results_to_abcd_predictions(
             turns=turn_preds,
         ))
 
+    total_direct = sum(
+        1 for r in turn_results
+        if r.get("target_type") == "action" and r.get("predicted_action")
+    )
+    total_parsed = sum(1 for r in turn_results if r.get("predicted_action"))
     print(f"  [AST mapping] {len(predictions)} convs, "
+          f"{total_parsed}/{len(turn_results)} parsed actions "
+          f"({total_direct} direct action targets), "
           f"{total_agent_preds} agent predictions, "
           f"{total_action_turns} action turns, "
-          f"{total_mapped} mapped ({100*total_mapped/max(total_action_turns,1):.0f}%)")
+          f"{total_mapped} mapped ({100*total_mapped/max(total_action_turns,1):.0f}%), "
+          f"{missing_conversations} convs without generated turns")
 
     return predictions
 

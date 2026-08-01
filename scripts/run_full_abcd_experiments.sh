@@ -26,6 +26,7 @@ MIN_SESSIONS=0
 EVOLUTION_BATCH_SIZE=25
 CONTINUE_ON_ERROR=1
 PYTHON_BIN="python"
+REBUILD_SPLITS=1
 
 usage() {
     cat <<'EOF'
@@ -37,6 +38,7 @@ Options:
   --min-sessions N           Graph Mining minimum train sessions (default: 0)
   --evolution-batch-size N   Trace2Skill outer batch size (default: 25)
   --stop-on-error            Stop at the first failed subflow
+  --no-rebuild-splits        Reuse existing subflow session splits
   -h, --help                 Show this help
 
 The script always activates conda environment skillmining310 and sets:
@@ -68,6 +70,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --stop-on-error)
             CONTINUE_ON_ERROR=0
+            shift
+            ;;
+        --no-rebuild-splits)
+            REBUILD_SPLITS=0
             shift
             ;;
         -h|--help)
@@ -138,6 +144,14 @@ echo "Root:        $ROOT_DIR"
 SPLITS_DIR="$ROOT_DIR/data/eval/abcd/splits"
 OUTPUT_DIR="$ROOT_DIR/outputs"
 mkdir -p "$OUTPUT_DIR"
+
+if [[ "$REBUILD_SPLITS" -eq 1 ]]; then
+    echo "Building shared per-subflow session splits..."
+    "$PYTHON_BIN" scripts/split_abcd_by_intent.py --seed 42 || {
+        echo "Failed to build shared ABCD splits." >&2
+        exit 1
+    }
+fi
 RUN_ID="$(date +%Y-%m-%d_%H-%M-%S)"
 MANIFEST="$OUTPUT_DIR/full_abcd_${RUN_ID}_manifest.txt"
 : > "$MANIFEST"
@@ -211,6 +225,8 @@ if [[ "$METHOD" == "all" || "$METHOD" == "trace2skill" ]]; then
         run_subflow_command "Trace2Skill" "$subflow" \
             scripts/run_trace2skill_abcd.py \
             --subflow "$subflow" \
+            --train-file "$SPLITS_DIR/$subflow/train.json" \
+            --test-file "$SPLITS_DIR/$subflow/test.json" \
             --evolution-batch-size "$EVOLUTION_BATCH_SIZE" \
             --continue-on-batch-error || continue
         run_dir="$(latest_run_dir 'abcd_trace2skill_*')"
