@@ -280,8 +280,18 @@ def main():
                 inform_slots={}, request_slots={}, booking={},
                 response_text=last,
             ))
-        updated_workflow = agent.induce(batch, preds, eval_dicts)
-        agent.update_memory(batch, preds, eval_dicts)
+        updated_workflow = agent.induce(
+            batch,
+            preds,
+            eval_dicts,
+            turn_results=turn_results,
+        )
+        agent.update_memory(
+            batch,
+            preds,
+            eval_dicts,
+            turn_results=turn_results,
+        )
         reference_text = "\n\n".join(
             part for part in [
                 external_reference_text,

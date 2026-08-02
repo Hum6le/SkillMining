@@ -943,6 +943,7 @@ class ABCDAgent(AbstractTodAgent):
         dialogues,
         predictions,
         eval_results: list[dict],
+        turn_results: list[dict] | None = None,
     ) -> str:
         """Induce workflow patterns with LLM-managed update.
 
@@ -968,10 +969,18 @@ class ABCDAgent(AbstractTodAgent):
                 if self.expose_scenario_labels
                 else f"### Conversation {convo_id}"
             )
+            trajectory = ""
+            if turn_results is not None:
+                rows = [
+                    row for row in turn_results
+                    if str(row.get("convo_id", "")) == str(convo_id)
+                ]
+                trajectory = _format_abcd_turn_trajectory(conv, rows)
             lines.append(
                 f"{header}\n"
                 f"- Ground Truth Actions: {gt_str}\n"
-                f"- Agent Generated: {pred.response_text[:200] if pred.response_text else '(empty)'}\n"
+                f"- Agent Generated (last turn): {pred.response_text[:200] if pred.response_text else '(empty)'}\n"
+                + (f"- Full Turn Trajectory:\n{trajectory}\n" if trajectory else "")
             )
 
         existing = self.workflow.text if self.workflow else "(empty — first batch)"
@@ -984,7 +993,10 @@ class ABCDAgent(AbstractTodAgent):
             "- **Ground Truth Actions**: the CORRECT sequence of system actions for this dialogue. "
             "Use these to learn what the proper workflow should be.\n"
             "- **Agent Generated**: what the agent actually said. Compare against ground truth "
-            "to identify gaps — does the agent's response align with the correct actions?\n\n"
+            "to identify gaps — does the agent's response align with the correct actions?\n"
+            "- **Full Turn Trajectory**: use every turn's context, predicted action, "
+            "predicted slots, response, and `ast_correct` field. Do not infer the "
+            "workflow only from the final response.\n\n"
             "## Update Rules\n"
             "- **Add** patterns from ground-truth action sequences that are not yet covered.\n"
             "- **Refine** patterns if the agent's response doesn't align with correct actions.\n"
@@ -1050,7 +1062,13 @@ class ABCDAgent(AbstractTodAgent):
 
         return updated
 
-    def update_memory(self, dialogues, predictions, eval_results: list[dict]):
+    def update_memory(
+        self,
+        dialogues,
+        predictions,
+        eval_results: list[dict],
+        turn_results: list[dict] | None = None,
+    ):
         """Store successful dialogues as exemplars — based on AST score > 0.5."""
         for conv, pred, metrics in zip(dialogues, predictions, eval_results):
             ast = metrics.get("ast_score", 0)
@@ -1061,6 +1079,17 @@ class ABCDAgent(AbstractTodAgent):
                     if self.expose_scenario_labels
                     else []
                 )
+                rows = []
+                if turn_results is not None:
+                    rows = [
+                        row for row in turn_results
+                        if str(row.get("convo_id", ""))
+                        == str(conv.get("convo_id", "?"))
+                    ]
+                trajectory = (
+                    _format_abcd_turn_trajectory(conv, rows)
+                    if rows else pred.response_text[:1000]
+                )
                 self.memory.add_dict({
                     "dialogue_id": f"abcd-{conv.get('convo_id', '?')}",
                     "domains": domains,
@@ -1069,7 +1098,8 @@ class ABCDAgent(AbstractTodAgent):
                         if self.expose_scenario_labels
                         else "customer-service dialogue"
                     ),
-                    "trajectory": pred.response_text[:1000],
+                    "trajectory": trajectory[:4000],
+                    "trajectory_turns": _build_abcd_turn_trajectory(conv, rows),
                 })
 
     def save_memory(self, path: str):
@@ -1102,6 +1132,126 @@ def _extract_action_sequence(conv: dict) -> list[str]:
                 action_name += ":" + ",".join(str(s)[:20] for s in slots)
             actions.append(action_name)
     return actions
+
+
+def _build_abcd_turn_trajectory(
+    conversation: dict[str, Any],
+    turn_results: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Join generated records with every ABCD utterance/action turn."""
+    result_by_index = {
+        int(row["turn_index"]): row
+        for row in turn_results
+        if isinstance(row, dict) and "turn_index" in row
+    }
+    delexed = conversation.get("delexed", [])
+    trajectory: list[dict[str, Any]] = []
+
+    for turn_index, turn in enumerate(delexed):
+        row = result_by_index.get(turn_index, {})
+        speaker = str(turn.get("speaker", "unknown"))
+        targets = turn.get("targets", [])
+        is_action = len(targets) >= 3 and targets[1] == "take_action"
+        turn_type = "action" if is_action else (
+            "utterance" if speaker == "agent" else "customer"
+        )
+
+        context = str(row.get("context", "")).strip()
+        if not context:
+            context_lines: list[str] = []
+            for previous_index in range(turn_index):
+                previous = delexed[previous_index]
+                _, text = _get_original_turn(conversation, previous_index, previous)
+                if not text:
+                    continue
+                label = {
+                    "agent": "Agent",
+                    "customer": "Customer",
+                    "action": "System",
+                }.get(str(previous.get("speaker", "unknown")), "unknown")
+                context_lines.append(f"[{label}] {text}")
+            context = "\n".join(context_lines)
+
+        predicted_action = str(row.get("predicted_action", "") or "").strip()
+        predicted_slots = [str(value) for value in (row.get("predicted_slots") or [])]
+        if is_action and not predicted_action:
+            # Backward-compatible alignment for legacy turn results that only
+            # contain agent rows.  New runs contain direct action rows.
+            for previous_index in sorted(result_by_index):
+                if previous_index >= turn_index:
+                    break
+                previous = result_by_index[previous_index]
+                if previous.get("target_type") != "action" and previous.get("predicted_action"):
+                    predicted_action = str(previous["predicted_action"]).strip()
+                    predicted_slots = [
+                        str(value) for value in (previous.get("predicted_slots") or [])
+                    ]
+        gold_action = str(targets[2]) if is_action and targets[2] else None
+        gold_slots = (
+            list(targets[3])
+            if is_action and len(targets) > 3 and isinstance(targets[3], list)
+            else []
+        )
+
+        ast_correct: bool | None = None
+        action_correct: bool | None = None
+        slot_correct: bool | None = None
+        if is_action:
+            action_correct = predicted_action == gold_action
+            slot_correct = predicted_slots == [str(value) for value in gold_slots]
+            ast_correct = bool(action_correct and slot_correct)
+
+        trajectory.append({
+            "turn_index": turn_index,
+            "speaker": speaker,
+            "turn_type": turn_type,
+            "context": context,
+            "predicted_action": predicted_action or None,
+            "predicted_slots": predicted_slots,
+            "gold_action": gold_action,
+            "gold_slots": [str(value) for value in gold_slots],
+            "action_correct": action_correct,
+            "slot_correct": slot_correct,
+            "ast_correct": ast_correct,
+            "response": str(row.get("prediction", "") or "").strip(),
+            "reference": str(row.get("reference_original") or row.get("reference", "") or "").strip(),
+        })
+
+    return trajectory
+
+
+def _format_abcd_turn_trajectory(
+    conversation: dict[str, Any],
+    turn_results: list[dict[str, Any]],
+    max_chars: int = 4000,
+) -> str:
+    """Render a bounded prompt view of a structured ABCD trajectory."""
+    rows = _build_abcd_turn_trajectory(conversation, turn_results)
+    lines: list[str] = []
+    for row in rows:
+        ast = "N/A" if row["ast_correct"] is None else str(row["ast_correct"])
+        slots = ", ".join(row["predicted_slots"]) if row["predicted_slots"] else "none"
+        context = row["context"]
+        if len(context) > 1600:
+            context = context[-1600:]
+        response = row["response"]
+        if len(response) > 600:
+            response = response[:600] + "..."
+        gold_lines = (
+            f"  gold_action: {row['gold_action']}\n"
+            f"  gold_slots: {', '.join(row['gold_slots']) if row['gold_slots'] else 'none'}\n"
+            if row["turn_type"] == "action" else ""
+        )
+        lines.append(
+            f"- turn_index: {row['turn_index']} | speaker: {row['speaker']} | "
+            f"turn_type: {row['turn_type']} | ast_correct: {ast}\n"
+            f"  context: {context}\n"
+            f"  predicted_action: {row['predicted_action'] or 'none'}\n"
+            f"  predicted_slots: {slots}\n"
+            + gold_lines
+            + f"  response: {response or '(empty)'}"
+        )
+    return "\n".join(lines)[:max_chars]
 
 
 def _parse_action_response(raw: str) -> tuple[str, list[str], str]:

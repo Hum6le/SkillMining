@@ -102,8 +102,29 @@ class MemoryStore:
                 lines.append(f"Goal: {ex['goal'][:300]}")
             else:
                 lines.append(f"\n### Example {i}")
-            if ex.get("trajectory"):
-                lines.append(f"Trajectory:\n{ex['trajectory'][:1000]}")
+            trajectory = ex.get("trajectory", "")
+            structured_turns = ex.get("trajectory_turns")
+            if isinstance(structured_turns, list) and structured_turns:
+                compact_rows = []
+                for row in structured_turns:
+                    if not isinstance(row, dict):
+                        continue
+                    slots = ", ".join(str(x) for x in row.get("predicted_slots", [])) or "none"
+                    context = " ".join(str(row.get("context", "")).split())
+                    if len(context) > 500:
+                        context = context[-500:]
+                    compact_rows.append(
+                        f"turn_index={row.get('turn_index')} "
+                        f"turn_type={row.get('turn_type')} "
+                        f"context={context} "
+                        f"predicted_action={row.get('predicted_action') or 'none'} "
+                        f"predicted_slots={slots} "
+                        f"ast_correct={row.get('ast_correct', 'N/A')} "
+                        f"response={str(row.get('response', ''))[:300]}"
+                    )
+                trajectory = "\n".join(compact_rows)
+            if trajectory:
+                lines.append(f"Trajectory:\n{trajectory[:2000]}")
         return "\n".join(lines) + "\n"
 
     # ── I/O ──────────────────────────────────────────────────
