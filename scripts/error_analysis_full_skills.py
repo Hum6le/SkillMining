@@ -557,6 +557,9 @@ Subflow: {subflow}
 {json.dumps([compact_error(row) for row in errors], indent=2, ensure_ascii=False)}
 ```
 
+The analysis has two mandatory tracks for EVERY subflow. Track A audits the
+skill text itself, even when prediction files or sampled errors are missing.
+Track B jointly analyzes the sampled fail cases when they are available.
 Respond in Chinese with these Markdown sections:
 
 1. `## Skill审计结论`
@@ -573,6 +576,14 @@ Respond in Chinese with these Markdown sections:
    State what business/state-transition structure this subflow appears to
    require and what the skill fails to represent.
 
+The skill audit must explicitly include: missing state guards, unclear
+conditions, contradictory rules, collapsed branches, unsafe ordering,
+instance-specific wording, and missing recovery behavior. Quote exact skill
+text as evidence. If no skill defect is found, state what was checked and why
+the skill is coherent. Separately explain which fail cases are attributable to
+skill defects, which are execution/parser/data failures, and which possible
+skill defects have not yet produced an observed failure.
+
 Do not claim a rule is wrong merely because a sampled trace differs from it.
 Distinguish alternative state-conditioned branches from genuine contradictions.
 """
@@ -582,6 +593,7 @@ def batch_prompt(batch: list[dict[str, Any]], batch_id: int, total_batches: int)
     payload = []
     for row in batch:
         payload.append({
+            "method": row.get("method", "unknown"),
             "subflow": row["subflow"],
             "stats": row.get("stats", {}),
             "skill_audit": row.get("analysis", ""),
@@ -594,6 +606,10 @@ Batch {batch_id}/{total_batches}
 {json.dumps(payload, indent=2, ensure_ascii=False)}
 ```
 
+Every subflow in this batch has a mandatory skill-text audit. Consolidate
+skill-content defects separately from sampled fail-case causes. Do not treat a
+missing prediction file as evidence that the skill is correct.
+
 Produce a Chinese Markdown summary with:
 
 ## Batch-level recurring defects
@@ -601,9 +617,15 @@ Group issues by structural cause, not by subflow name. Focus on ambiguity,
 missing state guards, conflicting rules, incorrect macro boundaries,
 instance leakage, and missing recovery behavior.
 
+## Skill-only defects
+Summarize problems found directly in the generated skill text, including
+problems that have not yet produced an observed execution failure. Report both
+the number of affected subflows and representative quoted evidence.
+
 ## Evidence and prevalence
 For each cause, list supporting subflows and distinguish broad patterns from
-isolated cases.
+isolated cases. Keep the denominator explicit: count skill-audit coverage and
+fail-case evidence separately.
 
 ## Cross-subflow business insights
 Identify common latent state variables or transition patterns.
@@ -632,11 +654,14 @@ Write a Chinese Markdown report with:
 # Full-Corpus Skill Error Analysis
 
 ## Executive summary
-State the dominant structural problems in the generated skills.
+State the dominant structural problems in the generated skills. The report
+must cover all skill audits, not only subflows with sampled prediction errors.
 
 ## Evidence-backed findings
 For every major finding, report prevalence across subflows and representative
-subflow names. Separate skill-content problems from execution/model problems.
+subflow names. Separate direct skill-text defects, skill-linked fail cases,
+and execution/model/parser/data problems. Explicitly report how many skills
+were audited and how many had usable fail-case samples.
 
 ## Cross-subflow failure taxonomy
 Organize failures into reusable categories such as missing guard, branch
@@ -652,7 +677,9 @@ Give the top five changes, ordered by expected research value.
 
 ## Limitations and missing evidence
 Explicitly identify subflows or conclusions weakened by missing prediction or
-test files and by the ten-case-per-subflow sampling protocol.
+test files. Make clear that missing fail cases do not remove the subflow from
+the skill-quality audit. Also state the limitation introduced by the
+ten-case-per-subflow sampling protocol.
 """
 
 
@@ -693,6 +720,9 @@ def analyze_subflow(
         "reference_path": str(reference_path) if reference_path.exists() else None,
         "prediction_path": str(prediction_path) if prediction_path else None,
         "test_path": str(test_path) if test_path else None,
+        "skill_audit_required": True,
+        "skill_audit_input_available": bool(skill_text.strip()),
+        "skill_chars": len(skill_text),
     }
     missing = [name for name, path in (("predictions", prediction_path), ("test_data", test_path)) if not path]
     if not prediction_path or not test_path:
