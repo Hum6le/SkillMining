@@ -48,12 +48,20 @@ from llm import chat  # noqa: E402
 
 LOG = logging.getLogger("error_analysis_full_skills")
 PREDICTION_NAMES = (
-    "test_abcd_predictions.json",
+    # Prefer raw turn-level outputs.  The AST evaluator consumes these via
+    # turn_results_to_abcd_predictions; *_abcd_predictions.json is derived
+    # output and must only be used as a compatibility fallback.
+    "evolved_test_turns.json",
+    "mined_test_turns.json",
+    "test_turns.json",
     "test_turn_predictions.json",
     "mined_predictions.json",
     "test_predictions.json",
     "predictions.json",
     "test_final_preds.json",
+    "test_abcd_predictions.json",
+    "evolved_test_abcd_predictions.json",
+    "mined_test_abcd_predictions.json",
 )
 
 
@@ -324,6 +332,23 @@ def build_react_lookup(rows: list[dict[str, Any]]) -> dict[tuple[str, int], dict
 def normalize_predictions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     normalized = []
     for original in rows:
+        # Compatibility with already serialized ABCDPrediction files.  The
+        # normal path uses raw turn-level files, but converting these records
+        # here prevents a silent all-missing-predictions result if a derived
+        # file is the only artifact available.
+        if isinstance(original.get("turns"), list) and "convo_id" not in original:
+            conversation_id = str(original.get("conversation_id", ""))
+            for turn in original["turns"]:
+                if not isinstance(turn, dict) or turn.get("turn_type") != "action":
+                    continue
+                normalized.append({
+                    "convo_id": conversation_id,
+                    "turn_index": turn.get("turn_index", 0),
+                    "target_type": "action",
+                    "predicted_action": turn.get("predicted_action") or "",
+                    "predicted_slots": turn.get("predicted_slots") or [],
+                })
+            continue
         row = dict(original)
         row["convo_id"] = str(row.get("convo_id", ""))
         if "predicted_action" not in row and "prediction" in row:
