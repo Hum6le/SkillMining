@@ -270,10 +270,15 @@ def discover_skill_dirs_from_manifest(manifest_path: Path) -> dict[str, Path]:
 
 def find_prediction_file(skill_dir: Path, predictions_root: Path | None, subflow: str) -> Path | None:
     search_dir = skill_dir.parent if skill_dir.is_file() else skill_dir
-    for name in PREDICTION_NAMES:
-        candidate = search_dir / name
-        if candidate.exists():
-            return candidate
+    # Manifest-driven artifacts can be nested one level below their run dir,
+    # e.g. <run>/evolved_skill/SKILL.md.  Check the artifact directory and its
+    # ancestors before falling back to a separately supplied prediction root.
+    search_dirs = [search_dir, *search_dir.parents]
+    for directory in search_dirs:
+        for name in PREDICTION_NAMES:
+            candidate = directory / name
+            if candidate.exists():
+                return candidate
     if predictions_root and predictions_root.exists():
         exact = []
         for name in PREDICTION_NAMES:
