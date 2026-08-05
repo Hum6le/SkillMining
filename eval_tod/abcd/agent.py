@@ -1420,35 +1420,6 @@ def turn_results_to_abcd_predictions(
     return predictions
 
 
-def compute_per_dialogue_ast(
-    conversations: list[dict],
-) -> list[dict]:
-    """Compute per-dialogue AST score for induction feedback.
-
-    Compares ground-truth action turns in each conversation.  Callers should
-    run predict_all_turns(predict_actions=True) first, then call this with
-    the resulting turn dicts to compute per-dialogue AST scores.
-
-    Returns list of dicts: {ast_score, action_correct, action_total}.
-    """
-    from .data import extract_ground_truth
-
-    scores: list[dict] = []
-    for conv in conversations:
-        truths = extract_ground_truth(conv)
-        gt_action_turns = [
-            t for t in truths if t.turn_type == "action" and t.action_name
-        ]
-        total = len(gt_action_turns)
-        # Without predictions, report totals only
-        scores.append({
-            "ast_score": 0.0,
-            "action_correct": 0,
-            "action_total": total,
-        })
-    return scores
-
-
 def compute_ast_from_turn_results(
     conversations: list[dict],
     turn_results: list[dict],

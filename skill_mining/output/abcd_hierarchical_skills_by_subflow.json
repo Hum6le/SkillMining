@@ -1,0 +1,1487 @@
+{
+  "algorithm": "hierarchical_residual_hypergraph_cover_by_subflow",
+  "input": "skill_mining\\output\\abcd_session_hg\\operator_results.json",
+  "config": {
+    "coverage_ratio": 0.8,
+    "max_basis_nodes": null,
+    "min_branch_support": 2,
+    "min_sessions": 2
+  },
+  "statistics": {
+    "num_sessions": 50,
+    "num_subflows": 38,
+    "num_mined_subflows": 8,
+    "num_skipped_subflows": 30
+  },
+  "skipped_subflows": {
+    "bad_price_yesterday": 1,
+    "boots_other_3": 1,
+    "boots_other_4": 1,
+    "cost": 1,
+    "credit_card": 1,
+    "jacket_other_3": 1,
+    "jacket_other_4": 1,
+    "jeans_other_2": 1,
+    "manage_change_phone": 1,
+    "manage_create": 1,
+    "manage_dispute_bill": 1,
+    "manage_upgrade": 1,
+    "membership_1": 1,
+    "missing": 1,
+    "mistimed_billing_already_returned": 1,
+    "mistimed_billing_never_bought": 1,
+    "out_of_stock_general": 1,
+    "out_of_stock_one_item": 1,
+    "policy_2": 1,
+    "policy_3": 1,
+    "pricing_3": 1,
+    "recover_username": 1,
+    "reset_2fa": 1,
+    "shirt_how_1": 1,
+    "shirt_how_2": 1,
+    "shirt_how_3": 1,
+    "shopping_cart": 1,
+    "slow_speed": 1,
+    "status_service_added": 1,
+    "timing_4": 1
+  },
+  "skills": {
+    "promo_code_invalid": {
+      "algorithm": "hierarchical_residual_hypergraph_cover",
+      "input": "skill_mining\\output\\abcd_session_hg\\operator_results.json#subflow=promo_code_invalid",
+      "config": {
+        "coverage_ratio": 0.8,
+        "max_basis_nodes": null,
+        "min_branch_support": 2
+      },
+      "statistics": {
+        "num_sessions": 3,
+        "num_unique_actions": 3,
+        "num_observed_transitions": 2,
+        "num_backbone_nodes": 3,
+        "num_branches": 0,
+        "num_references": 0
+      },
+      "behavior_basis": {
+        "nodes": [
+          "promo_code_invalid:ask-the-oracle",
+          "promo_code_invalid:promo-code",
+          "promo_code_invalid:pull-up-account"
+        ],
+        "coverage_ratio": 1.0,
+        "covered_session_indices": [
+          0,
+          1,
+          2
+        ],
+        "selection_history": [
+          {
+            "node": "promo_code_invalid:pull-up-account",
+            "marginal_gain": 1.0,
+            "newly_covered_sessions": [],
+            "remaining_sessions": [
+              0,
+              1,
+              2
+            ]
+          },
+          {
+            "node": "promo_code_invalid:promo-code",
+            "marginal_gain": 1.0,
+            "newly_covered_sessions": [],
+            "remaining_sessions": [
+              0,
+              1,
+              2
+            ]
+          },
+          {
+            "node": "promo_code_invalid:ask-the-oracle",
+            "marginal_gain": 1.0,
+            "newly_covered_sessions": [
+              0,
+              1,
+              2
+            ],
+            "remaining_sessions": []
+          }
+        ]
+      },
+      "backbone": {
+        "layer": "main",
+        "path": [
+          "promo_code_invalid:pull-up-account",
+          "promo_code_invalid:ask-the-oracle",
+          "promo_code_invalid:promo-code"
+        ],
+        "edges": [
+          {
+            "source": "promo_code_invalid:pull-up-account",
+            "target": "promo_code_invalid:ask-the-oracle",
+            "weight": 3,
+            "session_support": 3
+          },
+          {
+            "source": "promo_code_invalid:ask-the-oracle",
+            "target": "promo_code_invalid:promo-code",
+            "weight": 3,
+            "session_support": 3
+          }
+        ]
+      },
+      "branches": [],
+      "references": [],
+      "agent_evidence": {
+        "instruction": "Infer semantic names, preconditions, effects and branch guards only from the structural motif and its representative traces. Return an abstention when evidence is insufficient.",
+        "backbone_motif": {
+          "path": [
+            "promo_code_invalid:pull-up-account",
+            "promo_code_invalid:ask-the-oracle",
+            "promo_code_invalid:promo-code"
+          ],
+          "supporting_sessions": [
+            "3585",
+            "3631",
+            "8137"
+          ]
+        },
+        "branch_motifs": [],
+        "reference_motifs": []
+      }
+    },
+    "recover_password": {
+      "algorithm": "hierarchical_residual_hypergraph_cover",
+      "input": "skill_mining\\output\\abcd_session_hg\\operator_results.json#subflow=recover_password",
+      "config": {
+        "coverage_ratio": 0.8,
+        "max_basis_nodes": null,
+        "min_branch_support": 2
+      },
+      "statistics": {
+        "num_sessions": 3,
+        "num_unique_actions": 4,
+        "num_observed_transitions": 4,
+        "num_backbone_nodes": 3,
+        "num_branches": 0,
+        "num_references": 2
+      },
+      "behavior_basis": {
+        "nodes": [
+          "recover_password:enter-details",
+          "recover_password:make-password",
+          "recover_password:pull-up-account",
+          "recover_password:verify-identity"
+        ],
+        "coverage_ratio": 1.0,
+        "covered_session_indices": [
+          0,
+          1,
+          2
+        ],
+        "selection_history": [
+          {
+            "node": "recover_password:make-password",
+            "marginal_gain": 1.583333,
+            "newly_covered_sessions": [
+              2
+            ],
+            "remaining_sessions": [
+              0,
+              1
+            ]
+          },
+          {
+            "node": "recover_password:pull-up-account",
+            "marginal_gain": 0.583333,
+            "newly_covered_sessions": [],
+            "remaining_sessions": [
+              0,
+              1
+            ]
+          },
+          {
+            "node": "recover_password:enter-details",
+            "marginal_gain": 0.583333,
+            "newly_covered_sessions": [
+              1
+            ],
+            "remaining_sessions": [
+              0
+            ]
+          },
+          {
+            "node": "recover_password:verify-identity",
+            "marginal_gain": 0.25,
+            "newly_covered_sessions": [
+              0
+            ],
+            "remaining_sessions": []
+          }
+        ]
+      },
+      "backbone": {
+        "layer": "main",
+        "path": [
+          "recover_password:verify-identity",
+          "recover_password:enter-details",
+          "recover_password:make-password"
+        ],
+        "edges": [
+          {
+            "source": "recover_password:verify-identity",
+            "target": "recover_password:enter-details",
+            "weight": 1,
+            "session_support": 1
+          },
+          {
+            "source": "recover_password:enter-details",
+            "target": "recover_password:make-password",
+            "weight": 2,
+            "session_support": 2
+          }
+        ]
+      },
+      "branches": [],
+      "references": [
+        {
+          "attachment": [
+            "START",
+            "recover_password:enter-details"
+          ],
+          "path": [
+            "recover_password:pull-up-account"
+          ],
+          "support": 1,
+          "support_sessions": [
+            "6601"
+          ],
+          "representative_traces": [
+            {
+              "session_id": "6601",
+              "dialogue": "hello, how can i help you today hi i forgot my password to my account. my name is crystal minh. account has been pulled up for  crystal minh.. okay, could i get your username please <username> details of <username> have been entered. a password has been generated. okay, here is your new password 3mihalbfbem you can log in and change it again if you want to. is there anything else i can help you with great. thanks that's all okay, have a nice day",
+              "local_path": [
+                "recover_password:pull-up-account"
+              ],
+              "start_step": 0,
+              "end_step": 0
+            }
+          ],
+          "semantic_status": "evidence_pending",
+          "layer": "reference"
+        },
+        {
+          "attachment": [
+            "START",
+            "recover_password:verify-identity"
+          ],
+          "path": [
+            "recover_password:pull-up-account"
+          ],
+          "support": 1,
+          "support_sessions": [
+            "5231"
+          ],
+          "representative_traces": [
+            {
+              "session_id": "5231",
+              "dialogue": "hello and thank you for contacting acmebrand. how may i help you? hello! i'd like to check my order status, but i forgot my password. oh alright, that shou;dn't be too much of an issue. let's try to get your password reset. thank you could you give me you full name so i can pull up your account please? yes, it is alessandro phoenix account has been pulled up for alessandro phoenix. alright the next bit of information i'll need is your username. do you have that available? i don't, sorry. would m",
+              "local_path": [
+                "recover_password:pull-up-account"
+              ],
+              "start_step": 0,
+              "end_step": 0
+            }
+          ],
+          "semantic_status": "evidence_pending",
+          "layer": "reference"
+        }
+      ],
+      "agent_evidence": {
+        "instruction": "Infer semantic names, preconditions, effects and branch guards only from the structural motif and its representative traces. Return an abstention when evidence is insufficient.",
+        "backbone_motif": {
+          "path": [
+            "recover_password:verify-identity",
+            "recover_password:enter-details",
+            "recover_password:make-password"
+          ],
+          "supporting_sessions": [
+            "5231",
+            "6601"
+          ]
+        },
+        "branch_motifs": [],
+        "reference_motifs": [
+          {
+            "attachment": [
+              "START",
+              "recover_password:enter-details"
+            ],
+            "path": [
+              "recover_password:pull-up-account"
+            ],
+            "support": 1,
+            "support_sessions": [
+              "6601"
+            ],
+            "representative_traces": [
+              {
+                "session_id": "6601",
+                "dialogue": "hello, how can i help you today hi i forgot my password to my account. my name is crystal minh. account has been pulled up for  crystal minh.. okay, could i get your username please <username> details of <username> have been entered. a password has been generated. okay, here is your new password 3mihalbfbem you can log in and change it again if you want to. is there anything else i can help you with great. thanks that's all okay, have a nice day",
+                "local_path": [
+                  "recover_password:pull-up-account"
+                ],
+                "start_step": 0,
+                "end_step": 0
+              }
+            ],
+            "semantic_status": "evidence_pending",
+            "layer": "reference"
+          },
+          {
+            "attachment": [
+              "START",
+              "recover_password:verify-identity"
+            ],
+            "path": [
+              "recover_password:pull-up-account"
+            ],
+            "support": 1,
+            "support_sessions": [
+              "5231"
+            ],
+            "representative_traces": [
+              {
+                "session_id": "5231",
+                "dialogue": "hello and thank you for contacting acmebrand. how may i help you? hello! i'd like to check my order status, but i forgot my password. oh alright, that shou;dn't be too much of an issue. let's try to get your password reset. thank you could you give me you full name so i can pull up your account please? yes, it is alessandro phoenix account has been pulled up for alessandro phoenix. alright the next bit of information i'll need is your username. do you have that available? i don't, sorry. would m",
+                "local_path": [
+                  "recover_password:pull-up-account"
+                ],
+                "start_step": 0,
+                "end_step": 0
+              }
+            ],
+            "semantic_status": "evidence_pending",
+            "layer": "reference"
+          }
+        ]
+      }
+    },
+    "return_size": {
+      "algorithm": "hierarchical_residual_hypergraph_cover",
+      "input": "skill_mining\\output\\abcd_session_hg\\operator_results.json#subflow=return_size",
+      "config": {
+        "coverage_ratio": 0.8,
+        "max_basis_nodes": null,
+        "min_branch_support": 2
+      },
+      "statistics": {
+        "num_sessions": 3,
+        "num_unique_actions": 5,
+        "num_observed_transitions": 4,
+        "num_backbone_nodes": 4,
+        "num_branches": 1,
+        "num_references": 0
+      },
+      "behavior_basis": {
+        "nodes": [
+          "return_size:enter-details",
+          "return_size:membership",
+          "return_size:pull-up-account",
+          "return_size:validate-purchase"
+        ],
+        "coverage_ratio": 1.0,
+        "covered_session_indices": [
+          0,
+          1,
+          2
+        ],
+        "selection_history": [
+          {
+            "node": "return_size:validate-purchase",
+            "marginal_gain": 0.65,
+            "newly_covered_sessions": [],
+            "remaining_sessions": [
+              0,
+              1,
+              2
+            ]
+          },
+          {
+            "node": "return_size:pull-up-account",
+            "marginal_gain": 0.65,
+            "newly_covered_sessions": [],
+            "remaining_sessions": [
+              0,
+              1,
+              2
+            ]
+          },
+          {
+            "node": "return_size:membership",
+            "marginal_gain": 0.65,
+            "newly_covered_sessions": [],
+            "remaining_sessions": [
+              0,
+              1,
+              2
+            ]
+          },
+          {
+            "node": "return_size:enter-details",
+            "marginal_gain": 0.65,
+            "newly_covered_sessions": [
+              0,
+              1,
+              2
+            ],
+            "remaining_sessions": []
+          }
+        ]
+      },
+      "backbone": {
+        "layer": "main",
+        "path": [
+          "return_size:pull-up-account",
+          "return_size:validate-purchase",
+          "return_size:membership",
+          "return_size:enter-details"
+        ],
+        "edges": [
+          {
+            "source": "return_size:pull-up-account",
+            "target": "return_size:validate-purchase",
+            "weight": 3,
+            "session_support": 3
+          },
+          {
+            "source": "return_size:validate-purchase",
+            "target": "return_size:membership",
+            "weight": 3,
+            "session_support": 3
+          },
+          {
+            "source": "return_size:membership",
+            "target": "return_size:enter-details",
+            "weight": 3,
+            "session_support": 3
+          }
+        ]
+      },
+      "branches": [
+        {
+          "attachment": [
+            "return_size:enter-details",
+            "END"
+          ],
+          "path": [
+            "return_size:update-order"
+          ],
+          "support": 2,
+          "support_sessions": [
+            "4162",
+            "3342"
+          ],
+          "representative_traces": [
+            {
+              "session_id": "4162",
+              "dialogue": "hello, how can i help you hi i want to start a return, the item i received was the wrong size. my name is albert sanders and my order id is <order_id> id happily help you with that. account has been pulled up for albert sanders . thanks, i bought these boots in size 9 but they really hurt my feet okay i found your account, albert. now i need your email address and username <email> username: <username> purchase validation in progress ... thank you i was able to validate your purhcase. now what le",
+              "local_path": [
+                "return_size:update-order"
+              ],
+              "start_step": 4,
+              "end_step": 4
+            },
+            {
+              "session_id": "3342",
+              "dialogue": "hello! thank you for contacting us today. how can i help you? i would like to return an item because it is the wrong size perfect. can i get your name please? norman bouchard account has been pulled up for norman bouchard. thank you, norman. can you please provide me with your username, email address, and the order id also? username: <username> and email address: <email> order id: <order_id> purchase validation in progress ... thank you! do you know what your membership level is? silver membersh",
+              "local_path": [
+                "return_size:update-order"
+              ],
+              "start_step": 4,
+              "end_step": 4
+            }
+          ],
+          "semantic_status": "evidence_pending",
+          "layer": "branch"
+        }
+      ],
+      "references": [],
+      "agent_evidence": {
+        "instruction": "Infer semantic names, preconditions, effects and branch guards only from the structural motif and its representative traces. Return an abstention when evidence is insufficient.",
+        "backbone_motif": {
+          "path": [
+            "return_size:pull-up-account",
+            "return_size:validate-purchase",
+            "return_size:membership",
+            "return_size:enter-details"
+          ],
+          "supporting_sessions": [
+            "8141",
+            "4162",
+            "3342"
+          ]
+        },
+        "branch_motifs": [
+          {
+            "attachment": [
+              "return_size:enter-details",
+              "END"
+            ],
+            "path": [
+              "return_size:update-order"
+            ],
+            "support": 2,
+            "support_sessions": [
+              "4162",
+              "3342"
+            ],
+            "representative_traces": [
+              {
+                "session_id": "4162",
+                "dialogue": "hello, how can i help you hi i want to start a return, the item i received was the wrong size. my name is albert sanders and my order id is <order_id> id happily help you with that. account has been pulled up for albert sanders . thanks, i bought these boots in size 9 but they really hurt my feet okay i found your account, albert. now i need your email address and username <email> username: <username> purchase validation in progress ... thank you i was able to validate your purhcase. now what le",
+                "local_path": [
+                  "return_size:update-order"
+                ],
+                "start_step": 4,
+                "end_step": 4
+              },
+              {
+                "session_id": "3342",
+                "dialogue": "hello! thank you for contacting us today. how can i help you? i would like to return an item because it is the wrong size perfect. can i get your name please? norman bouchard account has been pulled up for norman bouchard. thank you, norman. can you please provide me with your username, email address, and the order id also? username: <username> and email address: <email> order id: <order_id> purchase validation in progress ... thank you! do you know what your membership level is? silver membersh",
+                "local_path": [
+                  "return_size:update-order"
+                ],
+                "start_step": 4,
+                "end_step": 4
+              }
+            ],
+            "semantic_status": "evidence_pending",
+            "layer": "branch"
+          }
+        ],
+        "reference_motifs": []
+      }
+    },
+    "search_results": {
+      "algorithm": "hierarchical_residual_hypergraph_cover",
+      "input": "skill_mining\\output\\abcd_session_hg\\operator_results.json#subflow=search_results",
+      "config": {
+        "coverage_ratio": 0.8,
+        "max_basis_nodes": null,
+        "min_branch_support": 2
+      },
+      "statistics": {
+        "num_sessions": 3,
+        "num_unique_actions": 4,
+        "num_observed_transitions": 4,
+        "num_backbone_nodes": 3,
+        "num_branches": 0,
+        "num_references": 1
+      },
+      "behavior_basis": {
+        "nodes": [
+          "search_results:instructions",
+          "search_results:log-out-in",
+          "search_results:search-faq",
+          "search_results:try-again"
+        ],
+        "coverage_ratio": 1.0,
+        "covered_session_indices": [
+          0,
+          1,
+          2
+        ],
+        "selection_history": [
+          {
+            "node": "search_results:log-out-in",
+            "marginal_gain": 1.666667,
+            "newly_covered_sessions": [
+              0
+            ],
+            "remaining_sessions": [
+              1,
+              2
+            ]
+          },
+          {
+            "node": "search_results:instructions",
+            "marginal_gain": 0.666667,
+            "newly_covered_sessions": [],
+            "remaining_sessions": [
+              1,
+              2
+            ]
+          },
+          {
+            "node": "search_results:try-again",
+            "marginal_gain": 0.333333,
+            "newly_covered_sessions": [
+              1
+            ],
+            "remaining_sessions": [
+              2
+            ]
+          },
+          {
+            "node": "search_results:search-faq",
+            "marginal_gain": 0.333333,
+            "newly_covered_sessions": [
+              2
+            ],
+            "remaining_sessions": []
+          }
+        ]
+      },
+      "backbone": {
+        "layer": "main",
+        "path": [
+          "search_results:search-faq",
+          "search_results:log-out-in",
+          "search_results:instructions"
+        ],
+        "edges": [
+          {
+            "source": "search_results:search-faq",
+            "target": "search_results:log-out-in",
+            "weight": 1,
+            "session_support": 1
+          },
+          {
+            "source": "search_results:log-out-in",
+            "target": "search_results:instructions",
+            "weight": 1,
+            "session_support": 1
+          }
+        ]
+      },
+      "branches": [],
+      "references": [
+        {
+          "attachment": [
+            "search_results:log-out-in",
+            "search_results:instructions"
+          ],
+          "path": [
+            "search_results:try-again"
+          ],
+          "support": 1,
+          "support_sessions": [
+            "5177"
+          ],
+          "representative_traces": [
+            {
+              "session_id": "5177",
+              "dialogue": "acmebrands, how may i help you? the search bar isn't working let me help you with that. are the search results showing no results found? yes agent is looking for solutions ... could you log out and then log back in, and try to search again? i just tried that, it still didn't work. ok agent is looking for solutions ... what product are you searching for? jacket can you put a different product in the search engine, like boots? i put boots, nothing showing up. i am sorry that nothing so far is work",
+              "local_path": [
+                "search_results:try-again"
+              ],
+              "start_step": 1,
+              "end_step": 1
+            }
+          ],
+          "semantic_status": "evidence_pending",
+          "layer": "reference"
+        }
+      ],
+      "agent_evidence": {
+        "instruction": "Infer semantic names, preconditions, effects and branch guards only from the structural motif and its representative traces. Return an abstention when evidence is insufficient.",
+        "backbone_motif": {
+          "path": [
+            "search_results:search-faq",
+            "search_results:log-out-in",
+            "search_results:instructions"
+          ],
+          "supporting_sessions": [
+            "5177",
+            "399"
+          ]
+        },
+        "branch_motifs": [],
+        "reference_motifs": [
+          {
+            "attachment": [
+              "search_results:log-out-in",
+              "search_results:instructions"
+            ],
+            "path": [
+              "search_results:try-again"
+            ],
+            "support": 1,
+            "support_sessions": [
+              "5177"
+            ],
+            "representative_traces": [
+              {
+                "session_id": "5177",
+                "dialogue": "acmebrands, how may i help you? the search bar isn't working let me help you with that. are the search results showing no results found? yes agent is looking for solutions ... could you log out and then log back in, and try to search again? i just tried that, it still didn't work. ok agent is looking for solutions ... what product are you searching for? jacket can you put a different product in the search engine, like boots? i put boots, nothing showing up. i am sorry that nothing so far is work",
+                "local_path": [
+                  "search_results:try-again"
+                ],
+                "start_step": 1,
+                "end_step": 1
+              }
+            ],
+            "semantic_status": "evidence_pending",
+            "layer": "reference"
+          }
+        ]
+      }
+    },
+    "status": {
+      "algorithm": "hierarchical_residual_hypergraph_cover",
+      "input": "skill_mining\\output\\abcd_session_hg\\operator_results.json#subflow=status",
+      "config": {
+        "coverage_ratio": 0.8,
+        "max_basis_nodes": null,
+        "min_branch_support": 2
+      },
+      "statistics": {
+        "num_sessions": 2,
+        "num_unique_actions": 5,
+        "num_observed_transitions": 4,
+        "num_backbone_nodes": 4,
+        "num_branches": 0,
+        "num_references": 1
+      },
+      "behavior_basis": {
+        "nodes": [
+          "status:ask-the-oracle",
+          "status:pull-up-account",
+          "status:validate-purchase",
+          "status:verify-identity"
+        ],
+        "coverage_ratio": 1.0,
+        "covered_session_indices": [
+          0,
+          1
+        ],
+        "selection_history": [
+          {
+            "node": "status:verify-identity",
+            "marginal_gain": 0.45,
+            "newly_covered_sessions": [],
+            "remaining_sessions": [
+              0,
+              1
+            ]
+          },
+          {
+            "node": "status:validate-purchase",
+            "marginal_gain": 0.45,
+            "newly_covered_sessions": [],
+            "remaining_sessions": [
+              0,
+              1
+            ]
+          },
+          {
+            "node": "status:pull-up-account",
+            "marginal_gain": 0.45,
+            "newly_covered_sessions": [],
+            "remaining_sessions": [
+              0,
+              1
+            ]
+          },
+          {
+            "node": "status:ask-the-oracle",
+            "marginal_gain": 0.45,
+            "newly_covered_sessions": [
+              0,
+              1
+            ],
+            "remaining_sessions": []
+          }
+        ]
+      },
+      "backbone": {
+        "layer": "main",
+        "path": [
+          "status:pull-up-account",
+          "status:verify-identity",
+          "status:validate-purchase",
+          "status:ask-the-oracle"
+        ],
+        "edges": [
+          {
+            "source": "status:pull-up-account",
+            "target": "status:verify-identity",
+            "weight": 2,
+            "session_support": 2
+          },
+          {
+            "source": "status:verify-identity",
+            "target": "status:validate-purchase",
+            "weight": 2,
+            "session_support": 2
+          },
+          {
+            "source": "status:validate-purchase",
+            "target": "status:ask-the-oracle",
+            "weight": 2,
+            "session_support": 2
+          }
+        ]
+      },
+      "branches": [],
+      "references": [
+        {
+          "attachment": [
+            "status:ask-the-oracle",
+            "END"
+          ],
+          "path": [
+            "status:update-order"
+          ],
+          "support": 1,
+          "support_sessions": [
+            "5735"
+          ],
+          "representative_traces": [
+            {
+              "session_id": "5735",
+              "dialogue": "hello! thank you for choosing acmebrands. how may i assist you? i need to make sure i am getting my package tomorrow i got an email stating it would be delivered some other time i'll be glad to help you with that. would you provide your full name, please? joseph banter account has been pulled up for joseph banter. thank you, joseph! to continue assisting you, may i please get your account id and order id? account id: <account_id> <order_id> identity verification in progress ... thank you! to con",
+              "local_path": [
+                "status:update-order"
+              ],
+              "start_step": 4,
+              "end_step": 4
+            }
+          ],
+          "semantic_status": "evidence_pending",
+          "layer": "reference"
+        }
+      ],
+      "agent_evidence": {
+        "instruction": "Infer semantic names, preconditions, effects and branch guards only from the structural motif and its representative traces. Return an abstention when evidence is insufficient.",
+        "backbone_motif": {
+          "path": [
+            "status:pull-up-account",
+            "status:verify-identity",
+            "status:validate-purchase",
+            "status:ask-the-oracle"
+          ],
+          "supporting_sessions": [
+            "5735",
+            "8904"
+          ]
+        },
+        "branch_motifs": [],
+        "reference_motifs": [
+          {
+            "attachment": [
+              "status:ask-the-oracle",
+              "END"
+            ],
+            "path": [
+              "status:update-order"
+            ],
+            "support": 1,
+            "support_sessions": [
+              "5735"
+            ],
+            "representative_traces": [
+              {
+                "session_id": "5735",
+                "dialogue": "hello! thank you for choosing acmebrands. how may i assist you? i need to make sure i am getting my package tomorrow i got an email stating it would be delivered some other time i'll be glad to help you with that. would you provide your full name, please? joseph banter account has been pulled up for joseph banter. thank you, joseph! to continue assisting you, may i please get your account id and order id? account id: <account_id> <order_id> identity verification in progress ... thank you! to con",
+                "local_path": [
+                  "status:update-order"
+                ],
+                "start_step": 4,
+                "end_step": 4
+              }
+            ],
+            "semantic_status": "evidence_pending",
+            "layer": "reference"
+          }
+        ]
+      }
+    },
+    "status_due_amount": {
+      "algorithm": "hierarchical_residual_hypergraph_cover",
+      "input": "skill_mining\\output\\abcd_session_hg\\operator_results.json#subflow=status_due_amount",
+      "config": {
+        "coverage_ratio": 0.8,
+        "max_basis_nodes": null,
+        "min_branch_support": 2
+      },
+      "statistics": {
+        "num_sessions": 2,
+        "num_unique_actions": 5,
+        "num_observed_transitions": 5,
+        "num_backbone_nodes": 3,
+        "num_branches": 0,
+        "num_references": 3
+      },
+      "behavior_basis": {
+        "nodes": [
+          "status_due_amount:pull-up-account",
+          "status_due_amount:send-link",
+          "status_due_amount:subscription-status",
+          "status_due_amount:verify-identity"
+        ],
+        "coverage_ratio": 1.0,
+        "covered_session_indices": [
+          0,
+          1
+        ],
+        "selection_history": [
+          {
+            "node": "status_due_amount:subscription-status",
+            "marginal_gain": 0.533333,
+            "newly_covered_sessions": [],
+            "remaining_sessions": [
+              0,
+              1
+            ]
+          },
+          {
+            "node": "status_due_amount:send-link",
+            "marginal_gain": 0.533333,
+            "newly_covered_sessions": [],
+            "remaining_sessions": [
+              0,
+              1
+            ]
+          },
+          {
+            "node": "status_due_amount:pull-up-account",
+            "marginal_gain": 0.533333,
+            "newly_covered_sessions": [
+              0
+            ],
+            "remaining_sessions": [
+              1
+            ]
+          },
+          {
+            "node": "status_due_amount:verify-identity",
+            "marginal_gain": 0.2,
+            "newly_covered_sessions": [
+              1
+            ],
+            "remaining_sessions": []
+          }
+        ]
+      },
+      "backbone": {
+        "layer": "main",
+        "path": [
+          "status_due_amount:verify-identity",
+          "status_due_amount:subscription-status",
+          "status_due_amount:send-link"
+        ],
+        "edges": [
+          {
+            "source": "status_due_amount:verify-identity",
+            "target": "status_due_amount:subscription-status",
+            "weight": 1,
+            "session_support": 1
+          },
+          {
+            "source": "status_due_amount:subscription-status",
+            "target": "status_due_amount:send-link",
+            "weight": 2,
+            "session_support": 2
+          }
+        ]
+      },
+      "branches": [],
+      "references": [
+        {
+          "attachment": [
+            "START",
+            "status_due_amount:subscription-status"
+          ],
+          "path": [
+            "status_due_amount:pull-up-account"
+          ],
+          "support": 1,
+          "support_sessions": [
+            "960"
+          ],
+          "representative_traces": [
+            {
+              "session_id": "960",
+              "dialogue": "hi, how can i help you? i'm needing to check on the status of my subscription. let me check on that for you. one moment please. can i have your full name or account id? crystal minh account has been pulled up for crystal minh. my account id is <account_id> and what is your question about your subscription? i would like to check on the status to make sure i still have it. do you have an order id? <order_id> querying the system for subscription status ... you do have an active subscription. howeve",
+              "local_path": [
+                "status_due_amount:pull-up-account"
+              ],
+              "start_step": 0,
+              "end_step": 0
+            }
+          ],
+          "semantic_status": "evidence_pending",
+          "layer": "reference"
+        },
+        {
+          "attachment": [
+            "START",
+            "status_due_amount:verify-identity"
+          ],
+          "path": [
+            "status_due_amount:pull-up-account"
+          ],
+          "support": 1,
+          "support_sessions": [
+            "4019"
+          ],
+          "representative_traces": [
+            {
+              "session_id": "4019",
+              "dialogue": "hi, how can i help you? what is the status of my subscription i want to keep it sure, let me check up on that for you. what is your full name? norman bouchard account has been pulled up for norman bouchard. thank you, can i have your account id and order id? <order_id> <account_id> identity verification in progress ... querying the system for subscription status ... your subscription is inactive as your bill was due yesterday. a link will be sent. i've sent you a link where you can check on your",
+              "local_path": [
+                "status_due_amount:pull-up-account"
+              ],
+              "start_step": 0,
+              "end_step": 0
+            }
+          ],
+          "semantic_status": "evidence_pending",
+          "layer": "reference"
+        },
+        {
+          "attachment": [
+            "status_due_amount:send-link",
+            "END"
+          ],
+          "path": [
+            "status_due_amount:enter-details"
+          ],
+          "support": 1,
+          "support_sessions": [
+            "4019"
+          ],
+          "representative_traces": [
+            {
+              "session_id": "4019",
+              "dialogue": "hi, how can i help you? what is the status of my subscription i want to keep it sure, let me check up on that for you. what is your full name? norman bouchard account has been pulled up for norman bouchard. thank you, can i have your account id and order id? <order_id> <account_id> identity verification in progress ... querying the system for subscription status ... your subscription is inactive as your bill was due yesterday. a link will be sent. i've sent you a link where you can check on your",
+              "local_path": [
+                "status_due_amount:enter-details"
+              ],
+              "start_step": 4,
+              "end_step": 4
+            }
+          ],
+          "semantic_status": "evidence_pending",
+          "layer": "reference"
+        }
+      ],
+      "agent_evidence": {
+        "instruction": "Infer semantic names, preconditions, effects and branch guards only from the structural motif and its representative traces. Return an abstention when evidence is insufficient.",
+        "backbone_motif": {
+          "path": [
+            "status_due_amount:verify-identity",
+            "status_due_amount:subscription-status",
+            "status_due_amount:send-link"
+          ],
+          "supporting_sessions": [
+            "960",
+            "4019"
+          ]
+        },
+        "branch_motifs": [],
+        "reference_motifs": [
+          {
+            "attachment": [
+              "START",
+              "status_due_amount:subscription-status"
+            ],
+            "path": [
+              "status_due_amount:pull-up-account"
+            ],
+            "support": 1,
+            "support_sessions": [
+              "960"
+            ],
+            "representative_traces": [
+              {
+                "session_id": "960",
+                "dialogue": "hi, how can i help you? i'm needing to check on the status of my subscription. let me check on that for you. one moment please. can i have your full name or account id? crystal minh account has been pulled up for crystal minh. my account id is <account_id> and what is your question about your subscription? i would like to check on the status to make sure i still have it. do you have an order id? <order_id> querying the system for subscription status ... you do have an active subscription. howeve",
+                "local_path": [
+                  "status_due_amount:pull-up-account"
+                ],
+                "start_step": 0,
+                "end_step": 0
+              }
+            ],
+            "semantic_status": "evidence_pending",
+            "layer": "reference"
+          },
+          {
+            "attachment": [
+              "START",
+              "status_due_amount:verify-identity"
+            ],
+            "path": [
+              "status_due_amount:pull-up-account"
+            ],
+            "support": 1,
+            "support_sessions": [
+              "4019"
+            ],
+            "representative_traces": [
+              {
+                "session_id": "4019",
+                "dialogue": "hi, how can i help you? what is the status of my subscription i want to keep it sure, let me check up on that for you. what is your full name? norman bouchard account has been pulled up for norman bouchard. thank you, can i have your account id and order id? <order_id> <account_id> identity verification in progress ... querying the system for subscription status ... your subscription is inactive as your bill was due yesterday. a link will be sent. i've sent you a link where you can check on your",
+                "local_path": [
+                  "status_due_amount:pull-up-account"
+                ],
+                "start_step": 0,
+                "end_step": 0
+              }
+            ],
+            "semantic_status": "evidence_pending",
+            "layer": "reference"
+          },
+          {
+            "attachment": [
+              "status_due_amount:send-link",
+              "END"
+            ],
+            "path": [
+              "status_due_amount:enter-details"
+            ],
+            "support": 1,
+            "support_sessions": [
+              "4019"
+            ],
+            "representative_traces": [
+              {
+                "session_id": "4019",
+                "dialogue": "hi, how can i help you? what is the status of my subscription i want to keep it sure, let me check up on that for you. what is your full name? norman bouchard account has been pulled up for norman bouchard. thank you, can i have your account id and order id? <order_id> <account_id> identity verification in progress ... querying the system for subscription status ... your subscription is inactive as your bill was due yesterday. a link will be sent. i've sent you a link where you can check on your",
+                "local_path": [
+                  "status_due_amount:enter-details"
+                ],
+                "start_step": 4,
+                "end_step": 4
+              }
+            ],
+            "semantic_status": "evidence_pending",
+            "layer": "reference"
+          }
+        ]
+      }
+    },
+    "status_due_date": {
+      "algorithm": "hierarchical_residual_hypergraph_cover",
+      "input": "skill_mining\\output\\abcd_session_hg\\operator_results.json#subflow=status_due_date",
+      "config": {
+        "coverage_ratio": 0.8,
+        "max_basis_nodes": null,
+        "min_branch_support": 2
+      },
+      "statistics": {
+        "num_sessions": 2,
+        "num_unique_actions": 6,
+        "num_observed_transitions": 5,
+        "num_backbone_nodes": 4,
+        "num_branches": 0,
+        "num_references": 2
+      },
+      "behavior_basis": {
+        "nodes": [
+          "status_due_date:enter-details",
+          "status_due_date:pull-up-account",
+          "status_due_date:subscription-status",
+          "status_due_date:verify-identity"
+        ],
+        "coverage_ratio": 1.0,
+        "covered_session_indices": [
+          0,
+          1
+        ],
+        "selection_history": [
+          {
+            "node": "status_due_date:verify-identity",
+            "marginal_gain": 0.4,
+            "newly_covered_sessions": [],
+            "remaining_sessions": [
+              0,
+              1
+            ]
+          },
+          {
+            "node": "status_due_date:subscription-status",
+            "marginal_gain": 0.4,
+            "newly_covered_sessions": [],
+            "remaining_sessions": [
+              0,
+              1
+            ]
+          },
+          {
+            "node": "status_due_date:pull-up-account",
+            "marginal_gain": 0.4,
+            "newly_covered_sessions": [],
+            "remaining_sessions": [
+              0,
+              1
+            ]
+          },
+          {
+            "node": "status_due_date:enter-details",
+            "marginal_gain": 0.4,
+            "newly_covered_sessions": [
+              0,
+              1
+            ],
+            "remaining_sessions": []
+          }
+        ]
+      },
+      "backbone": {
+        "layer": "main",
+        "path": [
+          "status_due_date:pull-up-account",
+          "status_due_date:verify-identity",
+          "status_due_date:subscription-status",
+          "status_due_date:enter-details"
+        ],
+        "edges": [
+          {
+            "source": "status_due_date:pull-up-account",
+            "target": "status_due_date:verify-identity",
+            "weight": 2,
+            "session_support": 2
+          },
+          {
+            "source": "status_due_date:verify-identity",
+            "target": "status_due_date:subscription-status",
+            "weight": 2,
+            "session_support": 2
+          },
+          {
+            "source": "status_due_date:subscription-status",
+            "target": "status_due_date:enter-details",
+            "weight": 2,
+            "session_support": 2
+          }
+        ]
+      },
+      "branches": [],
+      "references": [
+        {
+          "attachment": [
+            "status_due_date:enter-details",
+            "END"
+          ],
+          "path": [
+            "status_due_date:send-link"
+          ],
+          "support": 1,
+          "support_sessions": [
+            "10365"
+          ],
+          "representative_traces": [
+            {
+              "session_id": "10365",
+              "dialogue": "hello, thanks for contacting acmebrands. how can i help today? hi, this is albert sanders, gold member i have a premium subscription with acme brands, but i'm having a bit of trouble finding my account details i see, are you needing help accessing your account? yes, well, really i just want to know when my annual fee is due.  i can pay it today if there's anything outstanding account has been pulled up for albert sanders. do you have your account id and order id albert? yes, i do: <account_id> <",
+              "local_path": [
+                "status_due_date:send-link"
+              ],
+              "start_step": 4,
+              "end_step": 4
+            }
+          ],
+          "semantic_status": "evidence_pending",
+          "layer": "reference"
+        },
+        {
+          "attachment": [
+            "status_due_date:enter-details",
+            "END"
+          ],
+          "path": [
+            "status_due_date:update-account"
+          ],
+          "support": 1,
+          "support_sessions": [
+            "6156"
+          ],
+          "representative_traces": [
+            {
+              "session_id": "6156",
+              "dialogue": "hi! how can i help you? yes i would like  to check the status of my subscription. i would like to keep. trying to see when the annual fee is due and if its today i would like to pay it, if i owe anything sure, i can look into that for you. what is your full name? alessandro phoenix and my account id <account_id> also my order id is  <order_id> account has been pulled up for alessandro phoenix. identity verification in progress ... querying the system for subscription status ... thank you for all",
+              "local_path": [
+                "status_due_date:update-account"
+              ],
+              "start_step": 4,
+              "end_step": 4
+            }
+          ],
+          "semantic_status": "evidence_pending",
+          "layer": "reference"
+        }
+      ],
+      "agent_evidence": {
+        "instruction": "Infer semantic names, preconditions, effects and branch guards only from the structural motif and its representative traces. Return an abstention when evidence is insufficient.",
+        "backbone_motif": {
+          "path": [
+            "status_due_date:pull-up-account",
+            "status_due_date:verify-identity",
+            "status_due_date:subscription-status",
+            "status_due_date:enter-details"
+          ],
+          "supporting_sessions": [
+            "10365",
+            "6156"
+          ]
+        },
+        "branch_motifs": [],
+        "reference_motifs": [
+          {
+            "attachment": [
+              "status_due_date:enter-details",
+              "END"
+            ],
+            "path": [
+              "status_due_date:send-link"
+            ],
+            "support": 1,
+            "support_sessions": [
+              "10365"
+            ],
+            "representative_traces": [
+              {
+                "session_id": "10365",
+                "dialogue": "hello, thanks for contacting acmebrands. how can i help today? hi, this is albert sanders, gold member i have a premium subscription with acme brands, but i'm having a bit of trouble finding my account details i see, are you needing help accessing your account? yes, well, really i just want to know when my annual fee is due.  i can pay it today if there's anything outstanding account has been pulled up for albert sanders. do you have your account id and order id albert? yes, i do: <account_id> <",
+                "local_path": [
+                  "status_due_date:send-link"
+                ],
+                "start_step": 4,
+                "end_step": 4
+              }
+            ],
+            "semantic_status": "evidence_pending",
+            "layer": "reference"
+          },
+          {
+            "attachment": [
+              "status_due_date:enter-details",
+              "END"
+            ],
+            "path": [
+              "status_due_date:update-account"
+            ],
+            "support": 1,
+            "support_sessions": [
+              "6156"
+            ],
+            "representative_traces": [
+              {
+                "session_id": "6156",
+                "dialogue": "hi! how can i help you? yes i would like  to check the status of my subscription. i would like to keep. trying to see when the annual fee is due and if its today i would like to pay it, if i owe anything sure, i can look into that for you. what is your full name? alessandro phoenix and my account id <account_id> also my order id is  <order_id> account has been pulled up for alessandro phoenix. identity verification in progress ... querying the system for subscription status ... thank you for all",
+                "local_path": [
+                  "status_due_date:update-account"
+                ],
+                "start_step": 4,
+                "end_step": 4
+              }
+            ],
+            "semantic_status": "evidence_pending",
+            "layer": "reference"
+          }
+        ]
+      }
+    },
+    "timing_2": {
+      "algorithm": "hierarchical_residual_hypergraph_cover",
+      "input": "skill_mining\\output\\abcd_session_hg\\operator_results.json#subflow=timing_2",
+      "config": {
+        "coverage_ratio": 0.8,
+        "max_basis_nodes": null,
+        "min_branch_support": 2
+      },
+      "statistics": {
+        "num_sessions": 2,
+        "num_unique_actions": 3,
+        "num_observed_transitions": 2,
+        "num_backbone_nodes": 3,
+        "num_branches": 0,
+        "num_references": 0
+      },
+      "behavior_basis": {
+        "nodes": [
+          "timing_2:search-faq",
+          "timing_2:search-timing",
+          "timing_2:select-faq"
+        ],
+        "coverage_ratio": 1.0,
+        "covered_session_indices": [
+          0,
+          1
+        ],
+        "selection_history": [
+          {
+            "node": "timing_2:select-faq",
+            "marginal_gain": 0.666667,
+            "newly_covered_sessions": [],
+            "remaining_sessions": [
+              0,
+              1
+            ]
+          },
+          {
+            "node": "timing_2:search-timing",
+            "marginal_gain": 0.666667,
+            "newly_covered_sessions": [],
+            "remaining_sessions": [
+              0,
+              1
+            ]
+          },
+          {
+            "node": "timing_2:search-faq",
+            "marginal_gain": 0.666667,
+            "newly_covered_sessions": [
+              0,
+              1
+            ],
+            "remaining_sessions": []
+          }
+        ]
+      },
+      "backbone": {
+        "layer": "main",
+        "path": [
+          "timing_2:search-faq",
+          "timing_2:search-timing",
+          "timing_2:select-faq"
+        ],
+        "edges": [
+          {
+            "source": "timing_2:search-faq",
+            "target": "timing_2:search-timing",
+            "weight": 2,
+            "session_support": 2
+          },
+          {
+            "source": "timing_2:search-timing",
+            "target": "timing_2:select-faq",
+            "weight": 2,
+            "session_support": 2
+          }
+        ]
+      },
+      "branches": [],
+      "references": [],
+      "agent_evidence": {
+        "instruction": "Infer semantic names, preconditions, effects and branch guards only from the structural motif and its representative traces. Return an abstention when evidence is insufficient.",
+        "backbone_motif": {
+          "path": [
+            "timing_2:search-faq",
+            "timing_2:search-timing",
+            "timing_2:select-faq"
+          ],
+          "supporting_sessions": [
+            "5700",
+            "8937"
+          ]
+        },
+        "branch_motifs": [],
+        "reference_motifs": []
+      }
+    }
+  }
+}

@@ -23,6 +23,7 @@ bash scripts/run_full_abcd_experiments.sh
 
 ```bash
 bash scripts/launch_full_abcd_experiments.sh --method awm
+bash scripts/launch_full_abcd_experiments.sh --method expel
 bash scripts/launch_full_abcd_experiments.sh --method trace2skill
 bash scripts/launch_full_abcd_experiments.sh --subflow recover_username
 ```
@@ -259,6 +260,25 @@ Skill_Baseline/
   AWM/                         # Agent Workflow Memory (external)
   ExpeL/                       # ExpeL agent framework (external)
 ```
+
+### ExpeL on ABCD
+
+The official `ExpeL/` checkout targets interactive ALFWorld/WebShop-style
+environments. `expel_adapter/` adapts its experiential rule-learning stage to
+ABCD while keeping the shared full-turn action/slot runner and AST/CDS
+evaluator. A dialogue is treated as successful when all of its action turns
+have joint AST correctness. A run stores `expel_rules.json`, full turn
+trajectories, grouped ABCD predictions, and `result.json` under
+`outputs/expel_abcd_<timestamp>/`.
+
+```bash
+python scripts/run_expel_abcd.py \
+  --subflow recover_username \
+  --batch-size 20
+```
+
+ExpeL rules are injected as general insights only; AWM workflow and exemplar
+memory are intentionally empty in this baseline.
 
 ## Evaluation Metrics
 

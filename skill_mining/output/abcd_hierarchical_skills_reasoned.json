@@ -1,0 +1,117 @@
+{
+  "algorithm": "hierarchical_residual_hypergraph_cover_by_subflow",
+  "input": "skill_mining\\output\\abcd_hierarchical_skills_by_subflow.json",
+  "reasoning_api": "llm.chat",
+  "semantic_reasoning": {
+    "promo_code_invalid": {
+      "semantic_name": "unknown",
+      "goal": "unknown",
+      "parameters": [],
+      "preconditions": [],
+      "postconditions": [],
+      "branches": [],
+      "confidence": 0.0,
+      "unknowns": [],
+      "parse_status": "error",
+      "error": "RuntimeError: LLM API not configured. Set OPENAI_API_KEY / OPENAI_BASE_URL environment variables, or pass api_key/base_url explicitly.",
+      "raw_response": ""
+    },
+    "recover_password": {
+      "semantic_name": "unknown",
+      "goal": "unknown",
+      "parameters": [],
+      "preconditions": [],
+      "postconditions": [],
+      "branches": [],
+      "confidence": 0.0,
+      "unknowns": [],
+      "parse_status": "error",
+      "error": "RuntimeError: LLM API not configured. Set OPENAI_API_KEY / OPENAI_BASE_URL environment variables, or pass api_key/base_url explicitly.",
+      "raw_response": ""
+    },
+    "return_size": {
+      "semantic_name": "unknown",
+      "goal": "unknown",
+      "parameters": [],
+      "preconditions": [],
+      "postconditions": [],
+      "branches": [],
+      "confidence": 0.0,
+      "unknowns": [],
+      "parse_status": "error",
+      "error": "RuntimeError: LLM API not configured. Set OPENAI_API_KEY / OPENAI_BASE_URL environment variables, or pass api_key/base_url explicitly.",
+      "raw_response": ""
+    },
+    "search_results": {
+      "semantic_name": "unknown",
+      "goal": "unknown",
+      "parameters": [],
+      "preconditions": [],
+      "postconditions": [],
+      "branches": [],
+      "confidence": 0.0,
+      "unknowns": [],
+      "parse_status": "error",
+      "error": "RuntimeError: LLM API not configured. Set OPENAI_API_KEY / OPENAI_BASE_URL environment variables, or pass api_key/base_url explicitly.",
+      "raw_response": ""
+    },
+    "status": {
+      "semantic_name": "unknown",
+      "goal": "unknown",
+      "parameters": [],
+      "preconditions": [],
+      "postconditions": [],
+      "branches": [],
+      "confidence": 0.0,
+      "unknowns": [],
+      "parse_status": "error",
+      "error": "RuntimeError: LLM API not configured. Set OPENAI_API_KEY / OPENAI_BASE_URL environment variables, or pass api_key/base_url explicitly.",
+      "raw_response": ""
+    },
+    "status_due_amount": {
+      "semantic_name": "unknown",
+      "goal": "unknown",
+      "parameters": [],
+      "preconditions": [],
+      "postconditions": [],
+      "branches": [],
+      "confidence": 0.0,
+      "unknowns": [],
+      "parse_status": "error",
+      "error": "RuntimeError: LLM API not configured. Set OPENAI_API_KEY / OPENAI_BASE_URL environment variables, or pass api_key/base_url explicitly.",
+      "raw_response": ""
+    },
+    "status_due_date": {
+      "semantic_name": "unknown",
+      "goal": "unknown",
+      "parameters": [],
+      "preconditions": [],
+      "postconditions": [],
+      "branches": [],
+      "confidence": 0.0,
+      "unknowns": [],
+      "parse_status": "error",
+      "error": "RuntimeError: LLM API not configured. Set OPENAI_API_KEY / OPENAI_BASE_URL environment variables, or pass api_key/base_url explicitly.",
+      "raw_response": ""
+    },
+    "timing_2": {
+      "semantic_name": "unknown",
+      "goal": "unknown",
+      "parameters": [],
+      "preconditions": [],
+      "postconditions": [],
+      "branches": [],
+      "confidence": 0.0,
+      "unknowns": [],
+      "parse_status": "error",
+      "error": "RuntimeError: LLM API not configured. Set OPENAI_API_KEY / OPENAI_BASE_URL environment variables, or pass api_key/base_url explicitly.",
+      "raw_response": ""
+    }
+  },
+  "source_statistics": {
+    "num_sessions": 50,
+    "num_subflows": 38,
+    "num_mined_subflows": 8,
+    "num_skipped_subflows": 30
+  }
+}

@@ -2,7 +2,7 @@
 
 # Run the ABCD experiments under the independent-subflow protocol.
 #
-# AWM and Trace2Skill are invoked once per subflow. Graph Mining uses its
+# AWM, ExpeL, and Trace2Skill are invoked once per subflow. Graph Mining uses its
 # independent --all mode. The script activates conda, sets the HF mirror,
 # records failed runs, and writes weighted global summaries.
 #
@@ -33,7 +33,7 @@ usage() {
 Usage: bash scripts/run_full_abcd_experiments.sh [options]
 
 Options:
-  --method NAME              all, awm, trace2skill, or graph (default: all)
+  --method NAME              all, awm, expel, trace2skill, or graph (default: all)
   --subflow NAME             Run one subflow instead of the complete split list
   --min-sessions N           Graph Mining minimum train sessions (default: 0)
   --evolution-batch-size N   Trace2Skill outer batch size (default: 25)
@@ -89,7 +89,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$METHOD" in
-    all|awm|trace2skill|graph) ;;
+    all|awm|expel|trace2skill|graph) ;;
     *)
         echo "Invalid --method: $METHOD" >&2
         exit 2
@@ -180,6 +180,7 @@ printf 'Methods:    %s\n' "$METHOD"
 
 FAILED=()
 AWM_RUNS=()
+EXPEL_RUNS=()
 TRACE_RUNS=()
 GRAPH_RUNS=()
 
@@ -217,6 +218,15 @@ if [[ "$METHOD" == "all" || "$METHOD" == "awm" ]]; then
             scripts/run_awm_abcd.py --subflow "$subflow" || continue
         run_dir="$(latest_run_dir 'awm_abcd_*')"
         [[ -n "$run_dir" ]] && AWM_RUNS+=("$run_dir")
+    done
+fi
+
+if [[ "$METHOD" == "all" || "$METHOD" == "expel" ]]; then
+    for subflow in "${SUBFLOWS[@]}"; do
+        run_subflow_command "ExpeL" "$subflow" \
+            scripts/run_expel_abcd.py --subflow "$subflow" || continue
+        run_dir="$(latest_run_dir 'expel_abcd_*')"
+        [[ -n "$run_dir" ]] && EXPEL_RUNS+=("$run_dir")
     done
 fi
 
@@ -266,6 +276,14 @@ if [[ ${#AWM_RUNS[@]} -gt 0 ]]; then
     AGGREGATE_FILES+=("$aggregate_path")
 fi
 
+if [[ ${#EXPEL_RUNS[@]} -gt 0 ]]; then
+    aggregate_path="$OUTPUT_DIR/aggregate_expel_$STAMP.json"
+    "$PYTHON_BIN" scripts/aggregate_subflow_results.py \
+        --runs "${EXPEL_RUNS[@]}" \
+        --output "$aggregate_path"
+    AGGREGATE_FILES+=("$aggregate_path")
+fi
+
 if [[ ${#TRACE_RUNS[@]} -gt 0 ]]; then
     aggregate_path="$OUTPUT_DIR/aggregate_trace2skill_$STAMP.json"
     "$PYTHON_BIN" scripts/aggregate_subflow_results.py \
@@ -291,6 +309,9 @@ fi
     echo "[AWM run directories]"
     printf '%s\n' "${AWM_RUNS[@]}"
     echo ""
+    echo "[ExpeL run directories]"
+    printf '%s\n' "${EXPEL_RUNS[@]}"
+    echo ""
     echo "[Trace2Skill run directories]"
     printf '%s\n' "${TRACE_RUNS[@]}"
     echo ""
@@ -312,6 +333,10 @@ echo "  Output root: $OUTPUT_DIR"
 if [[ ${#AWM_RUNS[@]} -gt 0 ]]; then
     echo "  AWM run directories:"
     printf '    %s\n' "${AWM_RUNS[@]}"
+fi
+if [[ ${#EXPEL_RUNS[@]} -gt 0 ]]; then
+    echo "  ExpeL run directories:"
+    printf '    %s\n' "${EXPEL_RUNS[@]}"
 fi
 if [[ ${#TRACE_RUNS[@]} -gt 0 ]]; then
     echo "  Trace2Skill run directories:"
