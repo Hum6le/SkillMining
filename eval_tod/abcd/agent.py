@@ -1056,8 +1056,8 @@ class ABCDAgent(AbstractTodAgent):
                 time.sleep(2 ** attempt)
 
         if not updated:
-            print("  [ABCD induce] failed after 3 attempts; workflow unchanged")
-            return ""
+            print("  [ABCD induce] failed after 3 attempts; preserving resource contract")
+            updated = _AWM_WORKFLOW_RESOURCE_SECTION.strip()
 
         # Make resource usage part of the persisted workflow contract even if
         # the induction model omits the requested section.

@@ -40,6 +40,7 @@ SEED = 42
 _TIMESTAMP = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 OUT_DIR = Path(f"outputs/awm_abcd_{_TIMESTAMP}")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
+TRAINING_TRACE_PATH = OUT_DIR / "training_turns.jsonl"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -268,6 +269,13 @@ def main():
         from eval_tod.schemas import Prediction
         turn_results = agent.generate_all_turn_predictions(
             batch, predict_actions=True, verbose=False)
+        with TRAINING_TRACE_PATH.open("a", encoding="utf-8") as trace_file:
+            for row in turn_results:
+                trace_file.write(json.dumps({
+                    "batch_index": batch_idx,
+                    **row,
+                }, ensure_ascii=False) + "\n")
+        log.info("  Saved %d training turn traces", len(turn_results))
         eval_dicts = compute_ast_from_turn_results(batch, turn_results)
         # Use last-turn predictions for induce
         preds = []
@@ -291,6 +299,16 @@ def main():
             preds,
             eval_dicts,
             turn_results=turn_results,
+        )
+        eligible_exemplars = sum(
+            1 for metrics in eval_dicts
+            if int(metrics.get("action_total", 0) or 0) > 0
+            and int(metrics.get("action_correct", 0) or 0)
+            == int(metrics.get("action_total", 0) or 0)
+        )
+        log.info(
+            "  Batch %d AST exemplar eligibility: %d/%d; memory_total=%d",
+            batch_idx, eligible_exemplars, len(eval_dicts), len(memory),
         )
         reference_text = "\n\n".join(
             part for part in [
