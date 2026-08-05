@@ -12,4 +12,4 @@ fi
 
 RUN_DIR="$1"
 shift
-python scripts/visualize_awm_cases.py --run-dir "$RUN_DIR" --n-turns 10 --train-turns 6 "$@"
+python scripts/visualize_awm_cases.py --run-dir "$RUN_DIR" --kind action --train-kind action --n-turns 10 --train-turns 6 "$@"

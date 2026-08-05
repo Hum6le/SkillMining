@@ -1,7 +1,7 @@
 """Create a self-contained HTML report for AWM prediction failures and traces.
 
 The report contains:
-1. up to N distinct failed agent/action turns from the test set;
+1. up to N distinct failed action turns from the test set;
 2. the exact prompt messages sent to the LLM for every selected turn;
 3. prediction versus ABCD ground truth;
 4. a small sample of training-time turns with input/output and batch index.
@@ -140,7 +140,18 @@ def main() -> None:
     parser.add_argument("--run-dir", required=True, help="Completed outputs/awm_abcd_* directory")
     parser.add_argument("--n-turns", type=int, default=10, help="Number of distinct fail turns")
     parser.add_argument("--train-turns", type=int, default=6, help="Number of training turns")
-    parser.add_argument("--kind", choices=["all", "action", "utterance"], default="all")
+    parser.add_argument(
+        "--kind",
+        choices=["action", "utterance", "all"],
+        default="action",
+        help="Fail-case type; default is action only because AST scores action turns",
+    )
+    parser.add_argument(
+        "--train-kind",
+        choices=["action", "utterance", "all"],
+        default="action",
+        help="Training trace type; default is action only",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--split-file", default=None, help="Optional test.json override")
     parser.add_argument("--output", default=None, help="HTML output path")
@@ -177,7 +188,9 @@ def main() -> None:
     if training_path.exists():
         for line in training_path.read_text(encoding="utf-8").splitlines():
             if line.strip():
-                training_rows.append(json.loads(line))
+                row = json.loads(line)
+                if args.train_kind == "all" or row.get("target_type") == args.train_kind:
+                    training_rows.append(row)
     rng.shuffle(training_rows)
     training_rows = training_rows[:max(0, args.train_turns)]
 
