@@ -25,6 +25,7 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 from eval_tod.evaluate import AbstractTodAgent
 from eval_tod.schemas import Prediction
 from awm.memory import MemoryStore, WorkflowStore
+from .action_schema import action_contract_prompt, canonicalize_prediction, load_action_schema
 
 
 # ── Prompt templates ──────────────────────────────────────────
@@ -147,19 +148,13 @@ _TASK_PROMPT_WITH_ACTION = """## Conversation So Far
 {context}
 
 ## Instruction
-First identify what system action should be taken, then generate the agent response.
+First identify the system action, its ordered slot values, and then generate
+the agent response. Return only one valid JSON object with keys action, slots,
+and response.
 
-Output format:
-```
-ACTION: <action_name>
-SLOTS: <slot1>, <slot2>
-RESPONSE: <the agent response text>
-```
-
-- ACTION: the name of the system action to take (e.g. pull-up-account, verify-identity, send-link).
-  If no action is needed, write "none".
-- SLOTS: comma-separated slot values for the action. If no slots, write "none".
-- RESPONSE: the natural language agent utterance (1-3 sentences)."""
+Slots must be real values grounded in the current dialogue or scenario. Never
+output slot names, schema tokens, placeholders, angle brackets, or key=value.
+If no action is needed, use an empty action and an empty slots list."""
 
 
 def _tokenize_for_lookup(text: str) -> set[str]:
@@ -272,6 +267,7 @@ class ABCDAgent(AbstractTodAgent):
         self.reference_max_chars = max(200, reference_max_chars)
         self._response_logger = response_logger
         self.expose_scenario_labels = expose_scenario_labels
+        self.action_schema = load_action_schema()
         self._last_exemplar_lookup: dict[str, Any] = {
             "tool": "retrieve_exemplar",
             "executed": False,
@@ -531,13 +527,17 @@ class ABCDAgent(AbstractTodAgent):
             }
 
             if predict_actions:
-                action, slots, resp = _parse_action_response(raw_output)
+                raw_action, raw_slots, resp = _parse_action_response(raw_output)
+                action, slots, validation = canonicalize_prediction(
+                    raw_action, raw_slots, self.action_schema
+                )
                 # Debug: log first few parses
                 if target_num == 1 and len(results) == 0:
                     print(f"  [DEBUG predict_actions] raw(200): {raw_output[:200]}")
                     print(f"  [DEBUG predict_actions] parsed: action={action!r} slots={slots!r} resp={resp[:80]!r}")
                 entry["predicted_action"] = action
                 entry["predicted_slots"] = slots
+                entry["action_schema_validation"] = validation
                 entry["prediction"] = resp
             else:
                 entry["prediction"] = raw_output.strip().strip('"').strip("'")
@@ -884,7 +884,10 @@ class ABCDAgent(AbstractTodAgent):
         )
 
         # Inject the resource policy plus workflow and exemplars (AWM).
-        extra_parts = [_AWM_RESOURCE_POLICY_PROMPT]
+        extra_parts = [
+            _AWM_RESOURCE_POLICY_PROMPT,
+            action_contract_prompt(self.action_schema),
+        ]
         wf = self.workflow.format_prompt()
         if wf:
             extra_parts.append(wf)
@@ -1012,6 +1015,13 @@ class ABCDAgent(AbstractTodAgent):
             "is the MCP-style lookup for uncertain action schemas, slot patterns, "
             "or state transitions, and that its query must be concise and grounded "
             "in the current dialogue.\n\n"
+            "## Schema Safety Requirements\n"
+            "- Use only canonical ABCD action names; never append a subflow, "
+            "routing label, or slot identifier to an action name.\n"
+            "- Slots are ordered real values, never field names, schema tokens, "
+            "placeholders, or key=value strings.\n"
+            "- Do not hard-code private names, emails, phones, order IDs, or "
+            "other instance values into a generalized workflow.\n\n"
             + "\n".join(lines[:60])
             + "\n\n## Existing Workflow\n"
             + existing
@@ -1071,8 +1081,9 @@ class ABCDAgent(AbstractTodAgent):
     ):
         """Store successful dialogues as exemplars — based on AST score > 0.5."""
         for conv, pred, metrics in zip(dialogues, predictions, eval_results):
-            ast = metrics.get("ast_score", 0)
-            if ast > 0.5 or metrics.get("success") or metrics.get("info_rate", 0) > 0.8:
+            action_total = int(metrics.get("action_total", 0) or 0)
+            action_correct = int(metrics.get("action_correct", 0) or 0)
+            if action_total > 0 and action_correct == action_total:
                 scenario = conv.get("scenario", {})
                 domains = (
                     [scenario.get("flow", "?"), scenario.get("subflow", "?")]

@@ -95,7 +95,8 @@ class MemoryStore:
         exemplars = self.retrieve(domains, k)
         if not exemplars:
             return ""
-        lines = ["## Past Successful Examples"]
+        lines = ["## Past Verified Successful Examples",
+                 "Each example passed joint action-and-slot validation."]
         for i, ex in enumerate(exemplars, 1):
             if include_metadata:
                 lines.append(f"\n### Example {i}: {', '.join(ex['domains'])}")
@@ -108,6 +109,8 @@ class MemoryStore:
                 compact_rows = []
                 for row in structured_turns:
                     if not isinstance(row, dict):
+                        continue
+                    if row.get("turn_type") == "action" and row.get("ast_correct") is not True:
                         continue
                     slots = ", ".join(str(x) for x in row.get("predicted_slots", [])) or "none"
                     context = " ".join(str(row.get("context", "")).split())
