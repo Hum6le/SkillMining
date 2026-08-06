@@ -36,6 +36,20 @@ class SkillCluster:
         return asdict(self)
 
 
+def skill_cluster_from_dict(data: dict[str, Any]) -> SkillCluster:
+    """Reconstruct a Stage-3 cluster stored in a JSON artifact."""
+    return SkillCluster(
+        cluster_id=str(data["cluster_id"]),
+        name=str(data["name"]),
+        description=str(data.get("description", "")),
+        group_ids=[str(value) for value in data.get("group_ids", [])],
+        operation_ids=[str(value) for value in data.get("operation_ids", [])],
+        supporting_conversations=[str(value) for value in data.get("supporting_conversations", [])],
+        reusability_score=float(data.get("reusability_score", 0.0)),
+        representative_action_sequence=[str(value) for value in data.get("representative_action_sequence", [])],
+    )
+
+
 def _json_object(raw_output: str) -> dict[str, Any]:
     text = raw_output.strip()
     fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL | re.IGNORECASE)

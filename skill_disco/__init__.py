@@ -17,6 +17,12 @@ from .operation_extraction import (
     build_operation_extraction_prompt,
     semantic_operation_from_dict,
 )
+from .consolidation import SkillCluster, skill_cluster_from_dict
+from .skill_specification import (
+    SkillContract,
+    build_skill_specification_prompt,
+    specify_skill_contract,
+)
 
 __all__ = [
     "NormalizedABCDTrace",
@@ -30,4 +36,9 @@ __all__ = [
     "extract_trace_operations",
     "build_operation_extraction_prompt",
     "semantic_operation_from_dict",
+    "SkillCluster",
+    "skill_cluster_from_dict",
+    "SkillContract",
+    "build_skill_specification_prompt",
+    "specify_skill_contract",
 ]
