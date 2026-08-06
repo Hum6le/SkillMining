@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 
-# Run a small, single-subflow SKILL-DISCO-Offline (pseudocode) experiment.
+# Run one complete-subflow SKILL-DISCO-Offline (pseudocode) experiment.
 #
-# The runner first induces a pseudocode skill library from a limited training
-# subset, then evaluates that library on a limited, frozen test subset.  It is
-# intended for inexpensive sanity checks before a full per-subflow run.
+# The runner induces a pseudocode skill library from every training conversation
+# in the requested subflow, then evaluates it on that subflow's entire frozen
+# test split.
 #
 # Example:
-#   bash scripts/run_skill_disco_abcd_smoke.sh \
-#     --subflow manage_cancel --max-train 10 --max-test 5
+#   bash scripts/run_skill_disco_abcd_smoke.sh --subflow manage_cancel
 
 set -euo pipefail
 
@@ -19,8 +18,6 @@ cd "$ROOT_DIR"
 CONDA_ENV="skillmining310"
 HF_MIRROR="https://hf-mirror.com"
 SUBFLOW=""
-MAX_TRAIN=10
-MAX_TEST=5
 MODEL="deepseek-chat"
 GROUPING_BATCH_SIZE=20
 MIN_SUPPORT=2
@@ -31,15 +28,13 @@ usage() {
     cat <<'EOF'
 Usage: bash scripts/run_skill_disco_abcd_smoke.sh --subflow NAME [options]
 
-Generate SKILL-DISCO-Offline pseudocode skills from a small induction subset
-and evaluate them on a small frozen test subset of one ABCD subflow.
+Generate SKILL-DISCO-Offline pseudocode skills from every induction conversation
+and evaluate them on the complete frozen test split of one ABCD subflow.
 
 Required:
   --subflow NAME             ABCD subflow directory under data/eval/abcd/splits
 
 Options:
-  --max-train N              Maximum induction conversations (default: 10)
-  --max-test N               Maximum frozen test conversations (default: 5)
   --model NAME               Unified llm.chat model name (default: deepseek-chat)
   --batch-size N             Stage-3 grouping batch size (default: 20)
   --min-support N            Minimum distinct induction conversations per skill (default: 2)
@@ -49,7 +44,7 @@ Options:
   -h, --help                 Show this help
 
 The runner sets HF_ENDPOINT=https://hf-mirror.com and writes all artifacts to
-outputs/skill_disco_abcd_smoke_<subflow>_<timestamp>/.
+outputs/skill_disco_abcd_subflow_<subflow>_<timestamp>/.
 EOF
 }
 
@@ -64,16 +59,6 @@ while [[ $# -gt 0 ]]; do
         --subflow)
             require_value "$1" "$#"
             SUBFLOW="$2"
-            shift 2
-            ;;
-        --max-train)
-            require_value "$1" "$#"
-            MAX_TRAIN="$2"
-            shift 2
-            ;;
-        --max-test)
-            require_value "$1" "$#"
-            MAX_TEST="$2"
             shift 2
             ;;
         --model)
@@ -123,7 +108,7 @@ if [[ -z "$SUBFLOW" ]]; then
     exit 2
 fi
 
-for value_name in MAX_TRAIN MAX_TEST GROUPING_BATCH_SIZE MIN_SUPPORT; do
+for value_name in GROUPING_BATCH_SIZE MIN_SUPPORT; do
     value="${!value_name}"
     if ! [[ "$value" =~ ^[1-9][0-9]*$ ]]; then
         echo "$value_name must be a positive integer; got: $value" >&2
@@ -180,7 +165,7 @@ if [[ ! -f "$TEST_FILE" ]]; then
 fi
 
 RUN_ID="$(date +%Y-%m-%d_%H-%M-%S)"
-RUN_DIR="$ROOT_DIR/outputs/skill_disco_abcd_smoke_${SUBFLOW}_${RUN_ID}"
+RUN_DIR="$ROOT_DIR/outputs/skill_disco_abcd_subflow_${SUBFLOW}_${RUN_ID}"
 ARTIFACT_PATH="$RUN_DIR/generation_artifact.json"
 LIBRARY_PATH="$RUN_DIR/SKILL.md"
 EVALUATION_DIR="$RUN_DIR/evaluation"
@@ -200,8 +185,8 @@ write_manifest() {
         echo "subflow=$SUBFLOW"
         echo "train_file=$TRAIN_FILE"
         echo "test_file=$TEST_FILE"
-        echo "max_train=$MAX_TRAIN"
-        echo "max_test=$MAX_TEST"
+        echo "train_sessions=all"
+        echo "test_sessions=all"
         echo "model=$MODEL"
         echo "grouping_batch_size=$GROUPING_BATCH_SIZE"
         echo "min_support=$MIN_SUPPORT"
@@ -219,10 +204,10 @@ write_manifest() {
 write_manifest "" "running"
 trap 'write_manifest "$(date -Iseconds)" "failed"' ERR
 
-echo "===== SKILL-DISCO ABCD single-subflow smoke run ====="
+echo "===== SKILL-DISCO ABCD complete single-subflow run ====="
 echo "Subflow:       $SUBFLOW"
-echo "Induction:     $TRAIN_FILE (limit=$MAX_TRAIN)"
-echo "Frozen test:   $TEST_FILE (limit=$MAX_TEST)"
+echo "Induction:     $TRAIN_FILE (all conversations)"
+echo "Frozen test:   $TEST_FILE (all conversations)"
 echo "Model:         $MODEL"
 echo "Run directory: $RUN_DIR"
 echo "Environment:   $CONDA_ENV"
@@ -237,7 +222,7 @@ echo "[1/2] Generating offline pseudocode skill library..."
     --model "$MODEL" \
     --batch-size "$GROUPING_BATCH_SIZE" \
     --min-support "$MIN_SUPPORT" \
-    --limit "$MAX_TRAIN"
+    --expected-subflow "$SUBFLOW"
 
 if [[ "$SKIP_EVAL" -eq 1 ]]; then
     FINISHED_AT="$(date -Iseconds)"
@@ -258,7 +243,7 @@ echo "[2/2] Evaluating generated library on frozen test conversations..."
     --test-file "$TEST_FILE" \
     --output-dir "$EVALUATION_DIR" \
     --model "$MODEL" \
-    --max-test "$MAX_TEST"
+    --expected-subflow "$SUBFLOW"
 
 FINISHED_AT="$(date -Iseconds)"
 write_manifest "$FINISHED_AT" "completed"

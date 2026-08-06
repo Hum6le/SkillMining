@@ -25,10 +25,25 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=20)
     parser.add_argument("--min-support", type=int, default=2)
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument(
+        "--expected-subflow",
+        default=None,
+        help="Fail unless every input conversation belongs to this ABCD subflow",
+    )
     args = parser.parse_args()
     conversations = json.loads(Path(args.input).read_text(encoding="utf-8"))
     if not isinstance(conversations, list):
         raise ValueError("--input must be a JSON array of ABCD conversations")
+    if args.expected_subflow:
+        observed_subflows = {
+            str(conversation.get("scenario", {}).get("subflow", ""))
+            for conversation in conversations
+        }
+        if observed_subflows != {args.expected_subflow}:
+            raise ValueError(
+                "--input is not an isolated split for the requested subflow: "
+                f"expected {args.expected_subflow!r}, found {sorted(observed_subflows)!r}"
+            )
     if args.limit is not None:
         conversations = conversations[:args.limit]
     artifact = run_offline_pseudocode_pipeline(

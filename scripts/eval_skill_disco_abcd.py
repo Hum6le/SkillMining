@@ -25,9 +25,26 @@ def main() -> None:
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--model", default="deepseek-chat")
     parser.add_argument("--max-test", type=int, default=None)
+    parser.add_argument(
+        "--expected-subflow",
+        default=None,
+        help="Fail unless every test conversation belongs to this ABCD subflow",
+    )
     args = parser.parse_args()
 
     conversations = json.loads(Path(args.test_file).read_text(encoding="utf-8"))
+    if not isinstance(conversations, list):
+        raise ValueError("--test-file must be a JSON array of ABCD conversations")
+    if args.expected_subflow:
+        observed_subflows = {
+            str(conversation.get("scenario", {}).get("subflow", ""))
+            for conversation in conversations
+        }
+        if observed_subflows != {args.expected_subflow}:
+            raise ValueError(
+                "--test-file is not an isolated split for the requested subflow: "
+                f"expected {args.expected_subflow!r}, found {sorted(observed_subflows)!r}"
+            )
     if args.max_test is not None:
         conversations = conversations[:args.max_test]
     output_dir = Path(args.output_dir)
