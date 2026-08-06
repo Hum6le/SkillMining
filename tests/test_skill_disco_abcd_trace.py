@@ -70,6 +70,27 @@ class NormalizeABCDTraceTest(unittest.TestCase):
             "Your new password is {password}.",
         )
 
+    def test_keeps_an_empty_action_slot_as_a_positional_parameter(self) -> None:
+        trace = normalize_abcd_conversation(
+            {
+                "convo_id": 12,
+                "scenario": {"flow": "manage", "subflow": "manage_cancel"},
+                "delexed": [
+                    {
+                        "speaker": "action",
+                        "text": "A refund was offered.",
+                        "targets": [
+                            "manage_cancel", "take_action", "offer-refund", [""], -1
+                        ],
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(trace.steps[0].slot_values, [""])
+        self.assertEqual(trace.steps[0].parameter_names, ["arg_1"])
+        self.assertEqual(trace.steps[0].parameterized_action, "offer-refund(arg_1)")
+
 
 if __name__ == "__main__":
     unittest.main()

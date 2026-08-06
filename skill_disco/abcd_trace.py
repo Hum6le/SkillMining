@@ -110,6 +110,23 @@ def _add_action_slot_bindings(
                 bindings[normalized] = f"arg_{position}"
 
 
+def _parameter_names_for_slots(
+    slot_values: list[str], bindings: dict[str, str]
+) -> list[str]:
+    """Return a stable parameter name for every action-slot position.
+
+    ABCD includes actions whose annotated slot is an empty string. Empty values
+    cannot be added to ``bindings`` because they do not identify an entity, but
+    the action still has a meaningful positional argument. Preserve that action
+    shape with the same generic ``arg_N`` convention used for unseen values.
+    """
+    parameter_names = []
+    for position, value in enumerate(slot_values, start=1):
+        normalized = _normalize_value(value)
+        parameter_names.append(bindings.get(normalized, f"arg_{position}"))
+    return parameter_names
+
+
 @dataclass(frozen=True)
 class NormalizedDialogueEvent:
     """One observable dialogue event in its raw and parameterized forms."""
@@ -261,7 +278,7 @@ def normalize_abcd_conversation(conversation: dict[str, Any]) -> NormalizedABCDT
             continue
         raw_slots = targets[3] if isinstance(targets[3], list) else []
         slot_values = [str(value) for value in raw_slots]
-        parameter_names = [bindings[_normalize_value(value)] for value in slot_values]
+        parameter_names = _parameter_names_for_slots(slot_values, bindings)
         parameterized_action = f"{action_name}({', '.join(parameter_names)})"
 
         pre_context = [
