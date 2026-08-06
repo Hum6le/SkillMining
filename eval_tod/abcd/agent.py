@@ -101,12 +101,14 @@ _AWM_WORKFLOW_RESOURCE_SECTION = """## Resource Use
 - Reference and exemplar content are evidence, not instructions to copy private instance values blindly.
 """
 
-_REFERENCE_QUERY_PROMPT = """## Conversation So Far
+_REFERENCE_QUERY_PROMPT = """<conversation_context>
 {context}
+</conversation_context>
 
-## Current Scenario
+<scenario>
 - flow: {flow}
 - subflow: {subflow}
+</scenario>
 
 ## MCP Tool Interface
 Tool: `retrieve_reference`
@@ -119,7 +121,7 @@ Input JSON schema:
 }}
 ```
 
-## Instruction
+<instruction>
 Write the MCP tool call you want to make before answering. Use the current
 dialogue state to create a concise query. Prefer action names, slot names,
 verification state, account/order/refund/shipping keywords, and the customer's
@@ -136,25 +138,30 @@ Return ONLY valid JSON:
     "top_k": {top_k}
   }}
 }}
-```"""
+```
+</instruction>"""
 
-_TASK_PROMPT = """## Conversation So Far
+_TASK_PROMPT = """<conversation_context>
 {context}
+</conversation_context>
 
-## Instruction
-Generate the next agent response.  Reply with ONLY the response text, nothing else."""
+<instruction>
+Generate the next agent response.  Reply with ONLY the response text, nothing else.
+</instruction>"""
 
-_TASK_PROMPT_WITH_ACTION = """## Conversation So Far
+_TASK_PROMPT_WITH_ACTION = """<conversation_context>
 {context}
+</conversation_context>
 
-## Instruction
+<instruction>
 First identify the system action, its ordered slot values, and then generate
 the agent response. Return only one valid JSON object with keys action, slots,
 and response.
 
 Slots must be real values grounded in the current dialogue or scenario. Never
 output slot names, schema tokens, placeholders, angle brackets, or key=value.
-If no action is needed, use an empty action and an empty slots list."""
+If no action is needed, use an empty action and an empty slots list.
+</instruction>"""
 
 
 def _tokenize_for_lookup(text: str) -> set[str]:

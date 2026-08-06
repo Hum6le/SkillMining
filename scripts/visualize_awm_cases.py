@@ -61,15 +61,12 @@ def _ground_truth(conv: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
 
 def _is_failure(row: dict[str, Any], gt: dict[str, Any], kind: str) -> bool:
     row_kind = str(row.get("target_type", "utterance"))
-    if kind != "all" and row_kind != kind:
+    if row_kind != "action" or kind != "action":
         return False
-    if row_kind == "action":
-        return (
-            str(row.get("predicted_action") or "") != str(gt.get("action") or "")
-            or [str(x) for x in (row.get("predicted_slots") or [])] != gt.get("slots", [])
-        )
-    prediction = str(row.get("prediction") or "").strip()
-    return prediction != str(gt.get("text") or "").strip()
+    return (
+        str(row.get("predicted_action") or "") != str(gt.get("action") or "")
+        or [str(x) for x in (row.get("predicted_slots") or [])] != gt.get("slots", [])
+    )
 
 
 def _card(title: str, body: str, klass: str = "") -> str:
@@ -142,13 +139,13 @@ def main() -> None:
     parser.add_argument("--train-turns", type=int, default=6, help="Number of training turns")
     parser.add_argument(
         "--kind",
-        choices=["action", "utterance", "all"],
+        choices=["action"],
         default="action",
-        help="Fail-case type; default is action only because AST scores action turns",
+        help="Fail-case type; action AST mismatches only",
     )
     parser.add_argument(
         "--train-kind",
-        choices=["action", "utterance", "all"],
+        choices=["action", "all"],
         default="action",
         help="Training trace type; default is action only",
     )
