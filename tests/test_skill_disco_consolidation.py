@@ -3,7 +3,11 @@ from __future__ import annotations
 import json
 import unittest
 
-from skill_disco.consolidation import consolidate_groups, group_operation_batch
+from skill_disco.consolidation import (
+    consolidate_groups,
+    group_operation_batch,
+    parse_grouping_output,
+)
 from skill_disco.operation_extraction import SemanticOperation
 
 
@@ -35,13 +39,21 @@ class ConsolidationTest(unittest.TestCase):
         self.assertEqual(clusters[0].supporting_conversations, ["1", "2"])
         self.assertEqual(clusters[0].reusability_score, 1.0)
 
-    def test_rejects_non_partitioning_group_response(self) -> None:
+    def test_repairs_non_partitioning_group_response_at_runtime(self) -> None:
+        incomplete = json.dumps({"groups": [{"name": "only_one", "description": "Incomplete.", "operation_ids": [self.operations[0].operation_id]}]})
         with self.assertRaisesRegex(ValueError, "partition"):
-            group_operation_batch(
+            parse_grouping_output(incomplete, self.operations, batch_index=0)
+        with self.assertWarnsRegex(RuntimeWarning, "Recovered an invalid"):
+            groups, _ = group_operation_batch(
                 self.operations,
-                lambda *_args, **_kwargs: json.dumps({"groups": [{"name": "only_one", "description": "Incomplete.", "operation_ids": [self.operations[0].operation_id]}]}),
+                lambda *_args, **_kwargs: incomplete,
                 batch_index=0,
             )
+        self.assertEqual(
+            [operation_id for group in groups for operation_id in group.operation_ids],
+            [operation.operation_id for operation in self.operations],
+        )
+        self.assertEqual(groups[-1].name, "unassigned_operation_000")
 
 
 if __name__ == "__main__":
