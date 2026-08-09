@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import json
 import re
 from typing import Any, Callable
@@ -30,6 +30,9 @@ class SemanticOperation:
     supporting_event_turns: list[int]
     completion_evidence: str
     code_snippet: str
+    # Concrete gold action arguments from successful induction trajectories.
+    # They are carried only to the Stage-4 induction prompt.
+    grounded_actions: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -53,6 +56,10 @@ def semantic_operation_from_dict(data: dict[str, Any]) -> SemanticOperation:
         supporting_event_turns=[int(value) for value in data.get("supporting_event_turns", [])],
         completion_evidence=str(data.get("completion_evidence", "")),
         code_snippet=str(data.get("code_snippet", "")),
+        grounded_actions=[
+            dict(value) for value in data.get("grounded_actions", [])
+            if isinstance(value, dict)
+        ],
     )
 
 
@@ -277,6 +284,14 @@ def parse_operation_extraction_output(
                     preconditions,
                     supporting_event_turns,
                 ),
+                grounded_actions=[
+                    {
+                        "action_index": action_index,
+                        "action": step.action_name,
+                        "slot_values": step.slot_values,
+                    }
+                    for action_index, step in enumerate(selected, start=1)
+                ],
             )
         )
     return operations, rejected

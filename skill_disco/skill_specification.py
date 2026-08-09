@@ -85,6 +85,7 @@ def build_skill_specification_prompt(cluster: SkillCluster, operations: list[Sem
             "preconditions": operation.preconditions,
             "postconditions": operation.postconditions,
             "action_sequence": operation.action_sequence,
+            "observed_action_slots": operation.grounded_actions,
             "code_snippet": operation.code_snippet,
         }
         for operation in operations[:5]
@@ -98,6 +99,10 @@ Design principles: (1) generalize using parameters, never concrete values; (2) s
 (3) action selection, not construction: use only exact supported action templates; (4) declare every
 backend state change in side_effects and canonical_action_sequence; (5) state preconditions explicitly;
 (6) derive only from successful traces and prefer the shortest supported sequence.
+
+The ``observed_action_slots`` records contain the ordered, concrete gold arguments used by successful
+training actions. Use them to learn parameter order and slot-filling behavior. Generalize the observed
+values into a reusable procedure; never copy a concrete training value into the skill output.
 
 Return exactly one JSON object and no Markdown:
 {"skill_name": "snake_case", "description": "...", "docstring": "...",

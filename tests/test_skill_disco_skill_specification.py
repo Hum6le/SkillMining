@@ -16,6 +16,7 @@ class SkillSpecificationTest(unittest.TestCase):
             action_sequence=["pull-up-account(username)", "make-password()"], preconditions=["reset_requested"],
             postconditions=["password_generated"], control_flow="fixed_sequence", parameters=["username"],
             supporting_event_turns=[0], completion_evidence="Password generated.", code_snippet="action = 'make-password'",
+            grounded_actions=[{"action_index": 1, "action": "pull-up-account", "slot_values": ["ada"]}],
         )
         self.cluster = SkillCluster(
             cluster_id="cluster_000", name="password_recovery", description="Recover passwords.", group_ids=["g0"],
@@ -27,6 +28,8 @@ class SkillSpecificationTest(unittest.TestCase):
         prompt = build_skill_specification_prompt(self.cluster, [self.operation])
         self.assertNotIn("recover_password", prompt)
         self.assertIn("pull-up-account(username)", prompt)
+        self.assertIn('"observed_action_slots"', prompt)
+        self.assertIn('"ada"', prompt)
         response = json.dumps({
             "skill_name": "recover_account_password", "description": "Recover a password.",
             "docstring": "Recover a customer password from an account.",
