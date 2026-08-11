@@ -48,7 +48,7 @@ class ASIOfflineInduceTest(unittest.TestCase):
             calls.append((messages, kwargs))
             return "```python\ndef recover_password(username):\n    pass\n```"
 
-        artifact = induce_episode(episode, mock_chat, model="mock", temperature=0.7)
+        artifact = induce_episode(episode, mock_chat, temperature=0.7)
         self.assertEqual(len(calls), 1)
         self.assertEqual(artifact.episode_id, "induce-1")
         self.assertEqual(artifact.action_count, 3)

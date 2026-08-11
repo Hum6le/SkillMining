@@ -98,9 +98,10 @@ def _records_from_summary(path: Path) -> list[dict[str, Any]]:
     subflow = str(config.get("subflow", "unknown"))
     data = summary.get("data", {})
     records = []
+    method = str(config.get("method", "awm"))
     if summary.get("final_test"):
         record = _record_from_eval(
-            method="awm", phase="final", subflow=subflow,
+            method=method, phase="final", subflow=subflow,
             run_dir=run_dir, payload=summary["final_test"], data=data,
         )
         if record:

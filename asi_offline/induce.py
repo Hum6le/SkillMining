@@ -115,12 +115,11 @@ def induce_episode(
     episode: ASIOfflineEpisode,
     chat_fn: Callable[..., str],
     *,
-    model: str = "deepseek-chat",
     temperature: float = 1.0,
 ) -> ASIInductionArtifact:
     """Run exactly one ASI induction request over a fixed successful trace."""
     messages = build_episode_induction_messages(episode)
-    raw_response = chat_fn(messages, model=model, temperature=temperature)
+    raw_response = chat_fn(messages, temperature=temperature)
     return ASIInductionArtifact(
         episode_id=episode.conversation_id,
         action_count=len(episode.primitive_actions),
