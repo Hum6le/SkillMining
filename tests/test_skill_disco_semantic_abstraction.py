@@ -36,6 +36,7 @@ class SemanticAbstractionTest(unittest.TestCase):
         self.assertNotIn("recover_password", prompt)
         self.assertIn("{username}", prompt)
         self.assertIn("reset-password(username)", prompt)
+        self.assertIn("semantic role", prompt)
 
     def test_parses_complete_annotations_from_injected_llm(self) -> None:
         response = json.dumps(

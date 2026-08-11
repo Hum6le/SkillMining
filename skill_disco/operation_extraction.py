@@ -114,6 +114,10 @@ Extract every high-value operation that:
 Do not emit single actions, arbitrary non-contiguous actions, the whole trace when it contains unrelated
 subgoals, concrete user values, scenario names, or any action absent from the action table. Prefer the
 largest coherent operation when two candidates are redundant. Use snake_case names.
+For every parameterized action in an extracted operation, preserve the ordered parameter roles and infer
+how each concrete slot should be obtained from dialogue or task-state evidence available before that
+action. Summarize this slot-filling behavior in the operation description, preconditions, or postconditions
+without copying concrete customer values.
 
 Return exactly one JSON object and no Markdown:
 {"operations": [{"name": "...", "description": "...", "start_action_index": 0,
@@ -207,6 +211,27 @@ def _render_code_snippet(
     return "\n".join(lines)
 
 
+def _grounding_evidence(step: Any, max_lines: int = 8) -> list[str]:
+    """Select compact pre-action dialogue evidence for observed slot values.
+
+    This is training-only trace serialization for Stage-4. It does not infer a
+    new slot policy or access future turns: every returned line predates the
+    action. Exact value matches are preferred; when a value is derived rather
+    than spoken verbatim, retain the recent context needed to infer it.
+    """
+    slot_values = [
+        " ".join(str(value).lower().split())
+        for value in step.slot_values
+        if str(value).strip()
+    ]
+    relevant = [
+        text for text in step.pre_context
+        if any(value in " ".join(str(text).lower().split()) for value in slot_values)
+    ]
+    evidence = relevant if relevant else step.pre_context[-max_lines:]
+    return [str(text)[:600] for text in evidence[-max_lines:]]
+
+
 def parse_operation_extraction_output(
     raw_output: str,
     trace: NormalizedABCDTrace,
@@ -289,6 +314,7 @@ def parse_operation_extraction_output(
                         "action_index": action_index,
                         "action": step.action_name,
                         "slot_values": step.slot_values,
+                        "pre_action_evidence": _grounding_evidence(step),
                     }
                     for action_index, step in enumerate(selected, start=1)
                 ],

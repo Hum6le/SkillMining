@@ -65,6 +65,10 @@ For each event emit:
 
 Do not copy concrete values. Do not output the dataset subflow name. Backend actions must use
 dialogue_act="backend_action" and describe their observable state change.
+For every parameter used by a backend action, infer its semantic role and whether its value is supplied
+by the dialogue or current task state before that action. Preserve parameter order through the action
+trace so later skill induction can learn how to fill each slot. Generalize roles and sources; never copy
+concrete customer values into the annotations.
 
 Return exactly one JSON object and no Markdown:
 {"events": [{"turn_index": 0, "dialogue_act": "...", "intent": "...",

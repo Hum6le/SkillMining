@@ -101,8 +101,10 @@ backend state change in side_effects and canonical_action_sequence; (5) state pr
 (6) derive only from successful traces and prefer the shortest supported sequence.
 
 The ``observed_action_slots`` records contain the ordered, concrete gold arguments used by successful
-training actions. Use them to learn parameter order and slot-filling behavior. Generalize the observed
-values into a reusable procedure; never copy a concrete training value into the skill output.
+training actions and the dialogue evidence available before each action. Use each value-evidence pair to
+learn parameter order, semantic role, and slot-filling behavior. State how every action parameter should
+be obtained from current dialogue/state evidence in the existing skill description or docstring. Generalize
+the observed values into a reusable procedure; never copy a concrete training value into the skill output.
 
 Return exactly one JSON object and no Markdown:
 {"skill_name": "snake_case", "description": "...", "docstring": "...",

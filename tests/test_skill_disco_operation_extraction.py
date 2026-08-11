@@ -46,6 +46,7 @@ class OperationExtractionTest(unittest.TestCase):
         prompt = build_operation_extraction_prompt(self.trace, self.annotations)
         self.assertNotIn("recover_password", prompt)
         self.assertIn("pull-up-account(username)", prompt)
+        self.assertIn("slot-filling behavior", prompt)
 
     def test_reconstructs_action_sequence_and_rejects_single_action_candidate(self) -> None:
         response = json.dumps(
