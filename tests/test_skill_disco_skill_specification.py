@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
+import warnings
 
 from skill_disco.consolidation import SkillCluster
 from skill_disco.operation_extraction import SemanticOperation
@@ -50,6 +51,23 @@ class SkillSpecificationTest(unittest.TestCase):
         self.assertEqual(contract.confidence_score, 0.5)
         self.assertEqual(contract.estimated_actions_saved, 1)
         self.assertEqual(contract.parameters[0].name, "username")
+
+    def test_recovers_invalid_canonical_action_sequence(self) -> None:
+        response = json.dumps({
+            "skill_name": "recover_account_password", "description": "Recover a password.",
+            "docstring": "Recover a customer password from an account.",
+            "parameters": [], "preconditions": [], "postconditions": [], "side_effects": [],
+            "canonical_action_sequence": ["invented-action(username)"],
+            "abstraction_level": "composite",
+        })
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            contract, _ = specify_skill_contract(
+                self.cluster, [self.operation], lambda *_args, **_kwargs: response
+            )
+
+        self.assertEqual(contract.canonical_action_sequence, self.operation.action_sequence)
+        self.assertTrue(any("Recovered an invalid LLM skill contract" in str(item.message) for item in caught))
 
 
 if __name__ == "__main__":

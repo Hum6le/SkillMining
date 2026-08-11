@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 import json
 import re
 from typing import Any, Callable
+import warnings
 
 from .consolidation import SkillCluster
 from .operation_extraction import SemanticOperation
@@ -147,7 +148,15 @@ def parse_skill_contract_output(raw_output: str, cluster: SkillCluster, operatio
     allowed_actions = {action for operation in operations for action in operation.action_sequence}
     canonical = _string_list(payload.get("canonical_action_sequence"))
     if not canonical or any(action not in allowed_actions for action in canonical):
-        raise ValueError("canonical_action_sequence must contain only supported actions")
+        canonical = list(cluster.representative_action_sequence)
+        if not canonical or any(action not in allowed_actions for action in canonical):
+            raise ValueError("cluster has no valid representative action sequence")
+        warnings.warn(
+            "Recovered an invalid LLM skill contract action sequence by using "
+            "the cluster's representative successful action sequence.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
     level = str(payload.get("abstraction_level", "composite")).strip()
     if level not in {"primitive", "composite", "workflow"}:
         level = "composite"
