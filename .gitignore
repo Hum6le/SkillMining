@@ -45,5 +45,11 @@ parse_failures/
 /ExpeL/
 /workdoc/
 
+# Paper PDF (local only)
+/ASI.pdf
+
+# External sandbox repo (owned by another user/tool, not part of this project)
+/agent-skill-induction/
+
 # Vendored third-party python packages for local pptx generation
 /.pptx_deps/
