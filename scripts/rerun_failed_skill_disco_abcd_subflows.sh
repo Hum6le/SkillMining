@@ -93,17 +93,35 @@ SUBFLOWS=()
 if [[ -n "$SUBFLOW_LIST" ]]; then
     read -r -a SUBFLOWS <<< "$SUBFLOW_LIST"
 else
-    while IFS= read -r subflow; do
-        [[ -n "$subflow" ]] && SUBFLOWS+=("$subflow")
-    failed_header='[failed subflows]'
-    [[ "$SOURCE_KIND" == "retry" ]] && failed_header='[failed retries]'
-    done < <(awk -v header="$failed_header" '
-        $0 == header { inside=1; next }
-        /^\[/ { inside=0 }
-        inside && NF { print $1 }
-    ' "$SOURCE_MANIFEST")
+    if [[ "$SOURCE_KIND" == "retry" ]]; then
+        # Current retry manifests use [failed retries]. Older retry manifests
+        # may carry the initial runner's [failed subflows] heading instead.
+        while IFS= read -r subflow; do
+            [[ -n "$subflow" ]] && SUBFLOWS+=("$subflow")
+        done < <(awk '
+            /^\[failed retries\]$/ || /^\[failed subflows\]$/ { inside=1; next }
+            /^\[/ { inside=0 }
+            inside && NF { print $1 }
+        ' "$SOURCE_MANIFEST")
+    else
+        while IFS= read -r subflow; do
+            [[ -n "$subflow" ]] && SUBFLOWS+=("$subflow")
+        done < <(awk '
+            /^\[failed subflows\]$/ { inside=1; next }
+            /^\[/ { inside=0 }
+            inside && NF { print $1 }
+        ' "$SOURCE_MANIFEST")
+    fi
 fi
-[[ ${#SUBFLOWS[@]} -gt 0 ]] || { echo "No failed subflows found; use --subflows to supply an explicit list." >&2; exit 1; }
+if [[ ${#SUBFLOWS[@]} -eq 0 ]]; then
+    echo "No failed subflows were recorded in: $SOURCE_MANIFEST" >&2
+    echo "Detected source kind: $SOURCE_KIND" >&2
+    echo "Available manifest sections:" >&2
+    grep '^\[' "$SOURCE_MANIFEST" >&2 || true
+    echo "If the run was interrupted before its manifest was updated, rerun the known failed names explicitly:" >&2
+    echo "  --subflows \"subflow_a subflow_b\"" >&2
+    exit 1
+fi
 
 RUN_ID="$(date +%Y-%m-%d_%H-%M-%S)"
 RETRY_DIR="$ROOT_DIR/outputs/skill_disco_abcd_retry_${RUN_ID}"
