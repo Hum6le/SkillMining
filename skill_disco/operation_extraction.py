@@ -323,6 +323,17 @@ def parse_operation_extraction_output(
     return operations, rejected
 
 
+def _build_json_retry_prompt(prompt: str, error: json.JSONDecodeError) -> str:
+    """Request one format-only retry after an otherwise unusable model response."""
+    return (
+        f"{prompt}\n\n"
+        "Your previous response was not valid JSON and could not be parsed "
+        f"({error.msg}). Repeat the task using the same evidence. Return exactly "
+        "one syntactically valid JSON object that follows the requested schema, "
+        "with no Markdown or explanatory text."
+    )
+
+
 def extract_trace_operations(
     trace: NormalizedABCDTrace,
     annotations: list[SemanticEventAnnotation],
@@ -330,12 +341,22 @@ def extract_trace_operations(
     *,
     model: str = "deepseek-chat",
 ) -> tuple[list[SemanticOperation], list[dict[str, Any]], str]:
-    """Run one offline extraction call; no retry or refinement is performed."""
+    """Run Stage-2 extraction, with one JSON-format retry when necessary."""
     prompt = build_operation_extraction_prompt(trace, annotations)
     raw_output = chat_fn(prompt, model=model, temperature=0.0)
     if not raw_output.strip():
         raise ValueError("operation extraction returned an empty response")
-    operations, rejected = parse_operation_extraction_output(
-        raw_output, trace, annotations
-    )
+    try:
+        operations, rejected = parse_operation_extraction_output(
+            raw_output, trace, annotations
+        )
+    except json.JSONDecodeError as error:
+        raw_output = chat_fn(
+            _build_json_retry_prompt(prompt, error), model=model, temperature=0.0
+        )
+        if not raw_output.strip():
+            raise ValueError("operation extraction JSON retry returned an empty response")
+        operations, rejected = parse_operation_extraction_output(
+            raw_output, trace, annotations
+        )
     return operations, rejected, raw_output

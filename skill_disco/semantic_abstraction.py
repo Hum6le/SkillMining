@@ -140,19 +140,35 @@ def parse_semantic_abstraction_output(
     return [annotations[event.turn_index] for event in trace.events]
 
 
+def _build_semantic_retry_prompt(prompt: str, error: ValueError) -> str:
+    """Request a format/coverage-only retry for an incomplete Stage-1 response."""
+    return (
+        f"{prompt}\n\n"
+        "Your previous response could not be parsed or did not annotate every "
+        f"required event ({error}). Repeat the task using the same evidence. "
+        "Return exactly one syntactically valid JSON object with one event record "
+        "for every input turn, and no Markdown or explanatory text."
+    )
+
+
 def annotate_trace_semantics(
     trace: NormalizedABCDTrace,
     chat_fn: Callable[..., str],
     *,
     model: str = "deepseek-chat",
 ) -> tuple[list[SemanticEventAnnotation], str]:
-    """Run one offline semantic-abstraction call and return parsed annotations.
-
-    The caller decides how to persist or handle a failure. This function does
-    not retry, refine, or access any held-out evaluation trajectory.
-    """
+    """Run Stage-1 abstraction, with one format/coverage retry when necessary."""
     prompt = build_semantic_abstraction_prompt(trace)
     raw_output = chat_fn(prompt, model=model, temperature=0.0)
     if not raw_output.strip():
         raise ValueError("semantic abstraction returned an empty response")
-    return parse_semantic_abstraction_output(raw_output, trace), raw_output
+    try:
+        annotations = parse_semantic_abstraction_output(raw_output, trace)
+    except ValueError as error:
+        raw_output = chat_fn(
+            _build_semantic_retry_prompt(prompt, error), model=model, temperature=0.0
+        )
+        if not raw_output.strip():
+            raise ValueError("semantic abstraction retry returned an empty response")
+        annotations = parse_semantic_abstraction_output(raw_output, trace)
+    return annotations, raw_output

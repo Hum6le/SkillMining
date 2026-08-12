@@ -109,17 +109,36 @@ def parse_grouping_output(
     payload = _json_object(raw_output)
     records = payload.get("groups")
     if not isinstance(records, list) or not records:
-        raise ValueError("LLM JSON must contain a non-empty groups list")
+        if repair_partition:
+            records = []
+        else:
+            raise ValueError("LLM JSON must contain a non-empty groups list")
     expected = {operation.operation_id for operation in operations}
     assigned: list[str] = []
     assigned_set: set[str] = set()
     groups: list[OperationGroup] = []
     duplicate_count = 0
+    unknown_count = 0
+    invalid_group_count = 0
     for index, record in enumerate(records):
         if not isinstance(record, dict):
+            if repair_partition:
+                invalid_group_count += 1
+                continue
             raise ValueError("group must be a JSON object")
-        ids = [str(value) for value in record.get("operation_ids", [])]
+        raw_ids = record.get("operation_ids", [])
+        ids = [str(value) for value in raw_ids] if isinstance(raw_ids, list) else []
         if not ids or any(value not in expected for value in ids):
+            if repair_partition:
+                unknown_count += sum(value not in expected for value in ids)
+                if not ids:
+                    invalid_group_count += 1
+                ids = [value for value in ids if value in expected]
+            else:
+                raise ValueError("group contains missing or unknown operation IDs")
+        if not ids:
+            if repair_partition:
+                continue
             raise ValueError("group contains missing or unknown operation IDs")
         if repair_partition:
             unique_ids = [value for value in ids if value not in assigned_set]
@@ -129,14 +148,23 @@ def parse_grouping_output(
                 continue
         assigned.extend(ids)
         assigned_set.update(ids)
+        try:
+            name = _snake_name(record.get("name"))
+        except ValueError:
+            if not repair_partition:
+                raise
+            invalid_group_count += 1
+            name = f"repaired_group_{index:03d}"
         groups.append(OperationGroup(
             group_id=f"batch{batch_index:04d}_group{index:03d}",
-            name=_snake_name(record.get("name")),
+            name=name,
             description=str(record.get("description", "")).strip(),
             operation_ids=ids,
         ))
     if (
         duplicate_count
+        or unknown_count
+        or invalid_group_count
         or len(assigned) != len(set(assigned))
         or set(assigned) != expected
     ):
@@ -158,12 +186,41 @@ def parse_grouping_output(
             ))
         warnings.warn(
             "Recovered an invalid LLM operation grouping response: "
-            f"removed {duplicate_count} duplicate assignment(s) and added "
-            f"{len(missing)} singleton group(s).",
+            f"removed {duplicate_count} duplicate assignment(s), discarded "
+            f"{unknown_count} unknown ID reference(s) and {invalid_group_count} "
+            f"invalid group(s), and added {len(missing)} singleton group(s).",
             RuntimeWarning,
             stacklevel=2,
         )
     return groups
+
+
+def _grouping_retry_prompt(prompt: str, error: Exception) -> str:
+    return (
+        f"{prompt}\n\nYour previous response was invalid ({error}). Repeat the "
+        "task using the same input. Return exactly one syntactically valid JSON "
+        "object in the requested schema; every listed operation_id must appear "
+        "exactly once, and no unknown IDs may be used."
+    )
+
+
+def _fallback_groups(operations: list[SemanticOperation], batch_index: int) -> list[OperationGroup]:
+    """Preserve validated operations when both grouping responses are unusable."""
+    warnings.warn(
+        "Recovered an unusable LLM operation grouping response by creating "
+        "deterministic singleton groups for the entire batch.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+    return [
+        OperationGroup(
+            group_id=f"batch{batch_index:04d}_json_fallback{index:03d}",
+            name=f"unparsed_operation_{index:03d}",
+            description="Deterministic singleton fallback after invalid LLM grouping JSON.",
+            operation_ids=[operation.operation_id],
+        )
+        for index, operation in enumerate(operations)
+    ]
 
 
 def group_operation_batch(
@@ -179,12 +236,21 @@ def group_operation_batch(
         raise ValueError("operation grouping returned an empty response")
     try:
         groups = parse_grouping_output(raw_output, operations, batch_index)
-    except ValueError as error:
-        if str(error) != "groups must partition every operation exactly once":
-            raise
-        groups = parse_grouping_output(
-            raw_output, operations, batch_index, repair_partition=True
+    except (ValueError, json.JSONDecodeError) as first_error:
+        retry_output = chat_fn(
+            _grouping_retry_prompt(prompt, first_error), model=model, temperature=0.0
         )
+        if retry_output.strip():
+            raw_output = retry_output
+        try:
+            groups = parse_grouping_output(raw_output, operations, batch_index)
+        except (ValueError, json.JSONDecodeError):
+            try:
+                groups = parse_grouping_output(
+                    raw_output, operations, batch_index, repair_partition=True
+                )
+            except (ValueError, json.JSONDecodeError):
+                groups = _fallback_groups(operations, batch_index)
     return groups, raw_output
 
 
@@ -223,18 +289,37 @@ def parse_consolidation_output(
     payload = _json_object(raw_output)
     records = payload.get("clusters")
     if not isinstance(records, list) or not records:
-        raise ValueError("LLM JSON must contain a non-empty clusters list")
+        if repair_partition:
+            records = []
+        else:
+            raise ValueError("LLM JSON must contain a non-empty clusters list")
     group_by_id = {group.group_id: group for group in groups}
     expected = set(group_by_id)
     assigned: list[str] = []
     assigned_set: set[str] = set()
     clusters: list[SkillCluster] = []
     duplicate_count = 0
+    unknown_count = 0
+    invalid_cluster_count = 0
     for index, record in enumerate(records):
         if not isinstance(record, dict):
+            if repair_partition:
+                invalid_cluster_count += 1
+                continue
             raise ValueError("cluster must be a JSON object")
-        group_ids = [str(value) for value in record.get("group_ids", [])]
+        raw_group_ids = record.get("group_ids", [])
+        group_ids = [str(value) for value in raw_group_ids] if isinstance(raw_group_ids, list) else []
         if not group_ids or any(value not in expected for value in group_ids):
+            if repair_partition:
+                unknown_count += sum(value not in expected for value in group_ids)
+                if not group_ids:
+                    invalid_cluster_count += 1
+                group_ids = [value for value in group_ids if value in expected]
+            else:
+                raise ValueError("cluster contains missing or unknown group IDs")
+        if not group_ids:
+            if repair_partition:
+                continue
             raise ValueError("cluster contains missing or unknown group IDs")
         if repair_partition:
             unique_group_ids = [value for value in group_ids if value not in assigned_set]
@@ -251,9 +336,16 @@ def parse_consolidation_output(
         ]
         conversations = sorted({operation_by_id[operation_id].conversation_id for operation_id in operation_ids})
         representative = operation_by_id[operation_ids[0]].action_sequence
+        try:
+            name = _snake_name(record.get("name"))
+        except ValueError:
+            if not repair_partition:
+                raise
+            invalid_cluster_count += 1
+            name = f"repaired_cluster_{index:03d}"
         clusters.append(SkillCluster(
             cluster_id=f"cluster_{index:03d}",
-            name=_snake_name(record.get("name")),
+            name=name,
             description=str(record.get("description", "")).strip(),
             group_ids=group_ids,
             operation_ids=operation_ids,
@@ -263,6 +355,8 @@ def parse_consolidation_output(
         ))
     if (
         duplicate_count
+        or unknown_count
+        or invalid_cluster_count
         or len(assigned) != len(set(assigned))
         or set(assigned) != expected
     ):
@@ -294,11 +388,56 @@ def parse_consolidation_output(
             ))
         warnings.warn(
             "Recovered an invalid LLM group-consolidation response: "
-            f"removed {duplicate_count} duplicate assignment(s) and added "
-            f"{len(missing)} singleton cluster(s).",
+            f"removed {duplicate_count} duplicate assignment(s), discarded "
+            f"{unknown_count} unknown ID reference(s) and {invalid_cluster_count} "
+            f"invalid cluster(s), and added {len(missing)} singleton cluster(s).",
             RuntimeWarning,
             stacklevel=2,
         )
+    return clusters
+
+
+def _consolidation_retry_prompt(prompt: str, error: Exception) -> str:
+    return (
+        f"{prompt}\n\nYour previous response was invalid ({error}). Repeat the "
+        "task using the same input. Return exactly one syntactically valid JSON "
+        "object in the requested schema; every listed group_id must appear exactly "
+        "once, and no unknown IDs may be used."
+    )
+
+
+def _fallback_clusters(
+    groups: list[OperationGroup],
+    operation_by_id: dict[str, SemanticOperation],
+    total_conversations: int,
+) -> list[SkillCluster]:
+    """Preserve validated operation groups when both merge responses are unusable."""
+    warnings.warn(
+        "Recovered an unusable LLM group-consolidation response by creating "
+        "deterministic singleton clusters for every group.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+    clusters = []
+    for index, group in enumerate(groups):
+        conversations = sorted({
+            operation_by_id[operation_id].conversation_id
+            for operation_id in group.operation_ids
+        })
+        clusters.append(SkillCluster(
+            cluster_id=f"json_fallback_cluster_{index:03d}",
+            name=f"unparsed_group_{index:03d}",
+            description="Deterministic singleton fallback after invalid LLM consolidation JSON.",
+            group_ids=[group.group_id],
+            operation_ids=list(group.operation_ids),
+            supporting_conversations=conversations,
+            reusability_score=round(
+                len(conversations) / max(total_conversations, 1), 6
+            ),
+            representative_action_sequence=(
+                operation_by_id[group.operation_ids[0]].action_sequence
+            ),
+        ))
     return clusters
 
 
@@ -318,14 +457,27 @@ def consolidate_groups(
         clusters = parse_consolidation_output(
             raw_output, groups, operation_by_id, total_conversations
         )
-    except ValueError as error:
-        if str(error) != "clusters must partition every group exactly once":
-            raise
-        clusters = parse_consolidation_output(
-            raw_output,
-            groups,
-            operation_by_id,
-            total_conversations,
-            repair_partition=True,
+    except (ValueError, json.JSONDecodeError) as first_error:
+        retry_output = chat_fn(
+            _consolidation_retry_prompt(prompt, first_error), model=model, temperature=0.0
         )
+        if retry_output.strip():
+            raw_output = retry_output
+        try:
+            clusters = parse_consolidation_output(
+                raw_output, groups, operation_by_id, total_conversations
+            )
+        except (ValueError, json.JSONDecodeError):
+            try:
+                clusters = parse_consolidation_output(
+                    raw_output,
+                    groups,
+                    operation_by_id,
+                    total_conversations,
+                    repair_partition=True,
+                )
+            except (ValueError, json.JSONDecodeError):
+                clusters = _fallback_clusters(
+                    groups, operation_by_id, total_conversations
+                )
     return clusters, raw_output

@@ -57,6 +57,22 @@ class MockPipelineTest(unittest.TestCase):
         self.assertNotIn("bob", artifact["skill_library"])
         self.assertNotIn("No explicit precondition", artifact["skill_library"])
 
+    def test_skips_trace_after_exhausted_llm_transport_retries(self) -> None:
+        calls = []
+
+        def unavailable_chat(*_args, **_kwargs):
+            calls.append(1)
+            raise RuntimeError("Workflow HTTP error 502")
+
+        artifact = run_offline_pseudocode_pipeline(
+            [_conversation("mock-1", "alice")], unavailable_chat
+        )
+
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(artifact["traces"][0]["status"], "skipped_semantic_abstraction")
+        self.assertEqual(artifact["contracts"], [])
+        self.assertIn("Procedural Skill Library", artifact["skill_library"])
+
 
 if __name__ == "__main__":
     unittest.main()

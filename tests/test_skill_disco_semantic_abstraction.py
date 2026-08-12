@@ -72,6 +72,23 @@ class SemanticAbstractionTest(unittest.TestCase):
         self.assertEqual(annotations[0].parameters, ["username"])
         self.assertEqual(annotations[1].control_signal, "advance")
 
+    def test_retries_invalid_or_incomplete_annotations_once(self) -> None:
+        response = json.dumps({"events": [
+            {"turn_index": 0, "dialogue_act": "request_password_reset", "intent": "password_recovery", "state_updates": [], "parameters": ["username"], "control_signal": "start"},
+            {"turn_index": 1, "dialogue_act": "backend_action", "intent": "password_recovery", "state_updates": [], "parameters": ["username"], "control_signal": "advance"},
+        ]})
+        prompts: list[str] = []
+
+        def chat(prompt: str, **_kwargs: object) -> str:
+            prompts.append(prompt)
+            return '{"events": [}' if len(prompts) == 1 else response
+
+        annotations, raw_output = annotate_trace_semantics(self.trace, chat)
+        self.assertEqual(len(prompts), 2)
+        self.assertIn("not annotate every required event", prompts[1])
+        self.assertEqual(len(annotations), len(self.trace.events))
+        self.assertEqual(raw_output, response)
+
 
 if __name__ == "__main__":
     unittest.main()

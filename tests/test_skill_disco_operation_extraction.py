@@ -91,6 +91,31 @@ class OperationExtractionTest(unittest.TestCase):
         self.assertIn("env.step(action, slots)", operations[0].code_snippet)
         self.assertEqual(rejected[0]["reason"], "invalid_or_single_action_span")
 
+    def test_retries_once_after_invalid_json(self) -> None:
+        valid_response = json.dumps({
+            "operations": [{
+                "name": "recover_account_password", "description": "Recover a password.",
+                "start_action_index": 0, "end_action_index": 2, "preconditions": [],
+                "postconditions": ["password_generated"], "control_flow": "fixed_sequence",
+                "parameters": ["username"], "supporting_event_turns": [0],
+                "completion_evidence": "A password was generated.", "succeeded": True,
+            }],
+        })
+        prompts: list[str] = []
+
+        def chat(prompt: str, **_kwargs: object) -> str:
+            prompts.append(prompt)
+            return '{"operations": [}' if len(prompts) == 1 else valid_response
+
+        operations, _, raw_output = extract_trace_operations(
+            self.trace, self.annotations, chat
+        )
+
+        self.assertEqual(len(prompts), 2)
+        self.assertIn("not valid JSON", prompts[1])
+        self.assertEqual(len(operations), 1)
+        self.assertEqual(raw_output, valid_response)
+
 
 if __name__ == "__main__":
     unittest.main()
