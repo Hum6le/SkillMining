@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-# Re-run only failed subflows from one completed-with-failures SKILL-DISCO
-# batch, then aggregate the original successful and newly successful results.
+# Re-run only failed subflows from a SKILL-DISCO all-batch or prior retry, then
+# aggregate every completed result retained by that source plus new successes.
 
 set -uo pipefail
 
@@ -22,12 +22,13 @@ usage() {
     cat <<'EOF'
 Usage: bash scripts/rerun_failed_skill_disco_abcd_subflows.sh --batch-dir DIR [options]
 
-Read the prior all-subflow manifest, rerun only the subflows listed in its
-[failed subflows] section, and aggregate every completed result from the
-original batch plus this retry batch.
+Read either an all-subflow batch manifest or a prior retry manifest. Rerun only
+its failed subflows and aggregate every completed result retained by that
+source plus this retry's newly successful results. This script may be chained
+until every subflow succeeds.
 
 Required:
-  --batch-dir DIR           outputs/skill_disco_abcd_all_<timestamp> directory
+  --batch-dir DIR           outputs/skill_disco_abcd_all_* or prior retry directory
 
 Options:
   --subflows "NAME ..."     Override the failed-subflow list from the manifest
@@ -83,14 +84,21 @@ for value_name in MODEL GROUPING_BATCH_SIZE MIN_SUPPORT CONDA_ENV PYTHON_BIN SKI
     [[ -n "${!value_name}" ]] || { echo "Could not recover $value_name from $SOURCE_MANIFEST" >&2; exit 1; }
 done
 
+SOURCE_KIND="all_batch"
+if grep -q '^\[failed retries\]$' "$SOURCE_MANIFEST"; then
+    SOURCE_KIND="retry"
+fi
+
 SUBFLOWS=()
 if [[ -n "$SUBFLOW_LIST" ]]; then
     read -r -a SUBFLOWS <<< "$SUBFLOW_LIST"
 else
     while IFS= read -r subflow; do
         [[ -n "$subflow" ]] && SUBFLOWS+=("$subflow")
-    done < <(awk '
-        /^\[failed subflows\]$/ { inside=1; next }
+    failed_header='[failed subflows]'
+    [[ "$SOURCE_KIND" == "retry" ]] && failed_header='[failed retries]'
+    done < <(awk -v header="$failed_header" '
+        $0 == header { inside=1; next }
         /^\[/ { inside=0 }
         inside && NF { print $1 }
     ' "$SOURCE_MANIFEST")
@@ -115,17 +123,34 @@ collect_result_from_log() {
     [[ -n "$result_path" && -f "$result_path" ]] && RESULTS+=("$result_path")
 }
 
-# Include only the original batch's completed child runs. Failed entries have
-# no completed evaluation result and are replaced by their retry result below.
-while IFS= read -r log_path; do
-    if [[ "$SKIP_EVAL" != "1" ]] && ! collect_result_from_log "$log_path"; then
-        MISSING_SOURCE_RESULTS+=("$log_path")
-    fi
-done < <(awk '
-    /^\[successful subflows\]$/ { inside=1; next }
-    /^\[/ { inside=0 }
-    inside && / log=/ { sub(/^.* log=/, ""); print }
-' "$SOURCE_MANIFEST")
+# A retry manifest explicitly persists the exact result paths used for its
+# partial aggregate; reusing those paths makes retry chains lossless. An
+# initial all-batch manifest only has successful child logs, so recover paths
+# from their final status lines.
+if [[ "$SOURCE_KIND" == "retry" ]]; then
+    while IFS= read -r result_path; do
+        [[ -n "$result_path" ]] || continue
+        if [[ "$SKIP_EVAL" != "1" && -f "$result_path" ]]; then
+            RESULTS+=("$result_path")
+        elif [[ "$SKIP_EVAL" != "1" ]]; then
+            MISSING_SOURCE_RESULTS+=("$result_path")
+        fi
+    done < <(awk '
+        /^\[evaluation results used for aggregate\]$/ { inside=1; next }
+        /^\[/ { inside=0 }
+        inside && NF { print }
+    ' "$SOURCE_MANIFEST")
+else
+    while IFS= read -r log_path; do
+        if [[ "$SKIP_EVAL" != "1" ]] && ! collect_result_from_log "$log_path"; then
+            MISSING_SOURCE_RESULTS+=("$log_path")
+        fi
+    done < <(awk '
+        /^\[successful subflows\]$/ { inside=1; next }
+        /^\[/ { inside=0 }
+        inside && / log=/ { sub(/^.* log=/, ""); print }
+    ' "$SOURCE_MANIFEST")
+fi
 
 if [[ ${#MISSING_SOURCE_RESULTS[@]} -gt 0 ]]; then
     echo "The source batch marks completed subflows without readable evaluation results:" >&2
@@ -136,6 +161,7 @@ fi
 
 echo "===== SKILL-DISCO ABCD failed-subflow retry ====="
 echo "Source batch:  $BATCH_DIR"
+echo "Source kind:   $SOURCE_KIND"
 echo "Retry output:  $RETRY_DIR"
 echo "Subflows:      ${SUBFLOWS[*]}"
 
@@ -156,6 +182,7 @@ done
 
 {
     echo "source_batch=$BATCH_DIR"
+    echo "source_kind=$SOURCE_KIND"
     echo "model=$MODEL"
     echo "grouping_batch_size=$GROUPING_BATCH_SIZE"
     echo "min_support=$MIN_SUPPORT"
