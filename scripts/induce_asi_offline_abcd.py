@@ -92,11 +92,24 @@ def main() -> None:
             existing_by_index[index] = artifact
 
     new_artifacts = 0
+    total_selected = len(episodes)
     for index, episode in enumerate(episodes):
         episode_index = args.start_index + index
         existing = existing_by_index.get(episode_index)
         if existing and existing.get("status") == "completed" and existing.get("raw_response"):
+            print(
+                f"[ASI induction {index + 1}/{total_selected}] "
+                f"episode={episode.conversation_id} status=already_completed",
+                flush=True,
+            )
             continue
+        mode = "prompt_only" if args.dry_run else "calling_llm_chat"
+        print(
+            f"[ASI induction {index + 1}/{total_selected}] "
+            f"episode={episode.conversation_id} actions={len(episode.primitive_actions)} "
+            f"status={mode}",
+            flush=True,
+        )
         if args.dry_run:
             artifact = {
                 "episode_id": episode.conversation_id,
@@ -111,6 +124,11 @@ def main() -> None:
         artifact["episode_index"] = episode_index
         existing_by_index[episode_index] = artifact
         new_artifacts += 1
+        print(
+            f"[ASI induction {index + 1}/{total_selected}] "
+            f"episode={episode.conversation_id} status={artifact['status']}",
+            flush=True,
+        )
 
     with artifacts_path.open("w", encoding="utf-8") as handle:
         for episode_index in sorted(existing_by_index):

@@ -3,13 +3,16 @@
 # Run the frozen-library ASIoffline protocol independently for each ABCD
 # subflow. All model calls are delegated to Python scripts that use llm.chat().
 
-set -uo pipefail
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
+export PYTHONUNBUFFERED=1
 
 TEMPERATURE="1.0"
+HF_ENDPOINT_VALUE="https://hf-mirror.com"
+CONDA_ENV="skillmining310"
 PYTHON_BIN="python"
 SUBFLOW_LIST=""
 MAX_TRAIN=""
@@ -30,6 +33,8 @@ evaluation. Model calls occur only through llm.chat() in the Python stages.
 Options:
   --subflows "NAME ..."     Run only the named whitespace-separated subflows
   --temperature FLOAT       ASI induction sampling temperature (default: 1.0)
+  --hf-endpoint URL         Hugging Face endpoint (default: https://hf-mirror.com)
+  --conda-env NAME          Conda environment to activate (default: skillmining310)
   --python-bin PATH         Python executable (default: python)
   --max-train N             Limit induction trajectories per subflow
   --max-test N              Limit test conversations per subflow
@@ -49,6 +54,8 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --subflows) require_value "$@"; SUBFLOW_LIST="$2"; shift 2 ;;
         --temperature) require_value "$@"; TEMPERATURE="$2"; shift 2 ;;
+        --hf-endpoint) require_value "$@"; HF_ENDPOINT_VALUE="$2"; shift 2 ;;
+        --conda-env) require_value "$@"; CONDA_ENV="$2"; shift 2 ;;
         --python-bin) require_value "$@"; PYTHON_BIN="$2"; shift 2 ;;
         --max-train) require_value "$@"; MAX_TRAIN="$2"; shift 2 ;;
         --max-test) require_value "$@"; MAX_TEST="$2"; shift 2 ;;
@@ -60,6 +67,18 @@ while [[ $# -gt 0 ]]; do
         *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
     esac
 done
+
+if ! command -v conda >/dev/null 2>&1; then
+    for conda_sh in "$HOME/miniconda3/etc/profile.d/conda.sh" "$HOME/anaconda3/etc/profile.d/conda.sh" "/opt/conda/etc/profile.d/conda.sh"; do
+        [[ -f "$conda_sh" ]] && source "$conda_sh" && break
+    done
+fi
+command -v conda >/dev/null 2>&1 || { echo "conda was not found. Initialize conda before running this script." >&2; exit 1; }
+CONDA_BASE="$(conda info --base 2>/dev/null)" || { echo "Unable to determine conda base." >&2; exit 1; }
+[[ -f "$CONDA_BASE/etc/profile.d/conda.sh" ]] && source "$CONDA_BASE/etc/profile.d/conda.sh"
+conda activate "$CONDA_ENV" || { echo "Unable to activate conda environment: $CONDA_ENV" >&2; exit 1; }
+command -v "$PYTHON_BIN" >/dev/null 2>&1 || { echo "Python not found: $PYTHON_BIN" >&2; exit 1; }
+export HF_ENDPOINT="$HF_ENDPOINT_VALUE"
 
 SPLITS_DIR="$ROOT_DIR/data/eval/abcd/splits"
 [[ -d "$SPLITS_DIR" ]] || { echo "ABCD split directory not found: $SPLITS_DIR" >&2; exit 1; }
@@ -81,6 +100,13 @@ mkdir -p "$LOG_DIR"
 SUCCESSFUL=()
 FAILED=()
 
+echo "===== ASIoffline ABCD full batch run ====="
+echo "Subflows:      ${#SUBFLOWS[@]}"
+echo "Environment:   $CONDA_ENV"
+echo "Python:        $($PYTHON_BIN --version 2>&1)"
+echo "HF_ENDPOINT:   $HF_ENDPOINT"
+echo "Batch output:  $BATCH_DIR"
+
 for subflow in "${SUBFLOWS[@]}"; do
     output_dir="$BATCH_DIR/$subflow"
     log_path="$LOG_DIR/$subflow.log"
@@ -93,7 +119,7 @@ for subflow in "${SUBFLOWS[@]}"; do
 
     echo "===== ASIoffline / $subflow ====="
     echo "Log: $log_path"
-    if "${command[@]}" > "$log_path" 2>&1; then
+    if "${command[@]}" 2>&1 | tee "$log_path"; then
         SUCCESSFUL+=("$subflow")
     else
         status=$?
@@ -117,7 +143,7 @@ write_json_array() {
     [[ "$first" -eq 0 ]] && printf '\n  '
 }
 {
-    printf '{\n  "method": "asioffline-abcd",\n  "successful_subflows": ['
+    printf '{\n  "method": "asioffline-abcd",\n  "temperature": "%s",\n  "conda_env": "%s",\n  "hf_endpoint": "%s",\n  "successful_subflows": [' "$TEMPERATURE" "$CONDA_ENV" "$HF_ENDPOINT"
     write_json_array "${SUCCESSFUL[@]}"
     printf '],\n  "failed_subflows": ['
     write_json_array "${FAILED[@]}"
@@ -133,4 +159,6 @@ if [[ "$DRY_RUN" -eq 0 && "$SKIP_EVAL" -eq 0 && ${#SUCCESSFUL[@]} -gt 0 ]]; then
 fi
 
 echo "ASIoffline batch artifacts: $BATCH_DIR"
+echo "Batch manifest: $manifest"
+[[ -f "$BATCH_DIR/aggregate.json" ]] && echo "Aggregate:      $BATCH_DIR/aggregate.json"
 [[ ${#FAILED[@]} -eq 0 ]] || exit 1

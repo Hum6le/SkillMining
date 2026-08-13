@@ -9,8 +9,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
+export PYTHONUNBUFFERED=1
 
 CONDA_ENV="skillmining310"
+HF_ENDPOINT_VALUE="https://hf-mirror.com"
 SUBFLOW=""
 TEMPERATURE="1.0"
 PYTHON_BIN="python"
@@ -35,6 +37,7 @@ Required:
 Options:
   --temperature FLOAT        ASI induction temperature (default: 1.0)
   --conda-env NAME           Conda environment to activate (default: skillmining310)
+  --hf-endpoint URL          Hugging Face endpoint (default: https://hf-mirror.com)
   --python-bin PATH          Python executable after activation (default: python)
   --max-train N              Limit train trajectories for a bounded smoke run
   --max-test N               Limit frozen test conversations for a bounded smoke run
@@ -59,6 +62,7 @@ while [[ $# -gt 0 ]]; do
         --subflow) require_value "$1" "$#"; SUBFLOW="$2"; shift 2 ;;
         --temperature) require_value "$1" "$#"; TEMPERATURE="$2"; shift 2 ;;
         --conda-env) require_value "$1" "$#"; CONDA_ENV="$2"; shift 2 ;;
+        --hf-endpoint) require_value "$1" "$#"; HF_ENDPOINT_VALUE="$2"; shift 2 ;;
         --python-bin) require_value "$1" "$#"; PYTHON_BIN="$2"; shift 2 ;;
         --max-train) require_value "$1" "$#"; MAX_TRAIN="$2"; shift 2 ;;
         --max-test) require_value "$1" "$#"; MAX_TEST="$2"; shift 2 ;;
@@ -93,6 +97,7 @@ CONDA_BASE="$(conda info --base 2>/dev/null)" || { echo "Unable to determine con
 [[ -f "$CONDA_BASE/etc/profile.d/conda.sh" ]] && source "$CONDA_BASE/etc/profile.d/conda.sh"
 conda activate "$CONDA_ENV" || { echo "Unable to activate conda environment: $CONDA_ENV" >&2; exit 1; }
 command -v "$PYTHON_BIN" >/dev/null 2>&1 || { echo "Python not found: $PYTHON_BIN" >&2; exit 1; }
+export HF_ENDPOINT="$HF_ENDPOINT_VALUE"
 
 TRAIN_FILE="$ROOT_DIR/data/eval/abcd/splits/$SUBFLOW/train.json"
 TEST_FILE="$ROOT_DIR/data/eval/abcd/splits/$SUBFLOW/test.json"
@@ -118,6 +123,7 @@ write_manifest() {
         echo "temperature=$TEMPERATURE"
         echo "conda_env=$CONDA_ENV"
         echo "python_bin=$PYTHON_BIN"
+        echo "hf_endpoint=$HF_ENDPOINT"
         echo "max_train=${MAX_TRAIN:-all}"
         echo "max_test=${MAX_TEST:-all}"
         echo "resume_induction=$RESUME"
@@ -146,6 +152,7 @@ echo "LLM interface:  llm.chat()"
 echo "Run directory: $RUN_DIR"
 echo "Environment:   $CONDA_ENV"
 echo "Python:        $($PYTHON_BIN --version 2>&1)"
+echo "HF_ENDPOINT:   $HF_ENDPOINT"
 
 "${command[@]}"
 
