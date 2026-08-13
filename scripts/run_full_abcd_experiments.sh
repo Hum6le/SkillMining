@@ -24,6 +24,7 @@ METHOD="all"
 ONE_SUBFLOW=""
 MIN_SESSIONS=0
 GRAPH_MINING_METHOD="legacy"
+SKIP_GRAPH_SEED=1
 EVOLUTION_BATCH_SIZE=25
 CONTINUE_ON_ERROR=1
 PYTHON_BIN="python"
@@ -38,6 +39,7 @@ Options:
   --subflow NAME             Run one subflow instead of the complete split list
   --min-sessions N           Graph Mining minimum train sessions (default: 0)
   --graph-mining-method NAME legacy or sequence (default: legacy HG vertex cover)
+  --with-graph-seed         Also run the empty-workflow HG seed baseline
   --evolution-batch-size N   Trace2Skill outer batch size (default: 25)
   --stop-on-error            Stop at the first failed subflow
   --no-rebuild-splits        Reuse existing subflow session splits
@@ -69,6 +71,10 @@ while [[ $# -gt 0 ]]; do
             [[ $# -ge 2 ]] || { echo "Missing value for --graph-mining-method" >&2; exit 2; }
             GRAPH_MINING_METHOD="$2"
             shift 2
+            ;;
+        --with-graph-seed)
+            SKIP_GRAPH_SEED=0
+            shift
             ;;
         --evolution-batch-size)
             [[ $# -ge 2 ]] || { echo "Missing value for --evolution-batch-size" >&2; exit 2; }
@@ -262,17 +268,21 @@ fi
 if [[ "$METHOD" == "all" || "$METHOD" == "graph" ]]; then
     echo
     echo "===== Graph Mining / independent subflows ====="
+    graph_command=("$PYTHON_BIN" scripts/run_subflow_eval.py
+        --min-sessions "$MIN_SESSIONS"
+        --mining-method "$GRAPH_MINING_METHOD")
     if [[ -n "$ONE_SUBFLOW" ]]; then
-        "$PYTHON_BIN" scripts/run_subflow_eval.py \
-            --subflow "$ONE_SUBFLOW" \
-            --min-sessions "$MIN_SESSIONS" \
-            --mining-method "$GRAPH_MINING_METHOD"
+        graph_command+=(--subflow "$ONE_SUBFLOW")
     else
-        "$PYTHON_BIN" scripts/run_subflow_eval.py \
-            --all \
-            --min-sessions "$MIN_SESSIONS" \
-            --mining-method "$GRAPH_MINING_METHOD"
+        graph_command+=(--all)
     fi
+    if [[ "$SKIP_GRAPH_SEED" -eq 1 ]]; then
+        graph_command+=(--skip-seed)
+        echo "HG seed baseline: skipped (mined-skill evaluation only)"
+    else
+        echo "HG seed baseline: enabled"
+    fi
+    "${graph_command[@]}"
     graph_status=$?
     if [[ $graph_status -ne 0 ]]; then
         FAILED+=("Graph Mining:all")
