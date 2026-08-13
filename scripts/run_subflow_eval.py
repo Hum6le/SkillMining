@@ -359,8 +359,8 @@ def main():
     parser.add_argument("--reference-max-chars", type=int, default=1800,
                         help="Max characters of retrieved reference snippets injected per turn")
     parser.add_argument("--mining-method", choices=["sequence", "legacy"],
-                        default="sequence",
-                        help="Skill mining method: sequence keeps canonical action order; legacy uses HG vertex cover")
+                        default="legacy",
+                        help="Skill mining method (default: legacy HG vertex cover; use sequence to enable sequence mining)")
     parser.add_argument("--sequence-min-edge-support", type=int, default=2,
                         help="Min transition support for sequence mining")
     parser.add_argument("--sequence-min-edge-ratio", type=float, default=0.1,

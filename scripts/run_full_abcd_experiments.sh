@@ -23,6 +23,7 @@ HF_MIRROR="https://hf-mirror.com"
 METHOD="all"
 ONE_SUBFLOW=""
 MIN_SESSIONS=0
+GRAPH_MINING_METHOD="legacy"
 EVOLUTION_BATCH_SIZE=25
 CONTINUE_ON_ERROR=1
 PYTHON_BIN="python"
@@ -36,6 +37,7 @@ Options:
   --method NAME              all, awm, expel, trace2skill, or graph (default: all)
   --subflow NAME             Run one subflow instead of the complete split list
   --min-sessions N           Graph Mining minimum train sessions (default: 0)
+  --graph-mining-method NAME legacy or sequence (default: legacy HG vertex cover)
   --evolution-batch-size N   Trace2Skill outer batch size (default: 25)
   --stop-on-error            Stop at the first failed subflow
   --no-rebuild-splits        Reuse existing subflow session splits
@@ -61,6 +63,11 @@ while [[ $# -gt 0 ]]; do
         --min-sessions)
             [[ $# -ge 2 ]] || { echo "Missing value for --min-sessions" >&2; exit 2; }
             MIN_SESSIONS="$2"
+            shift 2
+            ;;
+        --graph-mining-method)
+            [[ $# -ge 2 ]] || { echo "Missing value for --graph-mining-method" >&2; exit 2; }
+            GRAPH_MINING_METHOD="$2"
             shift 2
             ;;
         --evolution-batch-size)
@@ -92,6 +99,14 @@ case "$METHOD" in
     all|awm|expel|trace2skill|graph) ;;
     *)
         echo "Invalid --method: $METHOD" >&2
+        exit 2
+        ;;
+esac
+
+case "$GRAPH_MINING_METHOD" in
+    legacy|sequence) ;;
+    *)
+        echo "Invalid --graph-mining-method: $GRAPH_MINING_METHOD" >&2
         exit 2
         ;;
 esac
@@ -248,9 +263,15 @@ if [[ "$METHOD" == "all" || "$METHOD" == "graph" ]]; then
     echo
     echo "===== Graph Mining / independent subflows ====="
     if [[ -n "$ONE_SUBFLOW" ]]; then
-        "$PYTHON_BIN" scripts/run_subflow_eval.py --subflow "$ONE_SUBFLOW" --min-sessions "$MIN_SESSIONS"
+        "$PYTHON_BIN" scripts/run_subflow_eval.py \
+            --subflow "$ONE_SUBFLOW" \
+            --min-sessions "$MIN_SESSIONS" \
+            --mining-method "$GRAPH_MINING_METHOD"
     else
-        "$PYTHON_BIN" scripts/run_subflow_eval.py --all --min-sessions "$MIN_SESSIONS"
+        "$PYTHON_BIN" scripts/run_subflow_eval.py \
+            --all \
+            --min-sessions "$MIN_SESSIONS" \
+            --mining-method "$GRAPH_MINING_METHOD"
     fi
     graph_status=$?
     if [[ $graph_status -ne 0 ]]; then
