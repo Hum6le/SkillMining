@@ -96,30 +96,19 @@ def _serialize(predictions: list[Any]) -> list[dict[str, Any]]:
     ]
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Recompute ABCD AST/CDS from saved turn predictions"
-    )
-    parser.add_argument("--test-data", required=True)
-    parser.add_argument("--preds", required=True)
-    parser.add_argument("--output", required=True)
-    parser.add_argument("--corrected-preds-output", default=None)
-    args = parser.parse_args()
-
-    conversations = _read(args.test_data)
+def recompute_one(test_data_path: Path, preds_path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    conversations = _read(test_data_path)
     if not isinstance(conversations, list):
-        raise ValueError("--test-data must contain a JSON list")
-
-    rows = _load_rows(args.preds)
+        raise ValueError(f"Test data must contain a JSON list: {test_data_path}")
+    rows = _load_rows(preds_path)
     vocab = build_action_vocab(conversations)
     normalization = _normalize_rows(rows, vocab)
     predictions = turn_results_to_abcd_predictions(rows, conversations)
     ground_truth = [extract_ground_truth(conv) for conv in conversations]
     result = evaluate_abcd(ground_truth, predictions)
-
     payload = {
-        "test_data": str(Path(args.test_data).resolve()),
-        "predictions": str(Path(args.preds).resolve()),
+        "test_data": str(test_data_path.resolve()),
+        "predictions": str(preds_path.resolve()),
         "action_vocab_size": len(vocab),
         "normalization": normalization,
         "ast_cds": {
@@ -129,6 +118,7 @@ def main() -> None:
             "cds_overall": result.cds.overall_cds,
             "num_action_turns": result.ast.total_action_turns,
         },
+        "test_sessions": len(conversations),
         "summary": (
             f"AST={result.ast.joint_accuracy:.4f} "
             f"Action={result.ast.action_name_accuracy:.4f} "
@@ -136,6 +126,82 @@ def main() -> None:
             f"CDS={result.cds.overall_cds:.4f}"
         ),
     }
+    return payload, _serialize(predictions)
+
+
+def recompute_all(run_dir: Path, splits_dir: Path, pred_name: str) -> dict[str, Any]:
+    """Recompute every subflow below a graph-mining output directory."""
+    records: list[dict[str, Any]] = []
+    missing: list[str] = []
+    for preds_path in sorted(run_dir.glob(f"*/{pred_name}")):
+        subflow = preds_path.parent.name
+        test_data = splits_dir / subflow / "test.json"
+        if not test_data.exists():
+            missing.append(subflow)
+            continue
+        payload, _ = recompute_one(test_data, preds_path)
+        records.append({
+            "subflow": subflow,
+            "predictions": str(preds_path.resolve()),
+            "test_sessions": payload["test_sessions"],
+            "action_turns": payload["ast_cds"]["num_action_turns"],
+            "metrics": payload["ast_cds"],
+            "normalization": payload["normalization"],
+        })
+
+    def weighted(metric: str, weight_key: str) -> float | None:
+        values = [
+            (float(row["metrics"][metric]), max(int(row[weight_key]), 1))
+            for row in records if metric in row["metrics"]
+        ]
+        if not values:
+            return None
+        return sum(value * weight for value, weight in values) / sum(weight for _, weight in values)
+
+    aggregate = {
+        metric: weighted(metric, "action_turns")
+        for metric in ("ast_joint", "ast_action_name", "ast_slot_value")
+    }
+    aggregate["cds_overall"] = weighted("cds_overall", "test_sessions")
+    return {
+        "mode": "all_subflows",
+        "run_dir": str(run_dir.resolve()),
+        "pred_name": pred_name,
+        "num_subflows": len(records),
+        "missing_subflows": missing,
+        "records": records,
+        "aggregate": aggregate,
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Recompute ABCD AST/CDS from saved turn predictions"
+    )
+    parser.add_argument("--test-data", default=None)
+    parser.add_argument("--preds", default=None)
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--corrected-preds-output", default=None)
+    parser.add_argument("--all", action="store_true", help="Recompute every subflow below --run-dir")
+    parser.add_argument("--run-dir", default=None, help="Graph-mining output root containing one directory per subflow")
+    parser.add_argument("--splits-dir", default="data/eval/abcd/splits")
+    parser.add_argument("--pred-name", default="mined_predictions.json")
+    args = parser.parse_args()
+
+    if args.all:
+        if not args.run_dir:
+            parser.error("--all requires --run-dir")
+        payload = recompute_all(Path(args.run_dir), Path(args.splits_dir), args.pred_name)
+        output = Path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(json.dumps(payload["aggregate"], indent=2, ensure_ascii=False))
+        return
+
+    if not args.test_data or not args.preds:
+        parser.error("single-subflow mode requires --test-data and --preds")
+
+    payload, corrected_predictions = recompute_one(Path(args.test_data), Path(args.preds))
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -144,7 +210,7 @@ def main() -> None:
         corrected = Path(args.corrected_preds_output)
         corrected.parent.mkdir(parents=True, exist_ok=True)
         corrected.write_text(
-            json.dumps(_serialize(predictions), indent=2, ensure_ascii=False),
+            json.dumps(corrected_predictions, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
 
