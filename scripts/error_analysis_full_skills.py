@@ -500,6 +500,7 @@ def sample_errors(categories: dict[str, list[dict[str, Any]]], limit: int, seed:
 
 def compact_error(row: dict[str, Any]) -> dict[str, Any]:
     return {
+        "case_id": row.get("case_id"),
         "convo_id": row.get("convo_id"),
         "action_turn": row.get("action_turn"),
         "error_category": row.get("error_category"),
@@ -515,6 +516,89 @@ def compact_error(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def build_skill_excerpt_catalog(skill_text: str, max_excerpts: int = 24) -> list[dict[str, str]]:
+    """Split a skill into quoteable, stable evidence units.
+
+    Generated skills are not guaranteed to share a schema, so Markdown
+    headings are preferred when present and bounded line chunks are the
+    fallback.  The IDs are included in every LLM prompt and in the rendered
+    evidence ledger, making a reported case-to-rule connection auditable.
+    """
+    lines = [line.rstrip() for line in skill_text.splitlines()]
+    if not lines:
+        return []
+
+    blocks: list[tuple[str, list[str]]] = []
+    current_title = "preamble"
+    current_lines: list[str] = []
+    for line in lines:
+        if line.lstrip().startswith("#"):
+            if current_lines:
+                blocks.append((current_title, current_lines))
+            current_title = line.strip().lstrip("#").strip() or "untitled"
+            current_lines = [line]
+        else:
+            current_lines.append(line)
+    if current_lines:
+        blocks.append((current_title, current_lines))
+
+    catalog: list[dict[str, str]] = []
+    for title, block_lines in blocks:
+        text = "\n".join(block_lines).strip()
+        if not text:
+            continue
+        # Keep a quoteable local rule unit rather than an entire long skill.
+        for offset in range(0, len(text), 1200):
+            excerpt = text[offset:offset + 1200].strip()
+            if not excerpt:
+                continue
+            catalog.append({
+                "excerpt_id": f"S{len(catalog) + 1:02d}",
+                "section": title,
+                "text": excerpt,
+            })
+            if len(catalog) >= max_excerpts:
+                return catalog
+    return catalog
+
+
+def render_evidence_ledger(rows: list[dict[str, Any]]) -> str:
+    """Render all sampled cases and quoteable skill excerpts for manual audit."""
+    output = ["# Case-to-Skill Evidence Ledger", ""]
+    for row in rows:
+        output.extend([
+            f"## {row.get('method', 'unknown')}/{row['subflow']}",
+            "",
+            "### Sampled fail cases",
+            "",
+        ])
+        cases = row.get("sampled_errors", [])
+        if not cases:
+            output.append("No sampled fail case was available for this subflow.")
+        for case in cases:
+            output.extend([
+                f"#### {case.get('case_id', 'CASE-UNKNOWN')}",
+                f"- category: `{case.get('error_category')}`",
+                f"- action: gold `{case.get('gt_action')}` vs predicted `{case.get('pred_action')}`",
+                f"- slots: gold `{case.get('gt_slots', [])}` vs predicted `{case.get('pred_slots', [])}`",
+                f"- context: {case.get('context', '')}",
+                "",
+            ])
+        output.extend(["### Skill excerpts", ""])
+        excerpts = row.get("skill_excerpts", [])
+        if not excerpts:
+            output.append("No skill text was available.")
+        for excerpt in excerpts:
+            output.extend([
+                f"#### {excerpt['excerpt_id']} | {excerpt['section']}",
+                "```markdown",
+                excerpt["text"],
+                "```",
+                "",
+            ])
+    return "\n".join(output).rstrip() + "\n"
+
+
 def call_llm(prompt: str, purpose: str) -> str:
     try:
         response = chat(prompt, temperature=0.0).strip()
@@ -528,6 +612,7 @@ def subflow_prompt(
     subflow: str,
     method: str,
     skill_text: str,
+    skill_excerpts: list[dict[str, str]],
     reference_text: str,
     stats: dict[str, Any],
     errors: list[dict[str, Any]],
@@ -540,6 +625,12 @@ Subflow: {subflow}
 ## Skill content
 ```markdown
 {skill_text[:14000] or '(missing)'}
+```
+
+## Quoteable skill excerpts
+Use these stable IDs when citing a skill rule.
+```json
+{json.dumps(skill_excerpts, indent=2, ensure_ascii=False)}
 ```
 
 ## Reference content
@@ -567,10 +658,15 @@ Respond in Chinese with these Markdown sections:
    instance-specific, incorrectly prioritized, or structurally hard to execute.
 2. `## 关键问题`
    List concrete issues. For each issue include: type, severity, exact skill
-   evidence, why it is ambiguous/wrong, and a concrete fix.
+   evidence with one or more excerpt IDs (for example `S03`), why it is
+   ambiguous/wrong, and a concrete fix.
 3. `## 错误样本归因`
    Cluster the sampled errors into recurring patterns. Do not write one
-   independent paragraph per error. Separate skill-content failures from
+   independent paragraph per error. For EACH pattern, include a dedicated
+   `### Evidence links` subsection with at least one `case_id`, the observed
+   gold-vs-predicted discrepancy, one or more matching skill `excerpt_id`s,
+   and a link verdict: `directly supported`, `partially supported`, or
+   `not supported by the skill`. Separate skill-content failures from
    agent/parser/data failures.
 4. `## Subflow-level insight`
    State what business/state-transition structure this subflow appears to
@@ -583,6 +679,8 @@ text as evidence. If no skill defect is found, state what was checked and why
 the skill is coherent. Separately explain which fail cases are attributable to
 skill defects, which are execution/parser/data failures, and which possible
 skill defects have not yet produced an observed failure.
+Never cite a skill defect without an excerpt ID, and never call a failure
+skill-linked without both a case ID and an excerpt ID.
 
 Do not claim a rule is wrong merely because a sampled trace differs from it.
 Distinguish alternative state-conditioned branches from genuine contradictions.
@@ -596,6 +694,21 @@ def batch_prompt(batch: list[dict[str, Any]], batch_id: int, total_batches: int)
             "method": row.get("method", "unknown"),
             "subflow": row["subflow"],
             "stats": row.get("stats", {}),
+            "evidence_index": {
+                "cases": [
+                    {
+                        "case_id": case.get("case_id"),
+                        "category": case.get("error_category"),
+                        "gold": {"action": case.get("gt_action"), "slots": case.get("gt_slots", [])},
+                        "predicted": {"action": case.get("pred_action"), "slots": case.get("pred_slots", [])},
+                    }
+                    for case in row.get("sampled_errors", [])
+                ],
+                "skill_excerpts": [
+                    {"excerpt_id": excerpt.get("excerpt_id"), "text": excerpt.get("text", "")[:500]}
+                    for excerpt in row.get("skill_excerpts", [])
+                ],
+            },
             "skill_audit": row.get("analysis", ""),
         })
     return f"""You are consolidating skill audits across a batch of business subflows.
@@ -625,7 +738,8 @@ the number of affected subflows and representative quoted evidence.
 ## Evidence and prevalence
 For each cause, list supporting subflows and distinguish broad patterns from
 isolated cases. Keep the denominator explicit: count skill-audit coverage and
-fail-case evidence separately.
+fail-case evidence separately. For each skill-linked pattern, retain at least
+one `case_id` and one `excerpt_id` from the evidence index.
 
 ## Cross-subflow business insights
 Identify common latent state variables or transition patterns.
@@ -661,7 +775,10 @@ must cover all skill audits, not only subflows with sampled prediction errors.
 For every major finding, report prevalence across subflows and representative
 subflow names. Separate direct skill-text defects, skill-linked fail cases,
 and execution/model/parser/data problems. Explicitly report how many skills
-were audited and how many had usable fail-case samples.
+were audited and how many had usable fail-case samples. Every finding claimed
+to be skill-linked must include at least one concrete `case_id` and matching
+`excerpt_id`; quote the relevant skill text briefly rather than citing an
+abstract diagnosis alone.
 
 ## Cross-subflow failure taxonomy
 Organize failures into reusable categories such as missing guard, branch
@@ -711,6 +828,7 @@ def analyze_subflow(
     test_path = find_test_file(test_root, subflow)
     skill_text = skill_path.read_text(encoding="utf-8") if skill_path else ""
     reference_text = reference_path.read_text(encoding="utf-8") if reference_path.exists() else ""
+    skill_excerpts = build_skill_excerpt_catalog(skill_text)
 
     base = {
         "subflow": subflow,
@@ -723,12 +841,13 @@ def analyze_subflow(
         "skill_audit_required": True,
         "skill_audit_input_available": bool(skill_text.strip()),
         "skill_chars": len(skill_text),
+        "skill_excerpts": skill_excerpts,
     }
     missing = [name for name, path in (("predictions", prediction_path), ("test_data", test_path)) if not path]
     if not prediction_path or not test_path:
         stats = {"status": "evaluation_inputs_missing", "missing": missing}
         analysis = call_llm(
-            subflow_prompt(subflow, method, skill_text, reference_text, stats, []),
+            subflow_prompt(subflow, method, skill_text, skill_excerpts, reference_text, stats, []),
             f"skill-only audit {method}/{subflow}",
         )
         base.update({
@@ -747,8 +866,10 @@ def analyze_subflow(
     react_traces = as_prediction_rows(load_json(react_path)) if react_path else []
     categories, stats = classify_errors(predictions, test_convs, react_traces)
     sampled = sample_errors(categories, sample_limit, seed)
+    for index, row in enumerate(sampled, start=1):
+        row["case_id"] = f"{method}/{subflow}/C{index:02d}"
     analysis = call_llm(
-        subflow_prompt(subflow, method, skill_text, reference_text, stats, sampled),
+        subflow_prompt(subflow, method, skill_text, skill_excerpts, reference_text, stats, sampled),
         f"subflow {method}/{subflow}",
     )
     base.update({
@@ -857,11 +978,15 @@ def main() -> None:
         "sample_errors_per_subflow": args.sample_errors,
         "total_action_turns": sum(row.get("stats", {}).get("total_action_turns", 0) for row in evaluated),
         "total_joint_failures": sum(row.get("stats", {}).get("counts", {}).get("joint_fail", 0) for row in evaluated),
+        "total_sampled_fail_cases": sum(len(row.get("sampled_errors", [])) for row in evaluated),
         "missing_subflows": [row["subflow"] for row in missing],
     }
 
     (out_dir / "subflow_analyses.json").write_text(json.dumps(subflows, indent=2, ensure_ascii=False), encoding="utf-8")
     (out_dir / "overview.json").write_text(json.dumps(overview, indent=2, ensure_ascii=False), encoding="utf-8")
+    (out_dir / "case_skill_evidence_ledger.md").write_text(
+        render_evidence_ledger(subflows), encoding="utf-8"
+    )
 
     batches = chunks(skill_audited, args.batch_size)
     batch_results = []
