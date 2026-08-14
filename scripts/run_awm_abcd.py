@@ -6,11 +6,10 @@ Usage:
 
 What it does:
     1. Load one ABCD subflow from train/dev/test splits
-    2. Batch-train ABCDAgent with iterative workflow induction
-    3. After each batch: evaluate → induce workflows → update memory
-    4. Periodic validation on held-out set
-    5. Final evaluation on test set (all metrics)
-    6. Save all outputs to outputs/awm_abcd_{timestamp}/
+    2. Offline mode: compile one frozen workflow and memory from train data
+    3. Online mode: batch rollout → induce workflow → update memory
+    4. Final evaluation on test set (all metrics)
+    5. Save all outputs to outputs/awm_abcd_{timestamp}/
 """
 
 import json
@@ -105,6 +104,15 @@ def main():
     _parser.add_argument("--max-dev", type=int, default=None)
     _parser.add_argument("--max-test", type=int, default=None)
     _parser.add_argument(
+        "--induction-mode",
+        choices=("offline", "online"),
+        default="offline",
+        help=(
+            "offline: compile one frozen workflow from the full train split; "
+            "online: preserve legacy batch rollout and incremental updates"
+        ),
+    )
+    _parser.add_argument(
         "--reference-path",
         default=None,
         help="Optional reference.md or Trace2Skill skill directory to load",
@@ -115,6 +123,8 @@ def main():
         _parser.error("--eval-only requires --eval-from")
     if _args.eval_only and _args.resume_from:
         _parser.error("Use --eval-from with --eval-only, not --resume-from")
+    if _args.resume_from and _args.induction_mode != "online":
+        _parser.error("--resume-from is supported only with --induction-mode online")
 
     from eval_tod.abcd.data import load_abcd_data
     from eval_tod.abcd.agent import ABCDAgent
@@ -165,6 +175,7 @@ def main():
     log.info(f"Batches: {len(batches)} (batch_size={BATCH_SIZE})")
     run_config = {
         "subflow": subflow,
+        "induction_mode": _args.induction_mode,
         "max_train": _args.max_train,
         "max_dev": _args.max_dev,
         "max_test": _args.max_test,
@@ -256,7 +267,80 @@ def main():
 
     # ── Batch training loop ───────────────────────────────────
 
-    training_batches = [] if _args.eval_only else batches
+    if not _args.eval_only and _args.induction_mode == "offline":
+        from eval_tod.schemas import Prediction
+        from eval_tod.abcd.agent import _build_abcd_turn_trajectory
+
+        # Compile once from the complete, fixed train corpus. No train-time
+        # rollouts, AST feedback, or intermediate workflow updates occur.
+        demonstration_turns = []
+        offline_predictions = []
+        offline_metrics = []
+        for conv in train_convs:
+            convo_id = str(conv.get("convo_id", "?"))
+            gold_rows = _build_abcd_turn_trajectory(conv, [])
+            rows = [
+                {
+                    "convo_id": convo_id,
+                    "turn_index": row["turn_index"],
+                    "target_type": "action",
+                    "predicted_action": row["gold_action"] or "",
+                    "predicted_slots": row["gold_slots"],
+                    "prediction": "",
+                }
+                for row in gold_rows
+                if row["turn_type"] == "action"
+            ]
+            demonstration_turns.extend(rows)
+            offline_predictions.append(Prediction(
+                dialogue_id=f"abcd-{convo_id}",
+                inform_slots={}, request_slots={}, booking={}, response_text="",
+            ))
+            offline_metrics.append({"action_total": 0, "action_correct": 0})
+
+        log.info(
+            "Offline induction: compiling a frozen workflow from %d train dialogues and %d gold action turns",
+            len(train_convs), len(demonstration_turns),
+        )
+        agent.induce(
+            train_convs, offline_predictions, offline_metrics,
+            turn_results=demonstration_turns, offline_demonstrations=True,
+        )
+
+        # Freeze all train demonstrations as evidence. Unlike online AWM,
+        # exemplars are not selected by the current agent's rollout accuracy.
+        for conv in train_convs:
+            convo_id = str(conv.get("convo_id", "?"))
+            rows = [row for row in demonstration_turns if row["convo_id"] == convo_id]
+            scenario = conv.get("scenario", {})
+            structured = _build_abcd_turn_trajectory(conv, rows)
+            memory.add_dict({
+                "dialogue_id": f"abcd-{convo_id}",
+                "domains": [scenario.get("flow", "?"), scenario.get("subflow", "?")],
+                "goal": f"{scenario.get('flow', '?')}/{scenario.get('subflow', '?')}",
+                "trajectory": json.dumps(structured, ensure_ascii=False)[:4000],
+                "trajectory_turns": structured,
+            })
+
+        reference_text = "\n\n".join(
+            part for part in [
+                external_reference_text,
+                _exemplars_to_reference_text(memory, hide_labels=False),
+            ] if part
+        )
+        agent.set_reference_text(reference_text)
+        (OUT_DIR / "offline_induction_manifest.json").write_text(
+            json.dumps({
+                "protocol": "offline_frozen_train_demonstrations",
+                "train_dialogues": len(train_convs),
+                "gold_action_turns": len(demonstration_turns),
+                "workflow_lines": len(workflow),
+                "memory_exemplars": len(memory),
+            }, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    training_batches = [] if (_args.eval_only or _args.induction_mode == "offline") else batches
     for batch_idx, batch in enumerate(training_batches, start=1):
         if batch_idx < start_batch:
             continue  # skip already processed batches

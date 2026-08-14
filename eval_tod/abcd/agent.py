@@ -982,11 +982,12 @@ class ABCDAgent(AbstractTodAgent):
         predictions,
         eval_results: list[dict],
         turn_results: list[dict] | None = None,
+        offline_demonstrations: bool = False,
     ) -> str:
         """Induce workflow patterns with LLM-managed update.
 
-        Shows the LLM both the agent's generated response AND the ground-truth
-        action sequence, so it can learn what the correct action pattern is.
+        Online induction compares agent predictions against ground truth.
+        Offline induction compiles a fixed corpus of gold demonstrations.
         """
         from llm import chat
 
@@ -1014,20 +1015,54 @@ class ABCDAgent(AbstractTodAgent):
                     if str(row.get("convo_id", "")) == str(convo_id)
                 ]
                 trajectory = _format_abcd_turn_trajectory(conv, rows)
-            lines.append(
-                f"{header}\n"
-                f"- Ground Truth Actions: {gt_str}\n"
-                f"- Agent Generated (last turn): {pred.response_text[:200] if pred.response_text else '(empty)'}\n"
-                + (f"- Full Turn Trajectory:\n{trajectory}\n" if trajectory else "")
-            )
+            if offline_demonstrations:
+                lines.append(
+                    f"{header}\n"
+                    f"- Demonstration Actions: {gt_str}\n"
+                    + (f"- Full Demonstration Trajectory:\n{trajectory}\n" if trajectory else "")
+                )
+            else:
+                lines.append(
+                    f"{header}\n"
+                    f"- Ground Truth Actions: {gt_str}\n"
+                    f"- Agent Generated (last turn): {pred.response_text[:200] if pred.response_text else '(empty)'}\n"
+                    + (f"- Full Turn Trajectory:\n{trajectory}\n" if trajectory else "")
+                )
 
         existing = self.workflow.text if self.workflow else "(empty — first batch)"
 
-        prompt = (
-            "You maintain a living knowledge base of customer service workflow patterns. "
-            "Given the existing workflow and a new batch with ground-truth action sequences "
+        induction_prefix = (
+            "## Offline Induction Mode\n"
+            "You are compiling one reusable workflow from a fixed offline corpus of "
+            "completed demonstrations. Produce one frozen workflow before evaluation; "
+            "use Demonstration Actions and Full Demonstration Trajectory as the source "
+            "of truth, and do not rely on agent-generated responses in this mode.\n\n"
+            if offline_demonstrations
+            else "You maintain a living knowledge base of customer service workflow patterns. "
+        )
+        induction_task = (
+            "Synthesize one complete reusable workflow from the fixed demonstrations. "
+            "Cover state-dependent branches and slot-selection conditions; this workflow "
+            "will be frozen for evaluation.\n\n"
+            if offline_demonstrations
+            else "Given the existing workflow and a new batch with ground-truth action sequences "
             "and agent responses, produce the UPDATED workflow.\n\n"
-            "## How to Use the Data\n"
+        )
+        output_heading = (
+            "## Output: Frozen Workflow\n"
+            if offline_demonstrations
+            else "## Output: Updated Workflow\n"
+        )
+        output_instruction = (
+            "Output the COMPLETE frozen workflow (not a diff). Use this format:\n\n"
+            if offline_demonstrations
+            else "Output the COMPLETE updated workflow (not a diff). Use this format:\n\n"
+        )
+
+        prompt = (
+            induction_prefix
+            + induction_task
+            + "## How to Use the Data\n"
             "- **Ground Truth Actions**: the CORRECT sequence of system actions for this dialogue. "
             "Use these to learn what the proper workflow should be.\n"
             "- **Agent Generated**: what the agent actually said. Compare against ground truth "
@@ -1057,11 +1092,11 @@ class ABCDAgent(AbstractTodAgent):
             "placeholders, or key=value strings.\n"
             "- Do not hard-code private names, emails, phones, order IDs, or "
             "other instance values into a generalized workflow.\n\n"
-            + "\n".join(lines[:60])
+            + "\n".join(lines if offline_demonstrations else lines[:60])
             + "\n\n## Existing Workflow\n"
             + existing
-            + "\n\n## Output: Updated Workflow\n"
-            + "Output the COMPLETE updated workflow (not a diff). Use this format:\n\n"
+            + "\n\n" + output_heading
+            + output_instruction
             + (
                 "### [Flow/Subflow] - [Pattern Name]\n"
                 if self.expose_scenario_labels
