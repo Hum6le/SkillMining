@@ -1330,6 +1330,46 @@ def _parse_action_response(raw: str) -> tuple[str, list[str], str]:
     return action, slots, response
 
 
+def _action_key(action: str) -> str:
+    """Normalize harmless action spelling differences for vocabulary lookup."""
+    return re.sub(r"[^a-z0-9]+", "-", str(action).lower()).strip("-")
+
+
+def build_action_vocab(conversations: list[dict]) -> set[str]:
+    """Build the canonical action library from ABCD gold annotations."""
+    vocab: set[str] = set()
+    for conversation in conversations:
+        for turn in conversation.get("delexed", []):
+            targets = turn.get("targets", [])
+            if len(targets) >= 3 and targets[1] == "take_action" and targets[2]:
+                vocab.add(str(targets[2]).strip())
+    return vocab
+
+
+def normalize_action_name(action: str, action_vocab: set[str]) -> str:
+    """Map a model action string to the closest canonical ABCD action.
+
+    Handles prefixes such as ``manage:pull-up-account`` and harmless
+    spelling differences. Unknown actions are preserved for diagnostics.
+    """
+    raw = str(action or "").strip()
+    if not raw or not action_vocab:
+        return raw
+
+    lookup = {_action_key(item): item for item in action_vocab}
+    candidates = [raw]
+    if ":" in raw:
+        candidates.extend([raw.split(":", 1)[1].strip(), raw.rsplit(":", 1)[-1].strip()])
+    candidates.extend([raw.replace("_", "-"), raw.replace(" ", "-")])
+    for candidate in candidates:
+        if candidate in action_vocab:
+            return candidate
+        canonical = lookup.get(_action_key(candidate))
+        if canonical:
+            return canonical
+    return raw
+
+
 def turn_results_to_abcd_predictions(
     turn_results: list[dict],
     conversations: list[dict],
@@ -1340,6 +1380,7 @@ def turn_results_to_abcd_predictions(
     ABCDPrediction objects that ``evaluate_abcd()`` expects.
     """
     from .schemas import ABCDPrediction, ABCDTurnPrediction
+    action_vocab = build_action_vocab(conversations)
 
     # Index conversations by convo_id
     conv_index: dict[str, dict] = {}
@@ -1376,7 +1417,7 @@ def turn_results_to_abcd_predictions(
         agent_slots: dict[int, list[str]] = {}
         direct_action_preds: dict[int, tuple[str, list[str]]] = {}
         for r in sorted(turns, key=lambda x: x["turn_index"]):
-            pa = r.get("predicted_action", "")
+            pa = normalize_action_name(r.get("predicted_action", ""), action_vocab)
             ps = r.get("predicted_slots", [])
             if pa:
                 idx = int(r["turn_index"])
