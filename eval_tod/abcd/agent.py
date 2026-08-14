@@ -198,9 +198,25 @@ def _parse_reference_sections(reference_text: str) -> list[dict[str, str]]:
     return sections
 
 
-def _canonical_reference_title(title: str) -> str:
+def _canonical_reference_title(
+    title: str, action_names: set[str] | None = None,
+) -> str:
     """Collapse legacy slot-specific reference titles to an action name."""
-    return title.split(":", 1)[0].strip()
+    parts = [part.strip() for part in str(title).split(":") if part.strip()]
+    if not parts:
+        return ""
+    # Current references use ``action:slot-values``.  Legacy HG references
+    # may include the graph node role: ``role:action`` or
+    # ``role:action:slot-values``.  Use the official vocabulary when the
+    # two forms are ambiguous.
+    if len(parts) >= 3:
+        return parts[1]
+    if len(parts) == 2 and action_names:
+        if parts[0] in action_names:
+            return parts[0]
+        if parts[1] in action_names:
+            return parts[1]
+    return parts[0]
 
 
 def _get_original_turn(
@@ -739,7 +755,9 @@ class ABCDAgent(AbstractTodAgent):
         for section in self.reference_sections:
             title = section["title"]
             body = section["body"]
-            canonical_title = _canonical_reference_title(title)
+            canonical_title = _canonical_reference_title(
+                title, set(self.action_schema.get("actions", set()))
+            )
             title_tokens = _tokenize_for_lookup(title.replace("-", " "))
             canonical_tokens = _tokenize_for_lookup(canonical_title.replace("-", " "))
             body_tokens = _tokenize_for_lookup(body[:1200])
@@ -762,7 +780,9 @@ class ABCDAgent(AbstractTodAgent):
             seen_actions: set[str] = set()
             scored = []
             for section in self.reference_sections:
-                canonical_title = _canonical_reference_title(section["title"])
+                canonical_title = _canonical_reference_title(
+                    section["title"], set(self.action_schema.get("actions", set()))
+                )
                 if canonical_title in seen_actions:
                     continue
                 seen_actions.add(canonical_title)
@@ -770,7 +790,13 @@ class ABCDAgent(AbstractTodAgent):
                 if len(scored) >= requested_top_k:
                     break
 
-        scored.sort(key=lambda item: (-item[0], _canonical_reference_title(item[1]["title"]), item[1]["title"]))
+        scored.sort(key=lambda item: (
+            -item[0],
+            _canonical_reference_title(
+                item[1]["title"], set(self.action_schema.get("actions", set()))
+            ),
+            item[1]["title"],
+        ))
         parts = [
             "## Reference Lookup Results",
             "Use these mined dialogue snippets as examples; do not copy private slot values unless they match the current scenario.",
@@ -778,7 +804,9 @@ class ABCDAgent(AbstractTodAgent):
         used_chars = sum(len(p) for p in parts)
         selected_sections: list[dict[str, Any]] = []
         for _, section in scored[:requested_top_k]:
-            display_title = _canonical_reference_title(section["title"])
+            display_title = _canonical_reference_title(
+                section["title"], set(self.action_schema.get("actions", set()))
+            )
             snippet = section["body"].strip()
             if len(snippet) > 600:
                 snippet = snippet[:600].rstrip() + "\n..."

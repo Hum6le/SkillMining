@@ -31,14 +31,29 @@ def _slug(value: Any) -> str:
 def canonical_action_name(value: Any, vocabulary: set[str] | None = None) -> tuple[str, list[str]]:
     """Return canonical action and any legacy action suffix slot."""
     raw = str(value or "").strip().lower()
-    raw_base, raw_suffix = (raw.split(":", 1) + [""])[:2] if ":" in raw else (raw, "")
-    action = _slug(raw_base)
+    parts = [part.strip() for part in raw.split(":") if part.strip()]
+    if not parts:
+        return "", []
+
+    slug_parts = [_slug(part) for part in parts]
+    action_index = 0
+    if vocabulary:
+        # Accept both the current ``action:slot-values`` format and legacy
+        # HG node titles such as ``role:action:slot-values``.  Prefer the
+        # segment that is in the official ABCD action vocabulary.
+        for index, candidate in enumerate(slug_parts):
+            if candidate in vocabulary:
+                action_index = index
+                break
+
+    action = slug_parts[action_index]
     if action in {"", "none", "null", "no-action", "no_action"}:
         return "", []
     suffix_slots: list[str] = []
-    if raw_suffix:
-        if action and raw_suffix and (vocabulary is None or action in vocabulary):
-            suffix_slots.append(raw_suffix.strip())
+    if action_index == 0 and len(parts) > 1:
+        suffix_slots.append(":".join(parts[1:]).strip())
+    elif action_index > 0 and len(parts) > action_index + 1:
+        suffix_slots.append(":".join(parts[action_index + 1:]).strip())
     aliases = {
         "pull-up-account-information": "pull-up-account",
         "verify-identity-information": "verify-identity",
