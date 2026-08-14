@@ -12,6 +12,7 @@ PYTHON_BIN="python"
 CONDA_ENV="skillmining310"
 HF_MIRROR="https://hf-mirror.com"
 MANIFEST=""
+SKILLS_ROOT=""
 PREDICTIONS_ROOT=""
 TEST_ROOT="$ROOT_DIR/data/eval/abcd/splits"
 OUTPUT_DIR=""
@@ -24,10 +25,11 @@ SUBFLOWS=()
 
 usage() {
     cat <<'EOF'
-Usage: bash scripts/run_full_skill_error_analysis.sh --manifest PATH [options]
+Usage: bash scripts/run_full_skill_error_analysis.sh (--manifest PATH | --skills-root PATH) [options]
 
 Required:
   --manifest PATH           Text manifest emitted by run_full_abcd_experiments.sh
+  --skills-root PATH        Root containing <subflow>/skill.md; use this when no manifest exists
 
 Optional:
   --predictions-root PATH   Separate prediction root; normally unnecessary
@@ -48,10 +50,11 @@ EOF
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --manifest|--predictions-root|--test-root|--output-dir|--batch-size|--sample-errors|--seed|--expected-subflows|--methods|--subflows|--python|--conda-env|--hf-mirror)
+        --manifest|--skills-root|--predictions-root|--test-root|--output-dir|--batch-size|--sample-errors|--seed|--expected-subflows|--methods|--subflows|--python|--conda-env|--hf-mirror)
             [[ $# -ge 2 ]] || { echo "Missing value for $1" >&2; exit 2; }
             case "$1" in
                 --manifest) MANIFEST="$2" ;;
+                --skills-root) SKILLS_ROOT="$2" ;;
                 --predictions-root) PREDICTIONS_ROOT="$2" ;;
                 --test-root) TEST_ROOT="$2" ;;
                 --output-dir) OUTPUT_DIR="$2" ;;
@@ -79,12 +82,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ -z "$MANIFEST" ]]; then
-    echo "--manifest is required" >&2
+if [[ -z "$MANIFEST" && -z "$SKILLS_ROOT" ]]; then
+    echo "one of --manifest or --skills-root is required" >&2
     usage >&2
     exit 2
 fi
-if [[ ! -f "$MANIFEST" ]]; then
+if [[ -n "$MANIFEST" && ! -f "$MANIFEST" ]]; then
     echo "Manifest not found: $MANIFEST" >&2
     exit 1
 fi
@@ -140,7 +143,8 @@ fi
 mkdir -p "$OUTPUT_DIR"
 
 echo "Skill error analysis"
-echo "Manifest:          $MANIFEST"
+echo "Manifest:          ${MANIFEST:-<none>}"
+echo "Skills root:       ${SKILLS_ROOT:-<none>}"
 echo "Test root:         $TEST_ROOT"
 echo "Output directory:  $OUTPUT_DIR"
 echo "Environment:       $CONDA_ENV"
@@ -151,13 +155,18 @@ echo "Sample errors:     $SAMPLE_ERRORS"
 echo "Expected subflows: $EXPECTED_SUBFLOWS"
 
 CMD=("$PYTHON_BIN" scripts/error_analysis_full_skills.py
-    --manifest "$MANIFEST"
     --test-root "$TEST_ROOT"
     --output-dir "$OUTPUT_DIR"
     --batch-size "$BATCH_SIZE"
     --sample-errors "$SAMPLE_ERRORS"
     --seed "$SEED"
     --expected-subflows "$EXPECTED_SUBFLOWS")
+
+if [[ -n "$MANIFEST" ]]; then
+    CMD+=(--manifest "$MANIFEST")
+else
+    CMD+=(--skills-root "$SKILLS_ROOT")
+fi
 
 if [[ -n "$PREDICTIONS_ROOT" ]]; then
     CMD+=(--predictions-root "$PREDICTIONS_ROOT")
