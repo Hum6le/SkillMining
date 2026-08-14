@@ -20,6 +20,7 @@ from eval_tod.abcd.agent import (
     build_action_vocab,
     turn_results_to_abcd_predictions,
 )
+from eval_tod.abcd.action_schema import canonicalize_prediction, load_action_schema
 from eval_tod.abcd.data import extract_ground_truth
 from eval_tod.abcd.metrics import evaluate_abcd
 
@@ -80,13 +81,20 @@ def _normalize_rows(
     parsed_from_raw = 0
     changed = 0
     nonempty = 0
+    slots_recovered_from_react = 0
+    slots_changed = 0
     original_actions: dict[str, int] = {}
     normalized_actions: dict[str, int] = {}
     for row in rows:
         action = str(row.get("predicted_action") or "").strip()
         slots = row.get("predicted_slots")
+        original_slots = [str(value) for value in (slots or [])]
         raw_action = ""
-        react_key = (str(row.get("convo_id") or ""), int(row.get("turn_index", -1)))
+        try:
+            turn_index = int(row.get("turn_index", -1))
+        except (TypeError, ValueError):
+            turn_index = -1
+        react_key = (str(row.get("convo_id") or ""), turn_index)
         raw_text = (react_outputs or {}).get(react_key) or str(row.get("prediction") or "")
         if raw_text:
             raw_action, parsed_slots, response = _parse_action_response(raw_text)
@@ -98,12 +106,25 @@ def _normalize_rows(
                 action = raw_action
             if not react_outputs or react_key not in react_outputs:
                 row["prediction"] = response
-            if slots in (None, "", []):
+            if react_key in (react_outputs or {}) and raw_action:
+                # The raw ReAct generation is the authoritative source for
+                # both action and slots; the stored parsed fields may be from
+                # the buggy legacy parser.
+                slots = parsed_slots
+                slots_recovered_from_react += 1
+            elif slots in (None, "", []):
                 slots = parsed_slots
             if raw_action:
                 parsed_from_raw += 1
 
-        normalized = normalize_action_name(action, vocab)
+        schema = load_action_schema()
+        normalized, canonical_slots, _ = canonicalize_prediction(
+            action, slots, schema
+        )
+        normalized = normalize_action_name(normalized, vocab)
+        if canonical_slots != [str(value) for value in (slots or [])]:
+            slots_changed += 1
+        slots = canonical_slots
         if action:
             original_actions[action] = original_actions.get(action, 0) + 1
         if action and normalized != action:
@@ -120,6 +141,8 @@ def _normalize_rows(
         "parsed_from_raw_prediction": parsed_from_raw,
         "action_names_normalized": changed,
         "nonempty_actions": nonempty,
+        "slots_recovered_from_react": slots_recovered_from_react,
+        "slot_lists_canonicalized": slots_changed,
         "original_action_counts": dict(sorted(original_actions.items())),
         "normalized_action_counts": dict(sorted(normalized_actions.items())),
     }
