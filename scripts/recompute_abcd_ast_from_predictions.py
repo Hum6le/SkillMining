@@ -45,26 +45,72 @@ def _load_rows(path: str | Path) -> list[dict[str, Any]]:
     return [dict(row) for row in data if isinstance(row, dict)]
 
 
-def _normalize_rows(rows: list[dict[str, Any]], vocab: set[str]) -> dict[str, Any]:
+def _load_react_outputs(path: str | Path) -> dict[tuple[str, int], str]:
+    """Extract raw LLM outputs from saved ReAct traces."""
+    data = _read(path)
+    if not isinstance(data, list):
+        return {}
+    outputs: dict[tuple[str, int], str] = {}
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        cid = str(item.get("convo_id") or item.get("conversation_id") or "")
+        try:
+            turn_index = int(item.get("turn_index"))
+        except (TypeError, ValueError):
+            continue
+        trace = item.get("react_trace") or []
+        raw = ""
+        if isinstance(trace, list):
+            for step in trace:
+                if isinstance(step, dict) and step.get("action") == "llm_generate":
+                    raw = str(step.get("observation") or "").strip()
+        if not raw:
+            raw = str(item.get("raw_output") or "").strip()
+        if raw:
+            outputs[(cid, turn_index)] = raw
+    return outputs
+
+
+def _normalize_rows(
+    rows: list[dict[str, Any]],
+    vocab: set[str],
+    react_outputs: dict[tuple[str, int], str] | None = None,
+) -> dict[str, Any]:
     parsed_from_raw = 0
     changed = 0
     nonempty = 0
+    original_actions: dict[str, int] = {}
+    normalized_actions: dict[str, int] = {}
     for row in rows:
         action = str(row.get("predicted_action") or "").strip()
         slots = row.get("predicted_slots")
-        if not action and row.get("prediction"):
-            action, parsed_slots, response = _parse_action_response(
-                str(row["prediction"])
-            )
-            row["prediction"] = response
+        raw_action = ""
+        react_key = (str(row.get("convo_id") or ""), int(row.get("turn_index", -1)))
+        raw_text = (react_outputs or {}).get(react_key) or str(row.get("prediction") or "")
+        if raw_text:
+            raw_action, parsed_slots, response = _parse_action_response(raw_text)
+            # A legacy runner may have stored a truncated parsed action while
+            # retaining the full structured model output.
+            if raw_action and (not action or ":" in raw_action):
+                action = raw_action
+            if not action:
+                action = raw_action
+            if not react_outputs or react_key not in react_outputs:
+                row["prediction"] = response
             if slots in (None, "", []):
                 slots = parsed_slots
-            parsed_from_raw += 1
+            if raw_action:
+                parsed_from_raw += 1
 
         normalized = normalize_action_name(action, vocab)
+        if action:
+            original_actions[action] = original_actions.get(action, 0) + 1
         if action and normalized != action:
             changed += 1
         row["predicted_action"] = normalized
+        if normalized:
+            normalized_actions[normalized] = normalized_actions.get(normalized, 0) + 1
         row["predicted_slots"] = list(slots or [])
         if normalized:
             nonempty += 1
@@ -74,6 +120,8 @@ def _normalize_rows(rows: list[dict[str, Any]], vocab: set[str]) -> dict[str, An
         "parsed_from_raw_prediction": parsed_from_raw,
         "action_names_normalized": changed,
         "nonempty_actions": nonempty,
+        "original_action_counts": dict(sorted(original_actions.items())),
+        "normalized_action_counts": dict(sorted(normalized_actions.items())),
     }
 
 
@@ -96,13 +144,20 @@ def _serialize(predictions: list[Any]) -> list[dict[str, Any]]:
     ]
 
 
-def recompute_one(test_data_path: Path, preds_path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def recompute_one(
+    test_data_path: Path,
+    preds_path: Path,
+    react_traces_path: Path | None = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     conversations = _read(test_data_path)
     if not isinstance(conversations, list):
         raise ValueError(f"Test data must contain a JSON list: {test_data_path}")
     rows = _load_rows(preds_path)
     vocab = build_action_vocab(conversations)
-    normalization = _normalize_rows(rows, vocab)
+    react_outputs = _load_react_outputs(react_traces_path) if react_traces_path else {}
+    normalization = _normalize_rows(rows, vocab, react_outputs)
+    normalization["react_trace_file"] = str(react_traces_path.resolve()) if react_traces_path else None
+    normalization["react_raw_outputs"] = len(react_outputs)
     predictions = turn_results_to_abcd_predictions(rows, conversations)
     ground_truth = [extract_ground_truth(conv) for conv in conversations]
     result = evaluate_abcd(ground_truth, predictions)
@@ -129,7 +184,22 @@ def recompute_one(test_data_path: Path, preds_path: Path) -> tuple[dict[str, Any
     return payload, _serialize(predictions)
 
 
-def recompute_all(run_dir: Path, splits_dir: Path, pred_name: str) -> dict[str, Any]:
+def _infer_react_path(preds_path: Path) -> Path | None:
+    candidates = [
+        preds_path.with_name(preds_path.name.replace("_predictions.json", "_react_traces.json")),
+        preds_path.with_name(preds_path.name.replace("predictions.json", "react_traces.json")),
+        preds_path.with_name("test_react_traces.json"),
+        preds_path.with_name("mined_react_traces.json"),
+    ]
+    return next((path for path in candidates if path.exists()), None)
+
+
+def recompute_all(
+    run_dir: Path,
+    splits_dir: Path,
+    pred_name: str,
+    react_name: str | None = None,
+) -> dict[str, Any]:
     """Recompute every subflow below a graph-mining output directory."""
     records: list[dict[str, Any]] = []
     missing: list[str] = []
@@ -139,7 +209,8 @@ def recompute_all(run_dir: Path, splits_dir: Path, pred_name: str) -> dict[str, 
         if not test_data.exists():
             missing.append(subflow)
             continue
-        payload, _ = recompute_one(test_data, preds_path)
+        react_path = (preds_path.parent / react_name) if react_name else _infer_react_path(preds_path)
+        payload, _ = recompute_one(test_data, preds_path, react_path if react_path and react_path.exists() else None)
         records.append({
             "subflow": subflow,
             "predictions": str(preds_path.resolve()),
@@ -182,16 +253,18 @@ def main() -> None:
     parser.add_argument("--preds", default=None)
     parser.add_argument("--output", required=True)
     parser.add_argument("--corrected-preds-output", default=None)
+    parser.add_argument("--react-traces", default=None, help="Saved ReAct traces containing raw llm_generate observations")
     parser.add_argument("--all", action="store_true", help="Recompute every subflow below --run-dir")
     parser.add_argument("--run-dir", default=None, help="Graph-mining output root containing one directory per subflow")
     parser.add_argument("--splits-dir", default="data/eval/abcd/splits")
     parser.add_argument("--pred-name", default="mined_predictions.json")
+    parser.add_argument("--react-name", default=None, help="ReAct trace filename used for every subflow in --all mode")
     args = parser.parse_args()
 
     if args.all:
         if not args.run_dir:
             parser.error("--all requires --run-dir")
-        payload = recompute_all(Path(args.run_dir), Path(args.splits_dir), args.pred_name)
+        payload = recompute_all(Path(args.run_dir), Path(args.splits_dir), args.pred_name, args.react_name)
         output = Path(args.output)
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -201,7 +274,10 @@ def main() -> None:
     if not args.test_data or not args.preds:
         parser.error("single-subflow mode requires --test-data and --preds")
 
-    payload, corrected_predictions = recompute_one(Path(args.test_data), Path(args.preds))
+    react_path = Path(args.react_traces) if args.react_traces else _infer_react_path(Path(args.preds))
+    payload, corrected_predictions = recompute_one(
+        Path(args.test_data), Path(args.preds), react_path if react_path and react_path.exists() else None
+    )
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
