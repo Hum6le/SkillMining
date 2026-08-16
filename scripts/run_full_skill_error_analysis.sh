@@ -191,5 +191,6 @@ echo
 echo "===== Skill error analysis finished ====="
 echo "  Overview:       $OUTPUT_DIR/overview.json"
 echo "  Subflow audits: $OUTPUT_DIR/subflow_analyses.json"
+echo "  Evidence ledger: $OUTPUT_DIR/case_skill_evidence_ledger.md"
 echo "  Batch reports:  $OUTPUT_DIR/batch_summaries.json"
 echo "  Final report:   $OUTPUT_DIR/final_report.md"
