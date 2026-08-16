@@ -45,8 +45,11 @@ parse_failures/
 /ExpeL/
 /workdoc/
 
-# Paper PDF (local only)
-/ASI.pdf
+# Papers / PDFs (local only)
+*.pdf
+
+# Root-level generated analysis reports (local only)
+/analysis_*.md
 
 # External sandbox repo (owned by another user/tool, not part of this project)
 /agent-skill-induction/
