@@ -408,7 +408,8 @@ python scripts/aggregate_subflow_results.py \
 详细的共享模块、训练流程、输出核验和指标定义见
 [`EXPERIMENT_PIPELINE_OVERVIEW.md`](EXPERIMENT_PIPELINE_OVERVIEW.md)。
 
-`scripts/run_subflow_eval.py` now supports two mining methods.  The default
+`scripts/run_subflow_eval.py` supports three mining methods. The default
+`legacy` method is the original hypergraph vertex-cover baseline. The
 `sequence` method canonicalizes action nodes by removing instance-specific slot
 values, then mines a weighted action-sequence workflow:
 
@@ -432,6 +433,21 @@ The original hypergraph vertex-cover method is still available:
 ```bash
 python scripts/run_subflow_eval.py --subflow recover_password --mining-method legacy
 ```
+
+The `backbone` method retains every observed canonical action. It learns a
+rooted directed backbone for the primary compilation order, then keeps a small
+set of evidence-backed outgoing branch/retry transitions per action:
+
+```bash
+python scripts/run_subflow_eval.py --subflow recover_password \
+  --mining-method backbone \
+  --backbone-max-outgoing-edges 3 \
+  --backbone-min-branch-support 2
+```
+
+Its `subgraph.json` stores the all-action graph, `backbone` tree,
+`local_transitions`, residual branch/retry edges, and compact observed-state
+conditions used by the skill compiler.
 
 Useful sequence-mining knobs:
 

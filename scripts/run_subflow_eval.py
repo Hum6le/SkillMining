@@ -207,6 +207,49 @@ def mine_subflow_skill_sequence(
     }
 
 
+def mine_subflow_skill_backbone(
+    subflow: str,
+    train_convs: list,
+    max_outgoing_edges: int = 3,
+    min_branch_support: int = 2,
+    artifact_dir: Path | None = None,
+) -> dict:
+    """Mine an all-action arborescence plus compact local transitions."""
+    from skill_mining.backbone_workflow_mining import mine_backbone_workflow
+    from skill_mining.skill_writer import (
+        _find_operator_snippets, build_reference_md,
+        build_skill_md_from_backbone,
+    )
+
+    mined = mine_backbone_workflow(
+        subflow,
+        train_convs,
+        max_outgoing_edges=max_outgoing_edges,
+        min_branch_support=min_branch_support,
+    )
+    operators = mined["skill_info"]["selected_vertices"]
+    op_snippets = _find_operator_snippets(train_convs, subflow, operators)
+    reference_md = build_reference_md(subflow, op_snippets, max_snippets_per_op=5)
+
+    if artifact_dir is not None:
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        (artifact_dir / "reference.md").write_text(reference_md, encoding="utf-8")
+        (artifact_dir / "subgraph.json").write_text(
+            json.dumps(mined["subgraph"], indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        (artifact_dir / "operator_results.json").write_text(
+            json.dumps(mined["operator_results"], indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    log.info("  Compiling backbone skill.md via LLM...")
+    skill_md = build_skill_md_from_backbone(
+        subflow, mined["subgraph"], op_snippets, use_llm=True,
+    )
+    return {**mined, "reference_md": reference_md, "skill_md": skill_md}
+
+
 def evaluate_agent_on_subflow(
     agent, test_convs: list, label: str, subflow: str = "",
     save_dir: Path | None = None,
@@ -358,9 +401,13 @@ def main():
                         help="Number of reference.md operator sections to retrieve per turn")
     parser.add_argument("--reference-max-chars", type=int, default=1800,
                         help="Max characters of retrieved reference snippets injected per turn")
-    parser.add_argument("--mining-method", choices=["sequence", "legacy"],
+    parser.add_argument("--mining-method", choices=["backbone", "sequence", "legacy"],
                         default="legacy",
-                        help="Skill mining method (default: legacy HG vertex cover; use sequence to enable sequence mining)")
+                        help="Skill mining method (default: legacy HG vertex cover; backbone retains all actions)")
+    parser.add_argument("--backbone-max-outgoing-edges", type=int, default=3,
+                        help="Max retained outgoing transitions per action for backbone mining")
+    parser.add_argument("--backbone-min-branch-support", type=int, default=2,
+                        help="Min support for non-backbone branch/retry transitions")
     parser.add_argument("--sequence-min-edge-support", type=int, default=2,
                         help="Min transition support for sequence mining")
     parser.add_argument("--sequence-min-edge-ratio", type=float, default=0.1,
@@ -432,7 +479,15 @@ def main():
                     reference_text = sf_ref.read_text(encoding="utf-8")
             skill_info = {"selected_vertices": [], "coverage_pct": 0, "num_sessions": 0}
         else:
-            if args.mining_method == "sequence":
+            if args.mining_method == "backbone":
+                mined = mine_subflow_skill_backbone(
+                    subflow,
+                    train_convs,
+                    max_outgoing_edges=args.backbone_max_outgoing_edges,
+                    min_branch_support=args.backbone_min_branch_support,
+                    artifact_dir=sf_out,
+                )
+            elif args.mining_method == "sequence":
                 mined = mine_subflow_skill_sequence(
                     subflow,
                     train_convs,

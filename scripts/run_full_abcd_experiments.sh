@@ -38,7 +38,7 @@ Options:
   --method NAME              all, awm, expel, trace2skill, or graph (default: all)
   --subflow NAME             Run one subflow instead of the complete split list
   --min-sessions N           Graph Mining minimum train sessions (default: 0)
-  --graph-mining-method NAME legacy or sequence (default: legacy HG vertex cover)
+  --graph-mining-method NAME legacy, sequence, or backbone (default: legacy HG vertex cover)
   --with-graph-seed         Also run the empty-workflow HG seed baseline
   --evolution-batch-size N   Trace2Skill outer batch size (default: 25)
   --stop-on-error            Stop at the first failed subflow
@@ -110,7 +110,7 @@ case "$METHOD" in
 esac
 
 case "$GRAPH_MINING_METHOD" in
-    legacy|sequence) ;;
+    legacy|sequence|backbone) ;;
     *)
         echo "Invalid --graph-mining-method: $GRAPH_MINING_METHOD" >&2
         exit 2

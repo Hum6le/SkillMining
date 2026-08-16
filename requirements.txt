@@ -11,6 +11,7 @@ tiktoken>=0.5           # Token counting
 # ── Skill Evolution ───────────────────────────────────────
 tqdm>=4.60              # Progress bars in MAP/REDUCE phases
 diskcache>=5.0          # LLM response cache (reduces duplicate API calls)
+networkx>=3.0           # Directed action-backbone arborescence mining
 
 # ── Optional but recommended ─────────────────────────────
 python-dotenv>=1.0      # Load API keys from .env file

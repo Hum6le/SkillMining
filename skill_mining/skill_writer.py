@@ -243,6 +243,180 @@ def build_skill_md_from_subgraph(
     )
 
 
+def build_skill_md_from_backbone(
+    subflow: str,
+    subgraph: dict,
+    op_snippets: Dict[str, list[dict]],
+    use_llm: bool = True,
+) -> str:
+    """Compile a compact skill from an all-action backbone artifact.
+
+    The directed backbone establishes a stable main-path order.  Local
+    transitions retain a bounded number of evidence-backed alternatives per
+    action, so the compiler does not have to reconstruct branch structure from
+    a large global edge list.
+    """
+    if use_llm:
+        return _compile_skill_with_retry(
+            _build_backbone_skill_prompt(subflow, subgraph, op_snippets), subflow
+        )
+    return _build_skill_md_from_backbone_fallback(subflow, subgraph)
+
+
+def _format_observed_condition(condition: dict[str, Any]) -> str:
+    if condition.get("kind") == "session_entry":
+        return "at session entry"
+    facts: list[str] = []
+    if condition.get("account_selected"):
+        facts.append("an account has already been selected")
+    count = condition.get("min_credential_count")
+    if isinstance(count, int) and count > 0:
+        facts.append(f"at least {count} credential type(s) are observed")
+    types = condition.get("common_credential_types") or []
+    if types:
+        facts.append("observed credentials include " + ", ".join(types))
+    return "; ".join(facts) if facts else "when this transition is observed in similar sessions"
+
+
+def _build_backbone_skill_prompt(
+    subflow: str,
+    subgraph: dict,
+    op_snippets: Dict[str, list[dict]],
+) -> str:
+    nodes = {node["id"]: node for node in subgraph.get("nodes", [])}
+    backbone = subgraph.get("backbone", {})
+    main_path = backbone.get("main_path", [])
+    order = backbone.get("compilation_order", [])
+    local = subgraph.get("local_transitions", {})
+
+    allowed_actions = [nodes[node_id]["label"] for node_id in order if node_id in nodes]
+    main_labels = [nodes[node_id]["label"] for node_id in main_path if node_id in nodes]
+    action_blocks: list[str] = []
+    for node_id in order:
+        node = nodes.get(node_id)
+        if not node:
+            continue
+        transitions = local.get(node_id, [])
+        transition_lines = []
+        for edge in transitions:
+            target = nodes.get(edge["target"], {"label": _short_label(edge["target"])})
+            transition_lines.append(
+                f"- {node['label']} -> {target['label']} "
+                f"[{edge['kind']}; support={edge['support']}; "
+                f"P={edge['probability']}; observed state: "
+                f"{_format_observed_condition(edge.get('condition', {}))}]"
+            )
+        slots = node.get("observed_slot_counts", [])
+        action_blocks.append(
+            f"### {node['label']}\n"
+            f"Observed slot counts: {slots or [0]}\n"
+            f"Transitions:\n" + ("\n".join(transition_lines) if transition_lines else "- No retained outgoing transition.")
+        )
+
+    evidence_blocks: list[str] = []
+    for node_id in order:
+        snippets = op_snippets.get(node_id, [])
+        if snippets:
+            evidence_blocks.append(
+                f"**{nodes.get(node_id, {}).get('label', node_id)}**\n"
+                f"```text\n{snippets[0]['snippet_text'][:280]}\n```"
+            )
+
+    return f"""You are compiling a compact, evidence-grounded customer-service skill.
+
+## Contract
+- Allowed actions, and only allowed actions: {', '.join(allowed_actions)}
+- The Main Path MUST follow this backbone order exactly: {' -> '.join(main_labels) or '(no multi-step path)'}
+- For each action, use only its listed local transitions. Do not add actions,
+  transitions, database outcomes, or policy requirements absent from evidence.
+- A transition condition is an observed state pattern, not a universal business
+  rule. Phrase it conservatively (for example, "when an account is already
+  selected and the needed credentials are available").
+- Slots must be REAL values grounded in the current dialogue state. Never put
+  field names, placeholders, or example values into an action slot.
+- Be concise: one short main path and at most one short transition rule per
+  retained outgoing edge. Do not repeat the global workflow under every node.
+
+## Skill
+Skill ID: {subflow}
+Sessions: {subgraph.get('n_sessions', 0)}
+All actions are retained; the backbone only determines the primary order.
+
+## Main Backbone
+{' -> '.join(main_labels) or '(single-action skill)'}
+
+## Per-Action Local Transition Evidence
+{chr(10).join(action_blocks) if action_blocks else '(none)'}
+
+## Representative Dialogue Evidence
+{chr(10).join(evidence_blocks) if evidence_blocks else '(see reference.md)'}
+
+## Required Output
+Write only this Markdown document:
+
+```markdown
+# Skill: {subflow}
+
+## Intent
+[One short evidence-grounded sentence.]
+
+## Workflow
+### Main Path
+1. `action-a` -> `action-b` -> ...
+
+### Action Rules
+#### `action-a`
+- When [observed condition], transition to `action-b`.
+
+## Slot Discipline
+- Use only real values available in the current dialogue state.
+- Preserve the action's observed slot order and do not emit schema labels.
+
+## Reference
+- `action-a`: see `reference.md`.
+```
+"""
+
+
+def _build_skill_md_from_backbone_fallback(subflow: str, subgraph: dict) -> str:
+    """Deterministic compact rendering used by tests or offline inspection."""
+    nodes = {node["id"]: node for node in subgraph.get("nodes", [])}
+    backbone = subgraph.get("backbone", {})
+    main_path = backbone.get("main_path", [])
+    order = backbone.get("compilation_order", [])
+    local = subgraph.get("local_transitions", {})
+    lines = [f"# Skill: {subflow}", "", "## Intent", "", f"Handle `{subflow}` requests using the observed action workflow.", "", "## Workflow", "", "### Main Path", ""]
+    labels = [nodes[node_id]["label"] for node_id in main_path if node_id in nodes]
+    lines.append(" -> ".join(f"`{label}`" for label in labels) if labels else "Use the retained action rules below.")
+    lines.extend(["", "### Action Rules", ""])
+    for node_id in order:
+        node = nodes.get(node_id)
+        if not node:
+            continue
+        lines.extend([f"#### `{node['label']}`", ""])
+        transitions = local.get(node_id, [])
+        if not transitions:
+            lines.append("- No retained outgoing transition.")
+        for edge in transitions:
+            target = nodes.get(edge["target"], {"label": _short_label(edge["target"])})
+            lines.append(
+                f"- [{edge['kind']}] When {_format_observed_condition(edge.get('condition', {}))}, "
+                f"transition to `{target['label']}`."
+            )
+        lines.append("")
+    lines.extend([
+        "## Slot Discipline", "",
+        "- Use only real values available in the current dialogue state.",
+        "- Do not emit schema labels or placeholders as slot values.",
+        "", "## Reference", "",
+    ])
+    for node_id in order:
+        node = nodes.get(node_id)
+        if node:
+            lines.append(f"- `{node['label']}`: see `reference.md`.")
+    return "\n".join(lines)
+
+
 def _compile_skill_with_retry(prompt: str, subflow: str) -> str:
     """Compile skill markdown; retry failures instead of silently falling back."""
     from llm import chat
