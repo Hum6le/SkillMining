@@ -212,13 +212,16 @@ def mine_subflow_skill_backbone(
     train_convs: list,
     max_outgoing_edges: int = 3,
     min_branch_support: int = 2,
+    transition_cases_per_edge: int = 2,
     artifact_dir: Path | None = None,
 ) -> dict:
     """Mine an all-action arborescence plus compact local transitions."""
-    from skill_mining.backbone_workflow_mining import mine_backbone_workflow
+    from skill_mining.backbone_workflow_mining import (
+        mine_backbone_workflow, sample_transition_cases,
+    )
     from skill_mining.skill_writer import (
         _find_operator_snippets, build_reference_md,
-        build_skill_md_from_backbone,
+        build_skill_md_from_backbone, induce_transition_rules,
     )
 
     mined = mine_backbone_workflow(
@@ -230,6 +233,14 @@ def mine_subflow_skill_backbone(
     operators = mined["skill_info"]["selected_vertices"]
     op_snippets = _find_operator_snippets(train_convs, subflow, operators)
     reference_md = build_reference_md(subflow, op_snippets, max_snippets_per_op=5)
+    edge_cases = sample_transition_cases(
+        subflow, train_convs, max_cases_per_edge=transition_cases_per_edge,
+    )
+    log.info("  Inducing joint transition guards from outgoing-edge cases...")
+    transition_induction = induce_transition_rules(
+        subflow, mined["subgraph"], edge_cases,
+    )
+    mined["subgraph"]["transition_induction"] = transition_induction
 
     if artifact_dir is not None:
         artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -242,10 +253,17 @@ def mine_subflow_skill_backbone(
             json.dumps(mined["operator_results"], indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
+        (artifact_dir / "transition_cases.json").write_text(
+            json.dumps(edge_cases, indent=2, ensure_ascii=False), encoding="utf-8",
+        )
 
     log.info("  Compiling backbone skill.md via LLM...")
     skill_md = build_skill_md_from_backbone(
-        subflow, mined["subgraph"], op_snippets, use_llm=True,
+        subflow,
+        mined["subgraph"],
+        op_snippets,
+        use_llm=True,
+        transition_induction=transition_induction,
     )
     return {**mined, "reference_md": reference_md, "skill_md": skill_md}
 
@@ -408,6 +426,8 @@ def main():
                         help="Max retained outgoing transitions per action for backbone mining")
     parser.add_argument("--backbone-min-branch-support", type=int, default=2,
                         help="Min support for non-backbone branch/retry transitions")
+    parser.add_argument("--backbone-transition-cases", type=int, default=2,
+                        help="Training cases sampled for each outgoing edge during joint transition induction")
     parser.add_argument("--sequence-min-edge-support", type=int, default=2,
                         help="Min transition support for sequence mining")
     parser.add_argument("--sequence-min-edge-ratio", type=float, default=0.1,
@@ -485,6 +505,7 @@ def main():
                     train_convs,
                     max_outgoing_edges=args.backbone_max_outgoing_edges,
                     min_branch_support=args.backbone_min_branch_support,
+                    transition_cases_per_edge=args.backbone_transition_cases,
                     artifact_dir=sf_out,
                 )
             elif args.mining_method == "sequence":

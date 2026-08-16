@@ -15,6 +15,8 @@ import re
 from collections import Counter, defaultdict
 from typing import Any
 
+from eval_tod.abcd.action_schema import canonical_action_name, load_action_schema
+
 try:
     import networkx as nx
 except ImportError:  # pragma: no cover - compatibility fallback for old environments
@@ -25,6 +27,7 @@ ROOT = "<START>"
 _EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
 _PHONE_RE = re.compile(r"(?:\+?\d[\d ()-]{6,}\d)")
 _ZIP_RE = re.compile(r"\b\d{5}(?:-\d{4})?\b")
+_FAILURE_RE = re.compile(r"\b(?:fail(?:ed|ure)?|invalid|incorrect|not found|unable|cannot|can't|error|retry)\b", re.I)
 
 
 def _node_id(subflow: str, action: str) -> str:
@@ -58,10 +61,27 @@ def _entity_types(text: str) -> set[str]:
     return result
 
 
+def _slot_type(value: str) -> str:
+    """Infer a conservative value format for an ordered ABCD slot position."""
+    text = str(value).strip()
+    if _EMAIL_RE.fullmatch(text):
+        return "email"
+    if _PHONE_RE.fullmatch(text):
+        return "phone"
+    if _ZIP_RE.fullmatch(text):
+        return "zip"
+    if re.fullmatch(r"\d+(?:\.\d+)?", text):
+        return "number"
+    if re.fullmatch(r"[A-Za-z0-9_-]{5,}", text):
+        return "identifier"
+    return "text"
+
+
 def _state_before(conversation: dict[str, Any], action_turn_index: int) -> dict[str, Any]:
     """Build a compact runtime-observable state snapshot before one action."""
     actions: list[str] = []
     entity_types: set[str] = set()
+    failure_signal = False
     for index, turn in enumerate(conversation.get("delexed") or []):
         if index >= action_turn_index:
             break
@@ -69,12 +89,15 @@ def _state_before(conversation: dict[str, Any], action_turn_index: int) -> dict[
         if len(targets) >= 3 and targets[1] == "take_action" and targets[2]:
             actions.append(str(targets[2]))
         if str(turn.get("speaker") or "") == "customer":
-            entity_types |= _entity_types(_original_text(conversation, index, turn))
+            text = _original_text(conversation, index, turn)
+            entity_types |= _entity_types(text)
+            failure_signal = failure_signal or bool(_FAILURE_RE.search(text))
     return {
         "previous_action": actions[-1] if actions else "",
         "account_selected": "pull-up-account" in actions,
         "credential_types": sorted(entity_types),
         "credential_count": len(entity_types),
+        "failure_signal": failure_signal,
     }
 
 
@@ -99,6 +122,8 @@ def _condition_summary(states: list[dict[str, Any]]) -> dict[str, Any]:
     }
     if account_rate >= 0.8:
         result["account_selected"] = True
+    if sum(bool(state.get("failure_signal")) for state in states) / n >= 0.6:
+        result["failure_signal"] = True
     return result
 
 
@@ -166,6 +191,8 @@ def mine_backbone_workflow(
     edge_states: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     slot_examples: dict[str, list[list[str]]] = defaultdict(list)
     action_slot_counts: dict[str, Counter[int]] = defaultdict(Counter)
+    slot_position_types: dict[str, dict[int, Counter[str]]] = defaultdict(lambda: defaultdict(Counter))
+    action_schema = load_action_schema()
     operator_results: list[dict[str, Any]] = []
 
     for conversation in conversations:
@@ -175,12 +202,19 @@ def mine_backbone_workflow(
             targets = turn.get("targets") or []
             if len(targets) < 3 or targets[1] != "take_action" or not targets[2]:
                 continue
-            node = _node_id(subflow, str(targets[2]))
+            canonical_action, suffix_slots = canonical_action_name(
+                targets[2], action_schema.get("actions")
+            )
+            if not canonical_action:
+                continue
+            node = _node_id(subflow, canonical_action)
             slots = targets[3] if len(targets) > 3 and isinstance(targets[3], list) else []
-            slots = [str(value) for value in slots]
+            slots = [str(value) for value in suffix_slots] + [str(value) for value in slots]
             steps.append({"node": node, "turn_index": turn_index, "slots": slots})
             node_counts[node] += 1
             action_slot_counts[node][len(slots)] += 1
+            for position, value in enumerate(slots):
+                slot_position_types[node][position][_slot_type(value)] += 1
             if slots and len(slot_examples[node]) < 8:
                 slot_examples[node].append(slots)
         if not steps:
@@ -305,6 +339,8 @@ def mine_backbone_workflow(
             selected.append(item)
             if kind != "backbone":
                 residual_edges.append(item)
+        for priority, item in enumerate(selected, start=1):
+            item["priority"] = priority
         local_transitions[source] = selected
 
     def best_main_path() -> list[str]:
@@ -327,6 +363,24 @@ def mine_backbone_workflow(
             "frequency": int(node_counts[node]),
             "slot_examples": slot_examples[node][:5],
             "observed_slot_counts": sorted(action_slot_counts[node]),
+            "slot_contract": {
+                "min_slots": min(action_slot_counts[node]) if action_slot_counts[node] else 0,
+                "max_slots": max(action_slot_counts[node]) if action_slot_counts[node] else 0,
+                "positions": [
+                    {
+                        "position": position + 1,
+                        "required_rate": round(
+                            sum(count for length, count in action_slot_counts[node].items() if length > position)
+                            / max(sum(action_slot_counts[node].values()), 1),
+                            3,
+                        ),
+                        "value_types": [
+                            kind for kind, _ in slot_position_types[node][position].most_common()
+                        ],
+                    }
+                    for position in sorted(slot_position_types[node])
+                ],
+            },
         }
         for node in sorted(nodes, key=lambda node: (order.index(node) if node in order else len(order), node))
     ]
@@ -369,3 +423,49 @@ def mine_backbone_workflow(
         "subgraph": subgraph,
         "operator_results": operator_results,
     }
+
+
+def sample_transition_cases(
+    subflow: str,
+    conversations: list[dict[str, Any]],
+    max_cases_per_edge: int = 2,
+) -> dict[str, list[dict[str, Any]]]:
+    """Collect compact, jointly comparable cases for every observed edge."""
+    schema = load_action_schema()
+    cases: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for conversation in conversations:
+        steps: list[dict[str, Any]] = []
+        for turn_index, turn in enumerate(conversation.get("delexed") or []):
+            targets = turn.get("targets") or []
+            if len(targets) < 3 or targets[1] != "take_action" or not targets[2]:
+                continue
+            action, _ = canonical_action_name(targets[2], schema.get("actions"))
+            if action:
+                steps.append({"node": _node_id(subflow, action), "turn_index": turn_index})
+        collapsed: list[dict[str, Any]] = []
+        for step in steps:
+            if not collapsed or collapsed[-1]["node"] != step["node"]:
+                collapsed.append(step)
+        for source, target in zip(collapsed, collapsed[1:]):
+            key = f"{source['node']} -> {target['node']}"
+            if len(cases[key]) >= max_cases_per_edge:
+                continue
+            target_index = target["turn_index"]
+            context_lines: list[str] = []
+            for index in range(max(0, target_index - 3), target_index):
+                turn = (conversation.get("delexed") or [])[index]
+                speaker, text = _get_speaker_text(conversation, index, turn)
+                if text:
+                    context_lines.append(f"{speaker}: {text}")
+            cases[key].append({
+                "conversation_id": str(conversation.get("convo_id") or "?"),
+                "state": _state_before(conversation, target_index),
+                "context": "\n".join(context_lines),
+            })
+    return dict(cases)
+
+
+def _get_speaker_text(conversation: dict[str, Any], index: int, turn: dict[str, Any]) -> tuple[str, str]:
+    text = _original_text(conversation, index, turn).strip()
+    speaker = str(turn.get("speaker") or "unknown").title()
+    return speaker, text

@@ -248,6 +248,7 @@ def build_skill_md_from_backbone(
     subgraph: dict,
     op_snippets: Dict[str, list[dict]],
     use_llm: bool = True,
+    transition_induction: dict[str, Any] | None = None,
 ) -> str:
     """Compile a compact skill from an all-action backbone artifact.
 
@@ -258,7 +259,9 @@ def build_skill_md_from_backbone(
     """
     if use_llm:
         return _compile_skill_with_retry(
-            _build_backbone_skill_prompt(subflow, subgraph, op_snippets), subflow
+            _build_backbone_skill_prompt(
+                subflow, subgraph, op_snippets, transition_induction,
+            ), subflow
         )
     return _build_skill_md_from_backbone_fallback(subflow, subgraph)
 
@@ -269,6 +272,8 @@ def _format_observed_condition(condition: dict[str, Any]) -> str:
     facts: list[str] = []
     if condition.get("account_selected"):
         facts.append("an account has already been selected")
+    if condition.get("failure_signal"):
+        facts.append("a prior failure or retry signal is present")
     count = condition.get("min_credential_count")
     if isinstance(count, int) and count > 0:
         facts.append(f"at least {count} credential type(s) are observed")
@@ -282,12 +287,14 @@ def _build_backbone_skill_prompt(
     subflow: str,
     subgraph: dict,
     op_snippets: Dict[str, list[dict]],
+    transition_induction: dict[str, Any] | None = None,
 ) -> str:
     nodes = {node["id"]: node for node in subgraph.get("nodes", [])}
     backbone = subgraph.get("backbone", {})
     main_path = backbone.get("main_path", [])
     order = backbone.get("compilation_order", [])
     local = subgraph.get("local_transitions", {})
+    induced_rules = (transition_induction or {}).get("rules_by_source", {})
 
     allowed_actions = [nodes[node_id]["label"] for node_id in order if node_id in nodes]
     main_labels = [nodes[node_id]["label"] for node_id in main_path if node_id in nodes]
@@ -302,16 +309,29 @@ def _build_backbone_skill_prompt(
             target = nodes.get(edge["target"], {"label": _short_label(edge["target"])})
             transition_lines.append(
                 f"- {node['label']} -> {target['label']} "
-                f"[{edge['kind']}; support={edge['support']}; "
+                f"[priority={edge.get('priority', 1)}; {edge['kind']}; support={edge['support']}; "
                 f"P={edge['probability']}; observed state: "
                 f"{_format_observed_condition(edge.get('condition', {}))}]"
             )
         slots = node.get("observed_slot_counts", [])
+        contract = node.get("slot_contract", {})
+        position_contract = "; ".join(
+            f"arg{item['position']}: {', '.join(item.get('value_types') or ['value'])} "
+            f"(required rate={item.get('required_rate', 0):.0%})"
+            for item in contract.get("positions", [])
+        )
         action_blocks.append(
             f"### {node['label']}\n"
-            f"Observed slot counts: {slots or [0]}\n"
+            f"Ordered slot contract: count={slots or [0]}; {position_contract or 'no observed slot values'}\n"
             f"Transitions:\n" + ("\n".join(transition_lines) if transition_lines else "- No retained outgoing transition.")
         )
+        if induced_rules.get(node_id):
+            rendered = "\n".join(
+                f"- priority {rule['priority']}: -> {nodes.get(rule['target'], {}).get('label', rule['target'])}; "
+                f"condition={rule['condition']}; relation={rule['relation']}"
+                for rule in induced_rules[node_id]
+            )
+            action_blocks[-1] += "\nJoint transition induction:\n" + rendered
 
     evidence_blocks: list[str] = []
     for node_id in order:
@@ -334,8 +354,18 @@ def _build_backbone_skill_prompt(
   selected and the needed credentials are available").
 - Slots must be REAL values grounded in the current dialogue state. Never put
   field names, placeholders, or example values into an action slot.
+- Define an explicit State Machine section using only these runtime-observable
+  variables: `last_completed_action`, `account_selected`,
+  `credential_types`, `credential_count`, and `failure_signal`. For every
+  action rule, state a precondition, an ordered slot contract, and a post-state
+  update. Use `last_completed_action=<action>` as the default post-state update.
+- Evaluate each action's outgoing rules in the listed priority order. Do not
+  claim that branches are mutually exclusive unless their observed guards are.
 - Be concise: one short main path and at most one short transition rule per
   retained outgoing edge. Do not repeat the global workflow under every node.
+- When Joint transition induction is present, it is authoritative for branch
+  conditions, relation (exclusive, overlap, or fallback), and priority. Do not
+  replace it with conditions inferred from a single example.
 
 ## Skill
 Skill ID: {subflow}
@@ -364,9 +394,15 @@ Write only this Markdown document:
 ### Main Path
 1. `action-a` -> `action-b` -> ...
 
+## State Machine
+- Variables: ...
+
 ### Action Rules
 #### `action-a`
-- When [observed condition], transition to `action-b`.
+- Preconditions: ...
+- Slots: ordered real values only; `arg1` is ...
+- Post-state: ...
+- Priority 1: when [observed condition], transition to `action-b`.
 
 ## Slot Discipline
 - Use only real values available in the current dialogue state.
@@ -376,6 +412,98 @@ Write only this Markdown document:
 - `action-a`: see `reference.md`.
 ```
 """
+
+
+def induce_transition_rules(
+    subflow: str,
+    subgraph: dict[str, Any],
+    edge_cases: dict[str, list[dict[str, Any]]],
+    max_retries: int = 3,
+) -> dict[str, Any]:
+    """Jointly infer outgoing-edge guards for each source action with an LLM."""
+    from llm import chat
+
+    nodes = {node["id"]: node["label"] for node in subgraph.get("nodes", [])}
+    outgoing: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for edge in subgraph.get("edges", []):
+        outgoing[edge["source"]].append(edge)
+    groups: list[str] = []
+    allowed: dict[str, set[str]] = {}
+    for source, edges in sorted(outgoing.items()):
+        if not edges:
+            continue
+        allowed[source] = {edge["target"] for edge in edges}
+        lines = [f"### Source: {source} ({nodes.get(source, source)})"]
+        for edge in sorted(edges, key=lambda item: (-item["support"], item["target"])):
+            key = f"{source} -> {edge['target']}"
+            lines.append(
+                f"Target: {edge['target']} ({nodes.get(edge['target'], edge['target'])}); "
+                f"support={edge['support']}; P={edge['probability']}; observed={edge.get('condition', {})}"
+            )
+            for case in edge_cases.get(key, []):
+                lines.append(
+                    f"Case state={case.get('state', {})}\n"
+                    f"Case context:\n{case.get('context', '')[:500]}"
+                )
+        groups.append("\n".join(lines))
+
+    prompt = f"""Infer compact transition guards for a mined customer-service action graph.
+
+For EACH source action, compare ALL listed outgoing target cases jointly. Do
+not infer a condition from one target in isolation. Conditions may use only
+runtime-observable dialogue state (previous actions, entity availability,
+customer request, explicit failure signal), never concrete example values.
+
+For every listed target output: a concise condition, an integer priority, and
+one relation label: `exclusive`, `overlap`, or `fallback`. Use `exclusive` only
+when the cases support mutual exclusion. When guards overlap, preserve the
+overlap label and resolve with priority; do not pretend they are disjoint.
+Do not add actions or targets not present below.
+
+{chr(10).join(groups)}
+
+Return ONLY JSON in this schema:
+{{"rules_by_source": {{
+  "SOURCE_ID": [
+    {{"target": "TARGET_ID", "condition": "...", "priority": 1,
+      "relation": "exclusive|overlap|fallback"}}
+  ]
+}}}}
+"""
+
+    last_error: Exception | None = None
+    for attempt in range(max_retries):
+        try:
+            raw = chat(prompt, temperature=0.0).strip()
+            text = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.I | re.S).strip()
+            parsed = json.loads(text)
+            raw_rules = parsed.get("rules_by_source", {}) if isinstance(parsed, dict) else {}
+            rules_by_source: dict[str, list[dict[str, Any]]] = {}
+            for source, rules in raw_rules.items():
+                if source not in allowed or not isinstance(rules, list):
+                    continue
+                cleaned = []
+                for rule in rules:
+                    target = str(rule.get("target") or "")
+                    relation = str(rule.get("relation") or "overlap").lower()
+                    if target not in allowed[source] or relation not in {"exclusive", "overlap", "fallback"}:
+                        continue
+                    cleaned.append({
+                        "target": target,
+                        "condition": str(rule.get("condition") or "observed dialogue state supports this transition").strip(),
+                        "priority": max(1, int(rule.get("priority", len(cleaned) + 1))),
+                        "relation": relation,
+                    })
+                if cleaned:
+                    rules_by_source[source] = sorted(cleaned, key=lambda item: (item["priority"], item["target"]))
+            if rules_by_source:
+                return {"rules_by_source": rules_by_source, "raw_output": raw}
+            raise ValueError("LLM returned no valid transition rules")
+        except Exception as exc:
+            last_error = exc
+            if attempt + 1 < max_retries:
+                time.sleep(_SKILL_LLM_RETRY_BASE_DELAY * (2 ** attempt))
+    raise RuntimeError(f"Transition induction failed for {subflow}: {last_error}")
 
 
 def _build_skill_md_from_backbone_fallback(subflow: str, subgraph: dict) -> str:
@@ -388,19 +516,28 @@ def _build_skill_md_from_backbone_fallback(subflow: str, subgraph: dict) -> str:
     lines = [f"# Skill: {subflow}", "", "## Intent", "", f"Handle `{subflow}` requests using the observed action workflow.", "", "## Workflow", "", "### Main Path", ""]
     labels = [nodes[node_id]["label"] for node_id in main_path if node_id in nodes]
     lines.append(" -> ".join(f"`{label}`" for label in labels) if labels else "Use the retained action rules below.")
-    lines.extend(["", "### Action Rules", ""])
+    lines.extend([
+        "", "## State Machine", "",
+        "- Track `last_completed_action`, `account_selected`, `credential_types`, `credential_count`, and `failure_signal`.",
+        "", "### Action Rules", "",
+    ])
     for node_id in order:
         node = nodes.get(node_id)
         if not node:
             continue
         lines.extend([f"#### `{node['label']}`", ""])
+        contract = node.get("slot_contract", {})
+        lines.append(
+            f"- Slot contract: {contract.get('min_slots', 0)}-{contract.get('max_slots', 0)} ordered real value(s)."
+        )
+        lines.append(f"- Post-state: `last_completed_action={node['label']}`.")
         transitions = local.get(node_id, [])
         if not transitions:
             lines.append("- No retained outgoing transition.")
         for edge in transitions:
             target = nodes.get(edge["target"], {"label": _short_label(edge["target"])})
             lines.append(
-                f"- [{edge['kind']}] When {_format_observed_condition(edge.get('condition', {}))}, "
+                f"- [priority {edge.get('priority', 1)}; {edge['kind']}] When {_format_observed_condition(edge.get('condition', {}))}, "
                 f"transition to `{target['label']}`."
             )
         lines.append("")
