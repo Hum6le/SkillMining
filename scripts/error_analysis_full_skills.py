@@ -66,6 +66,27 @@ PREDICTION_NAMES = (
 )
 
 
+def _checkpoint_filename(method: str, subflow: str) -> str:
+    safe_method = "".join(char if char.isalnum() or char in "-_" else "_" for char in method)
+    safe_subflow = "".join(char if char.isalnum() or char in "-_" else "_" for char in subflow)
+    return f"{safe_method}__{safe_subflow}.json"
+
+
+def _load_subflow_checkpoints(directory: Path) -> dict[tuple[str, str], dict[str, Any]]:
+    checkpoints: dict[tuple[str, str], dict[str, Any]] = {}
+    if not directory.exists():
+        return checkpoints
+    for path in directory.glob("*.json"):
+        try:
+            row = load_json(path)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(row, dict) or not row.get("method") or not row.get("subflow"):
+            continue
+        checkpoints[(str(row["method"]), str(row["subflow"]))] = row
+    return checkpoints
+
+
 def parse_experiment_manifest(manifest_path: Path) -> list[tuple[str, Path]]:
     """Parse the text manifest emitted by run_full_abcd_experiments.sh.
 
@@ -1044,6 +1065,8 @@ def main() -> None:
             )
 
     subflow_cache_path = out_dir / "subflow_analyses.json"
+    subflow_checkpoint_dir = out_dir / "subflow_checkpoints"
+    subflow_checkpoint_dir.mkdir(parents=True, exist_ok=True)
     cached_subflows: dict[tuple[str, str], dict[str, Any]] = {}
     if args.resume_dir and subflow_cache_path.exists():
         try:
@@ -1056,6 +1079,10 @@ def main() -> None:
                 }
         except (OSError, json.JSONDecodeError) as exc:
             LOG.warning("Could not load subflow checkpoint: %s", exc)
+    checkpoint_rows = _load_subflow_checkpoints(subflow_checkpoint_dir)
+    cached_subflows.update(checkpoint_rows)
+    if checkpoint_rows:
+        LOG.info("Loaded %d per-subflow checkpoint files", len(checkpoint_rows))
 
     subflows = []
     for index, entry in enumerate(manifest_entries, start=1):
@@ -1082,6 +1109,9 @@ def main() -> None:
             run_dir=Path(entry["run_dir"]) if entry.get("run_dir") else None,
         )
         subflows.append(result)
+        (subflow_checkpoint_dir / _checkpoint_filename(method, subflow)).write_text(
+            json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
         subflow_cache_path.write_text(
             json.dumps(subflows, indent=2, ensure_ascii=False), encoding="utf-8"
         )
