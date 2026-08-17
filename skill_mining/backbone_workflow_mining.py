@@ -425,6 +425,209 @@ def mine_backbone_workflow(
     }
 
 
+def mine_backbone_workflow_session_coverage(
+    subflow: str,
+    conversations: list[dict[str, Any]],
+    max_outgoing_edges: int = 3,
+    min_branch_support: int = 2,
+    coverage_lambda: float = 0.2,
+    max_swap_rounds: int = 3,
+) -> dict[str, Any]:
+    """Variant of backbone mining with a session-coverage edge-swap objective.
+
+    The original turn-level edge scores remain unchanged.  Coverage only
+    participates when choosing among valid parent-edge replacements, keeping
+    this method directly comparable to ``mine_backbone_workflow``.
+    """
+    base = mine_backbone_workflow(
+        subflow,
+        conversations,
+        max_outgoing_edges=max_outgoing_edges,
+        min_branch_support=min_branch_support,
+    )
+    graph = base["subgraph"]
+    nodes = [node["id"] for node in graph["nodes"]]
+    edge_rows = {(edge["source"], edge["target"]): edge for edge in graph["edges"]}
+    parent = {
+        edge["target"]: edge["source"]
+        for edge in graph["backbone"]["edges"]
+    }
+    session_edges: list[set[tuple[str, str]]] = []
+    schema = load_action_schema()
+    for conversation in conversations:
+        actions: list[str] = []
+        for turn in conversation.get("delexed") or []:
+            targets = turn.get("targets") or []
+            if len(targets) >= 3 and targets[1] == "take_action" and targets[2]:
+                action, _ = canonical_action_name(targets[2], schema.get("actions"))
+                if action and (not actions or actions[-1] != action):
+                    actions.append(action)
+        session_edges.append({
+            (_node_id(subflow, source), _node_id(subflow, target))
+            for source, target in zip(actions, actions[1:])
+        })
+
+    def coverage(pairs: set[tuple[str, str]]) -> float:
+        if not session_edges:
+            return 0.0
+        return sum(
+            len(edges & pairs) / max(len(edges), 1)
+            for edges in session_edges
+        ) / len(session_edges)
+
+    def edge_score(pairs: set[tuple[str, str]]) -> float:
+        return sum(float(edge_rows[pair]["score"]) for pair in pairs if pair in edge_rows)
+
+    def objective(pairs: set[tuple[str, str]]) -> float:
+        return edge_score(pairs) + coverage_lambda * coverage(pairs)
+
+    current_pairs = {
+        (edge["source"], edge["target"])
+        for edge in graph["backbone"]["edges"]
+        if edge["source"] != ROOT
+    }
+    for _ in range(max_swap_rounds):
+        current_objective = objective(current_pairs)
+        best_delta = 0.0
+        best_change: tuple[str, str, str] | None = None
+        for target in nodes:
+            old_source = parent[target]
+            old_pair = (old_source, target)
+            for (source, candidate_target), _edge in edge_rows.items():
+                if candidate_target != target or source == old_source:
+                    continue
+                current = source
+                seen: set[str] = set()
+                creates_cycle = False
+                while current != ROOT and current not in seen:
+                    if current == target:
+                        creates_cycle = True
+                        break
+                    seen.add(current)
+                    current = parent.get(current, ROOT)
+                if creates_cycle:
+                    continue
+                trial = set(current_pairs)
+                trial.discard(old_pair)
+                trial.add((source, target))
+                delta = objective(trial) - current_objective
+                if delta > best_delta + 1e-9:
+                    best_delta = delta
+                    best_change = (target, old_source, source)
+        if best_change is None:
+            break
+        target, old_source, new_source = best_change
+        parent[target] = new_source
+        current_pairs.discard((old_source, target))
+        current_pairs.add((new_source, target))
+
+    root_edges = {
+        edge["target"]: edge
+        for edge in graph["backbone"]["edges"]
+        if edge["source"] == ROOT
+    }
+    backbone_edges = []
+    for target in sorted(nodes):
+        source = parent[target]
+        if source == ROOT:
+            edge = root_edges[target]
+        else:
+            edge = edge_rows[(source, target)]
+        backbone_edges.append({**edge, "kind": "backbone"})
+
+    children: dict[str, list[str]] = defaultdict(list)
+    for edge in backbone_edges:
+        children[edge["source"]].append(edge["target"])
+    for source in children:
+        children[source].sort()
+    order: list[str] = []
+    queue = list(children[ROOT])
+    while queue:
+        node = queue.pop(0)
+        order.append(node)
+        queue.extend(children.get(node, []))
+
+    backbone_pairs = {(edge["source"], edge["target"]) for edge in backbone_edges}
+    local: dict[str, list[dict[str, Any]]] = {}
+    residual: list[dict[str, Any]] = []
+    for source in nodes:
+        outgoing = [edge for edge in graph["edges"] if edge["source"] == source]
+        outgoing.sort(key=lambda edge: (
+            (edge["source"], edge["target"]) not in backbone_pairs,
+            -edge["score"], edge["target"],
+        ))
+        selected = []
+        for edge in outgoing:
+            is_backbone = (edge["source"], edge["target"]) in backbone_pairs
+            if not is_backbone and edge["support"] < min_branch_support:
+                continue
+            if len(selected) >= max_outgoing_edges and not is_backbone:
+                continue
+            kind = "backbone" if is_backbone else (
+                "retry" if _has_path(parent, source, edge["target"]) else "branch"
+            )
+            selected.append({**edge, "kind": kind})
+            if kind != "backbone":
+                residual.append(selected[-1])
+        for priority, edge in enumerate(selected, 1):
+            edge["priority"] = priority
+        local[source] = selected
+
+    retained_pairs = {
+        (edge["source"], edge["target"])
+        for edges in local.values() for edge in edges
+    }
+    graph["mining_method"] = "backbone_coverage"
+    graph["backbone"] = {
+        "root": ROOT,
+        "edges": sorted(backbone_edges, key=lambda edge: (edge["source"], edge["target"])),
+        "compilation_order": order,
+        "main_path": _best_backbone_path(children, graph["nodes"]),
+    }
+    graph["local_transitions"] = local
+    graph["residual_edges"] = residual
+    turn_score = edge_score(current_pairs)
+    mean_coverage = coverage(current_pairs)
+    route_coverage = (
+        sum(
+            len(edges & current_pairs) / max(len(edges), 1) >= 0.8
+            for edges in session_edges
+        ) / max(len(session_edges), 1)
+    )
+    graph["coverage_objective"] = {
+        "turn_edge_score": round(turn_score, 4),
+        "session_mean_coverage": round(mean_coverage, 4),
+        "session_route_coverage_at_80pct": round(route_coverage, 4),
+        "lambda": coverage_lambda,
+        "combined_objective": round(
+            turn_score + coverage_lambda * mean_coverage, 4
+        ),
+        "swap_rounds": max_swap_rounds,
+    }
+    graph["coverage_pct"] = round(
+        100 * sum(len(edges & retained_pairs) for edges in session_edges)
+        / max(sum(len(edges) for edges in session_edges), 1),
+        1,
+    )
+    base["skill_info"]["mining_method"] = "backbone_coverage"
+    base["skill_info"]["coverage_pct"] = graph["coverage_pct"]
+    return base
+
+
+def _best_backbone_path(children: dict[str, list[str]], nodes: list[dict[str, Any]]) -> list[str]:
+    frequencies = {node["id"]: node.get("frequency", 0) for node in nodes}
+    path: list[str] = []
+    current = ROOT
+    seen: set[str] = set()
+    while children.get(current):
+        current = max(children[current], key=lambda node: (frequencies.get(node, 0), node))
+        if current in seen:
+            break
+        seen.add(current)
+        path.append(current)
+    return path
+
+
 def sample_transition_cases(
     subflow: str,
     conversations: list[dict[str, Any]],

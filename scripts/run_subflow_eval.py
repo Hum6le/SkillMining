@@ -213,23 +213,41 @@ def mine_subflow_skill_backbone(
     max_outgoing_edges: int = 3,
     min_branch_support: int = 2,
     transition_cases_per_edge: int = 2,
+    coverage_aware: bool = False,
+    coverage_lambda: float = 0.2,
     artifact_dir: Path | None = None,
 ) -> dict:
     """Mine an all-action arborescence plus compact local transitions."""
     from skill_mining.backbone_workflow_mining import (
-        mine_backbone_workflow, sample_transition_cases,
+        mine_backbone_workflow, mine_backbone_workflow_session_coverage,
+        sample_transition_cases,
     )
     from skill_mining.skill_writer import (
         _find_operator_snippets, build_reference_md,
         build_skill_md_from_backbone, induce_transition_rules,
     )
 
-    mined = mine_backbone_workflow(
-        subflow,
-        train_convs,
-        max_outgoing_edges=max_outgoing_edges,
-        min_branch_support=min_branch_support,
-    )
+    miner = mine_backbone_workflow_session_coverage if coverage_aware else mine_backbone_workflow
+    miner_kwargs = {
+        "max_outgoing_edges": max_outgoing_edges,
+        "min_branch_support": min_branch_support,
+    }
+    if coverage_aware:
+        miner_kwargs["coverage_lambda"] = coverage_lambda
+    mined = miner(subflow, train_convs, **miner_kwargs)
+    coverage_objective = mined["subgraph"].get("coverage_objective")
+    if coverage_objective:
+        log.info(
+            "  Coverage objective: turn_edge_score=%.4f, "
+            "session_mean_coverage=%.4f, route_coverage@80%%=%.4f, "
+            "lambda=%.4f, combined=%.4f, retained_coverage=%.1f%%",
+            coverage_objective.get("turn_edge_score", 0.0),
+            coverage_objective.get("session_mean_coverage", 0.0),
+            coverage_objective.get("session_route_coverage_at_80pct", 0.0),
+            coverage_objective.get("lambda", coverage_lambda),
+            coverage_objective.get("combined_objective", 0.0),
+            mined["subgraph"].get("coverage_pct", 0.0),
+        )
     operators = mined["skill_info"]["selected_vertices"]
     op_snippets = _find_operator_snippets(train_convs, subflow, operators)
     reference_md = build_reference_md(subflow, op_snippets, max_snippets_per_op=5)
@@ -419,15 +437,17 @@ def main():
                         help="Number of reference.md operator sections to retrieve per turn")
     parser.add_argument("--reference-max-chars", type=int, default=1800,
                         help="Max characters of retrieved reference snippets injected per turn")
-    parser.add_argument("--mining-method", choices=["backbone", "sequence", "legacy"],
+    parser.add_argument("--mining-method", choices=["backbone", "backbone_coverage", "sequence", "legacy"],
                         default="legacy",
-                        help="Skill mining method (default: legacy HG vertex cover; backbone retains all actions)")
+                        help="Skill mining method (default: legacy HG vertex cover; backbone retains all actions; backbone_coverage adds session-aware edge selection)")
     parser.add_argument("--backbone-max-outgoing-edges", type=int, default=3,
                         help="Max retained outgoing transitions per action for backbone mining")
     parser.add_argument("--backbone-min-branch-support", type=int, default=2,
                         help="Min support for non-backbone branch/retry transitions")
     parser.add_argument("--backbone-transition-cases", type=int, default=2,
                         help="Training cases sampled for each outgoing edge during joint transition induction")
+    parser.add_argument("--backbone-coverage-lambda", type=float, default=0.2,
+                        help="Weight of session coverage in backbone_coverage edge selection")
     parser.add_argument("--sequence-min-edge-support", type=int, default=2,
                         help="Min transition support for sequence mining")
     parser.add_argument("--sequence-min-edge-ratio", type=float, default=0.1,
@@ -499,13 +519,15 @@ def main():
                     reference_text = sf_ref.read_text(encoding="utf-8")
             skill_info = {"selected_vertices": [], "coverage_pct": 0, "num_sessions": 0}
         else:
-            if args.mining_method == "backbone":
+            if args.mining_method in {"backbone", "backbone_coverage"}:
                 mined = mine_subflow_skill_backbone(
                     subflow,
                     train_convs,
                     max_outgoing_edges=args.backbone_max_outgoing_edges,
                     min_branch_support=args.backbone_min_branch_support,
                     transition_cases_per_edge=args.backbone_transition_cases,
+                    coverage_aware=args.mining_method == "backbone_coverage",
+                    coverage_lambda=args.backbone_coverage_lambda,
                     artifact_dir=sf_out,
                 )
             elif args.mining_method == "sequence":
