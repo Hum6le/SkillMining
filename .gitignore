@@ -50,6 +50,10 @@ parse_failures/
 
 # Root-level generated analysis reports (local only)
 /analysis_*.md
+/error_analysis.md
+
+# Local chat-history export (not project content)
+/chat_his
 
 # External sandbox repo (owned by another user/tool, not part of this project)
 /agent-skill-induction/
