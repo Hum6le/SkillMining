@@ -745,6 +745,9 @@ def _build_branch_batch_patch_prompt(
     ]
     expected_actions = [nodes[node_id]["label"] for node_id in action_sources if node_id in nodes]
     expected_edges = [f"{edge['source']} => {edge['target']}" for edge in edges]
+    action_evidence_text = "\n".join("---\n" + block for block in action_blocks) or "(none)"
+    edge_evidence_text = "\n".join("---\n" + block for block in edge_blocks) or "(none)"
+    required_edges_text = "\n".join("- " + edge for edge in expected_edges) or "- (none)"
     return f"""You are performing the branch-refinement round of a two-stage
 customer-service skill compiler.
 
@@ -761,17 +764,17 @@ database outcomes. Do not call branches exclusive unless their evidence says
 </current_skill>
 
 <off_main_action_evidence>
-{chr(10).join('---\n' + block for block in action_blocks) if action_blocks else '(none)'}
+{action_evidence_text}
 </off_main_action_evidence>
 
 <selected_non_main_edge_evidence>
-{chr(10).join('---\n' + block for block in edge_blocks) if edge_blocks else '(none)'}
+{edge_evidence_text}
 </selected_non_main_edge_evidence>
 
 <required_coverage>
 You must submit exactly one action operation for each action: {', '.join(expected_actions) or '(none)'}.
 You must submit exactly one transition operation for each directed edge:
-{chr(10).join('- ' + edge for edge in expected_edges) or '- (none)'}
+{required_edges_text}
 </required_coverage>
 
 <filesystem_mcp>
