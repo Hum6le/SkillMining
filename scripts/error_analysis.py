@@ -58,6 +58,34 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
+def _case_key(entry: dict) -> str:
+    return f"{entry.get('convo_id', '')}::{entry.get('action_turn', '')}"
+
+
+def _load_analysis_cache(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        str(key): str(value)
+        for key, value in payload.items()
+        if isinstance(value, str) and value.strip()
+    }
+
+
+def _save_analysis_cache(path: Path, cache: dict[str, str]) -> None:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(cache, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    temporary.replace(path)
+
+
 # ═══════════════════════════════════════════════════════════════
 # Classification — unified AST formula
 # ═══════════════════════════════════════════════════════════════
@@ -321,7 +349,18 @@ def main():
     parser.add_argument("--subflow", default="unknown")
     parser.add_argument("--max-cases", type=int, default=20,
                         help="Max cases to LLM-analyze (all are counted in stats)")
+    parser.add_argument("--output-dir", default="",
+                        help="Optional output directory")
+    parser.add_argument("--resume-dir", default="",
+                        help="Resume from an existing output directory")
     args = parser.parse_args()
+
+    global OUT_DIR
+    if args.resume_dir:
+        OUT_DIR = Path(args.resume_dir)
+    elif args.output_dir:
+        OUT_DIR = Path(args.output_dir)
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     # ── 1. Load ──────────────────────────────────────────────
     log.info("Loading predictions...")
@@ -381,14 +420,35 @@ def main():
         classification["both_fail"][:args.max_cases]
     )
 
-    log.info(f"LLM analyzing {len(cases_to_analyze)} cases...")
-    analyses = []
-    for i, entry in enumerate(cases_to_analyze):
+    cache_path = OUT_DIR / "case_analyses.json"
+    analysis_cache = _load_analysis_cache(cache_path)
+    pending = [
+        entry for entry in cases_to_analyze
+        if _case_key(entry) not in analysis_cache
+    ]
+    log.info(
+        "LLM cases: %d total, %d cached, %d pending...",
+        len(cases_to_analyze),
+        len(cases_to_analyze) - len(pending),
+        len(pending),
+    )
+    for i, entry in enumerate(pending):
         log.info(f"  [{i+1}/{len(cases_to_analyze)}] {entry['convo_id']} "
                  f"action@{entry['action_turn']} "
                  f"GT={entry['gt_action']} HG={entry['hg_action']} AWM={entry['awm_action']}")
         result = analyze_case(entry, hg_skill, awm_wf, ref_md)
-        analyses.append(result)
+        if result.lstrip().startswith("*") and "LLM error" in result[:120]:
+            log.warning("Case analysis failed; leaving it pending for resume: %s", _case_key(entry))
+        else:
+            analysis_cache[_case_key(entry)] = result
+            _save_analysis_cache(cache_path, analysis_cache)
+
+    analyses = [
+        analysis_cache[_case_key(entry)]
+        for entry in cases_to_analyze
+        if _case_key(entry) in analysis_cache
+    ]
+    log.info(f"Saved case analysis cache: {cache_path}")
 
     # ── 4. Summary ───────────────────────────────────────────
     log.info("Generating summary report...")

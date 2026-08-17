@@ -494,6 +494,34 @@ def _fallback_report(method_name: str, subflow: str, stats: dict[str, Any]) -> s
     return "\n".join(lines)
 
 
+def _case_key(entry: dict[str, Any]) -> str:
+    return f"{entry.get('convo_id', '')}::{entry.get('action_turn', '')}"
+
+
+def _load_analysis_cache(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if isinstance(payload, dict):
+        return {
+            str(key): str(value)
+            for key, value in payload.items()
+            if isinstance(value, str) and value.strip()
+        }
+    return {}
+
+
+def _save_analysis_cache(path: Path, cache: dict[str, str]) -> None:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(cache, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    temporary.replace(path)
+
+
 def main() -> None:
     import argparse
 
@@ -517,10 +545,21 @@ def main() -> None:
     parser.add_argument("--model", default="deepseek-chat")
     parser.add_argument("--no-llm", action="store_true", help="Only compute stats and JSON cases")
     parser.add_argument("--output-dir", default="", help="Optional explicit output directory")
+    parser.add_argument(
+        "--resume-dir",
+        default="",
+        help="Resume from an existing analysis directory; completed cases are skipped",
+    )
     args = parser.parse_args()
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    out_dir = Path(args.output_dir) if args.output_dir else Path(f"outputs/error_analysis_single_{timestamp}")
+    out_dir = (
+        Path(args.resume_dir)
+        if args.resume_dir
+        else Path(args.output_dir)
+        if args.output_dir
+        else Path(f"outputs/error_analysis_single_{timestamp}")
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
 
     logging.basicConfig(
@@ -585,20 +624,42 @@ def main() -> None:
             + categories["both_wrong"]
             + categories["missing_prediction"]
         )
-        log.info("LLM analyzing %d cases", len(cases_to_analyze))
-        for idx, entry in enumerate(cases_to_analyze, start=1):
+        cache_path = out_dir / "case_analyses.json"
+        analysis_cache = _load_analysis_cache(cache_path)
+        pending = [
+            entry for entry in cases_to_analyze
+            if _case_key(entry) not in analysis_cache
+        ]
+        log.info(
+            "LLM cases: %d total, %d cached, %d pending",
+            len(cases_to_analyze),
+            len(cases_to_analyze) - len(pending),
+            len(pending),
+        )
+        for idx, entry in enumerate(pending, start=1):
             log.info(
-                "[%d/%d] %s action@%s GT=%s PRED=%s",
+                "[%d/%d pending] %s action@%s GT=%s PRED=%s",
                 idx,
-                len(cases_to_analyze),
+                len(pending),
                 entry["convo_id"],
                 entry["action_turn"],
                 entry["gt_action"],
                 entry["pred_action"],
             )
-            analyses.append(
-                analyze_case(entry, args.method_name, skill_text, reference_text, args.model)
+            analysis = analyze_case(
+                entry, args.method_name, skill_text, reference_text, args.model
             )
+            if analysis.lstrip().startswith("*") and "LLM error" in analysis[:120]:
+                log.warning("Case analysis failed; leaving it pending for resume: %s", _case_key(entry))
+            else:
+                analysis_cache[_case_key(entry)] = analysis
+                _save_analysis_cache(cache_path, analysis_cache)
+        analyses = [
+            analysis_cache[_case_key(entry)]
+            for entry in cases_to_analyze
+            if _case_key(entry) in analysis_cache
+        ]
+        log.info("Saved case analysis cache: %s", cache_path)
 
     (out_dir / "case_analyses.md").write_text(
         "\n\n---\n\n".join(analyses),

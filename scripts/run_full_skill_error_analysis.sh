@@ -16,6 +16,7 @@ SKILLS_ROOT=""
 PREDICTIONS_ROOT=""
 TEST_ROOT="$ROOT_DIR/data/eval/abcd/splits"
 OUTPUT_DIR=""
+RESUME_DIR=""
 BATCH_SIZE=8
 SAMPLE_ERRORS=10
 SEED=17
@@ -35,6 +36,7 @@ Optional:
   --predictions-root PATH   Separate prediction root; normally unnecessary
   --test-root PATH          ABCD test split root
   --output-dir PATH         Analysis output directory
+  --resume-dir PATH         Resume an existing analysis directory
   --batch-size N            Subflows per batch summary (default: 8)
   --sample-errors N         Error samples per subflow (default: 10)
   --seed N                  Sampling seed (default: 17)
@@ -50,7 +52,7 @@ EOF
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --manifest|--skills-root|--predictions-root|--test-root|--output-dir|--batch-size|--sample-errors|--seed|--expected-subflows|--methods|--subflows|--python|--conda-env|--hf-mirror)
+        --manifest|--skills-root|--predictions-root|--test-root|--output-dir|--resume-dir|--batch-size|--sample-errors|--seed|--expected-subflows|--methods|--subflows|--python|--conda-env|--hf-mirror)
             [[ $# -ge 2 ]] || { echo "Missing value for $1" >&2; exit 2; }
             case "$1" in
                 --manifest) MANIFEST="$2" ;;
@@ -58,6 +60,7 @@ while [[ $# -gt 0 ]]; do
                 --predictions-root) PREDICTIONS_ROOT="$2" ;;
                 --test-root) TEST_ROOT="$2" ;;
                 --output-dir) OUTPUT_DIR="$2" ;;
+                --resume-dir) RESUME_DIR="$2" ;;
                 --batch-size) BATCH_SIZE="$2" ;;
                 --sample-errors) SAMPLE_ERRORS="$2" ;;
                 --seed) SEED="$2" ;;
@@ -140,6 +143,13 @@ if [[ -z "$OUTPUT_DIR" ]]; then
     STAMP="$(date +%Y-%m-%d_%H-%M-%S)"
     OUTPUT_DIR="$ROOT_DIR/outputs/full_skill_error_analysis_$STAMP"
 fi
+if [[ -n "$RESUME_DIR" ]]; then
+    if [[ ! -d "$RESUME_DIR" ]]; then
+        echo "Resume directory not found: $RESUME_DIR" >&2
+        exit 1
+    fi
+    OUTPUT_DIR="$RESUME_DIR"
+fi
 mkdir -p "$OUTPUT_DIR"
 
 echo "Skill error analysis"
@@ -147,6 +157,7 @@ echo "Manifest:          ${MANIFEST:-<none>}"
 echo "Skills root:       ${SKILLS_ROOT:-<none>}"
 echo "Test root:         $TEST_ROOT"
 echo "Output directory:  $OUTPUT_DIR"
+echo "Resume directory:  ${RESUME_DIR:-<none>}"
 echo "Environment:       $CONDA_ENV"
 echo "Python:            $($PYTHON_BIN --version 2>&1)"
 echo "HF_ENDPOINT:       $HF_ENDPOINT"
@@ -170,6 +181,9 @@ fi
 
 if [[ -n "$PREDICTIONS_ROOT" ]]; then
     CMD+=(--predictions-root "$PREDICTIONS_ROOT")
+fi
+if [[ -n "$RESUME_DIR" ]]; then
+    CMD+=(--resume-dir "$RESUME_DIR")
 fi
 if [[ ${#METHODS[@]} -gt 0 ]]; then
     CMD+=(--methods "${METHODS[@]}")

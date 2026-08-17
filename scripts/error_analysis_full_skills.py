@@ -981,6 +981,10 @@ def main() -> None:
     parser.add_argument("--predictions-root", type=Path, default=None)
     parser.add_argument("--test-root", type=Path, default=Path("data/eval/abcd/splits"))
     parser.add_argument("--output-dir", type=Path, default=None)
+    parser.add_argument(
+        "--resume-dir", type=Path, default=None,
+        help="Resume from an existing analysis directory and skip completed subflows/batches.",
+    )
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--sample-errors", type=int, default=10)
     parser.add_argument("--seed", type=int, default=17)
@@ -1003,7 +1007,9 @@ def main() -> None:
         parser.error(f"manifest does not exist: {args.manifest}")
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    out_dir = args.output_dir or Path(f"outputs/full_skill_error_analysis_{timestamp}")
+    out_dir = args.resume_dir or args.output_dir or Path(f"outputs/full_skill_error_analysis_{timestamp}")
+    if args.resume_dir and not args.resume_dir.exists():
+        parser.error(f"resume directory does not exist: {args.resume_dir}")
     out_dir.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         level=logging.INFO,
@@ -1037,13 +1043,35 @@ def main() -> None:
                 len(manifest_entries),
             )
 
+    subflow_cache_path = out_dir / "subflow_analyses.json"
+    cached_subflows: dict[tuple[str, str], dict[str, Any]] = {}
+    if args.resume_dir and subflow_cache_path.exists():
+        try:
+            cached_rows = load_json(subflow_cache_path)
+            if isinstance(cached_rows, list):
+                cached_subflows = {
+                    (str(row.get("method", "unknown")), str(row.get("subflow", ""))): row
+                    for row in cached_rows
+                    if isinstance(row, dict)
+                }
+        except (OSError, json.JSONDecodeError) as exc:
+            LOG.warning("Could not load subflow checkpoint: %s", exc)
+
     subflows = []
     for index, entry in enumerate(manifest_entries, start=1):
         subflow = entry["subflow"]
         method = entry["method"]
+        cache_key = (method, subflow)
+        cached = cached_subflows.get(cache_key)
+        if cached and cached.get("status") in {
+            "analyzed", "skill_only", "skill_only_stale_predictions"
+        }:
+            LOG.info("[%d/%d] resuming completed %s/%s", index, len(manifest_entries), method, subflow)
+            subflows.append(cached)
+            continue
         skill_dir = Path(entry["skill_path"])
         LOG.info("[%d/%d] auditing %s/%s", index, len(manifest_entries), method, subflow)
-        subflows.append(analyze_subflow(
+        result = analyze_subflow(
             subflow,
             skill_dir,
             args.predictions_root,
@@ -1052,7 +1080,12 @@ def main() -> None:
             args.seed,
             method=method,
             run_dir=Path(entry["run_dir"]) if entry.get("run_dir") else None,
-        ))
+        )
+        subflows.append(result)
+        subflow_cache_path.write_text(
+            json.dumps(subflows, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        LOG.info("Saved subflow checkpoint: %s", subflow_cache_path)
 
     skill_audited = [
         row for row in subflows
@@ -1089,18 +1122,44 @@ def main() -> None:
     )
 
     batches = chunks(skill_audited, args.batch_size)
+    batch_cache_path = out_dir / "batch_summaries.json"
+    cached_batches: dict[int, dict[str, Any]] = {}
+    if args.resume_dir and batch_cache_path.exists():
+        try:
+            cached_rows = load_json(batch_cache_path)
+            if isinstance(cached_rows, list):
+                cached_batches = {
+                    int(row["batch_id"]): row
+                    for row in cached_rows
+                    if isinstance(row, dict) and "batch_id" in row
+                }
+        except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            LOG.warning("Could not load batch checkpoint: %s", exc)
+
     batch_results = []
     for batch_id, batch in enumerate(batches, start=1):
+        batch_subflows = [row["subflow"] for row in batch]
+        cached_batch = cached_batches.get(batch_id)
+        if cached_batch and cached_batch.get("subflows") == batch_subflows and cached_batch.get("summary"):
+            LOG.info("Resuming completed batch %d/%d", batch_id, len(batches))
+            batch_results.append(cached_batch)
+            continue
         LOG.info("Summarizing batch %d/%d (%d subflows)", batch_id, len(batches), len(batch))
         prompt = batch_prompt(batch, batch_id, len(batches))
         (out_dir / "prompts").mkdir(exist_ok=True)
         (out_dir / "prompts" / f"batch_{batch_id:03d}.md").write_text(prompt, encoding="utf-8")
         batch_results.append({
             "batch_id": batch_id,
-            "subflows": [row["subflow"] for row in batch],
+            "subflows": batch_subflows,
             "summary": call_llm(prompt, f"batch {batch_id}"),
         })
-    (out_dir / "batch_summaries.json").write_text(json.dumps(batch_results, indent=2, ensure_ascii=False), encoding="utf-8")
+        batch_cache_path.write_text(
+            json.dumps(batch_results, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        LOG.info("Saved batch checkpoint: %s", batch_cache_path)
+    batch_cache_path.write_text(
+        json.dumps(batch_results, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
 
     final_prompt_text = final_prompt(batch_results, overview)
     final = call_llm(final_prompt_text, "final report")
