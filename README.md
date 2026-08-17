@@ -405,10 +405,23 @@ python scripts/aggregate_subflow_results.py \
   --output outputs/awm_global.json
 ```
 
+如果全量 shell 运行中断，可以使用上一次运行生成的 manifest 继续执行。已完成且关键
+产物完整的 subflow 会自动跳过，失败或产物不完整的 subflow 会重新运行：
+
+```bash
+bash scripts/launch_full_abcd_experiments.sh \
+  --resume-manifest outputs/full_abcd_YYYY-MM-DD_HH-MM-SS_manifest.txt
+```
+
+恢复功能按方法检查关键产物；Graph Mining 只有在整个旧 graph run 的 subflow 结果都完整
+时才整体跳过。
+
 详细的共享模块、训练流程、输出核验和指标定义见
 [`EXPERIMENT_PIPELINE_OVERVIEW.md`](EXPERIMENT_PIPELINE_OVERVIEW.md)。
 
-`scripts/run_subflow_eval.py` supports three mining methods. The default
+当前使用的 AST、CDS、文本和 skill mining 指标说明见 [`METRICS.md`](METRICS.md)。
+
+`scripts/run_subflow_eval.py` supports four mining methods. The default
 `legacy` method is the original hypergraph vertex-cover baseline. The
 `sequence` method canonicalizes action nodes by removing instance-specific slot
 values, then mines a weighted action-sequence workflow:
@@ -448,6 +461,22 @@ python scripts/run_subflow_eval.py --subflow recover_password \
 Its `subgraph.json` stores the all-action graph, `backbone` tree,
 `local_transitions`, residual branch/retry edges, and compact observed-state
 conditions used by the skill compiler.
+
+The `backbone_coverage` method is a separate session-aware variant. It starts
+from the same turn-level backbone and preserves the original turn edge scores,
+then performs valid parent-edge swaps when they improve the combined objective
+of turn-level edge score plus session route coverage:
+
+```bash
+python scripts/run_subflow_eval.py --subflow recover_password \
+  --mining-method backbone_coverage \
+  --backbone-coverage-lambda 0.2
+```
+
+The original `backbone` output is unchanged. The coverage variant records its
+objective and coverage statistics in `subgraph.json` under
+`coverage_objective`, while still compiling the same all-action graph and local
+transition evidence.
 
 Useful sequence-mining knobs:
 

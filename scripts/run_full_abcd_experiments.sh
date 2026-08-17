@@ -24,6 +24,7 @@ METHOD="all"
 ONE_SUBFLOW=""
 MIN_SESSIONS=0
 GRAPH_MINING_METHOD="legacy"
+BACKBONE_COVERAGE_LAMBDA="0.2"
 SKIP_GRAPH_SEED=1
 EVOLUTION_BATCH_SIZE=25
 CONTINUE_ON_ERROR=1
@@ -38,7 +39,8 @@ Options:
   --method NAME              all, awm, expel, trace2skill, or graph (default: all)
   --subflow NAME             Run one subflow instead of the complete split list
   --min-sessions N           Graph Mining minimum train sessions (default: 0)
-  --graph-mining-method NAME legacy, sequence, or backbone (default: legacy HG vertex cover)
+  --graph-mining-method NAME legacy, sequence, backbone, or backbone_coverage (default: legacy HG vertex cover)
+  --backbone-coverage-lambda N  Session coverage weight for backbone_coverage (default: 0.2)
   --with-graph-seed         Also run the empty-workflow HG seed baseline
   --evolution-batch-size N   Trace2Skill outer batch size (default: 25)
   --stop-on-error            Stop at the first failed subflow
@@ -70,6 +72,11 @@ while [[ $# -gt 0 ]]; do
         --graph-mining-method)
             [[ $# -ge 2 ]] || { echo "Missing value for --graph-mining-method" >&2; exit 2; }
             GRAPH_MINING_METHOD="$2"
+            shift 2
+            ;;
+        --backbone-coverage-lambda)
+            [[ $# -ge 2 ]] || { echo "Missing value for --backbone-coverage-lambda" >&2; exit 2; }
+            BACKBONE_COVERAGE_LAMBDA="$2"
             shift 2
             ;;
         --with-graph-seed)
@@ -110,7 +117,7 @@ case "$METHOD" in
 esac
 
 case "$GRAPH_MINING_METHOD" in
-    legacy|sequence|backbone) ;;
+    legacy|sequence|backbone|backbone_coverage) ;;
     *)
         echo "Invalid --graph-mining-method: $GRAPH_MINING_METHOD" >&2
         exit 2
@@ -270,7 +277,8 @@ if [[ "$METHOD" == "all" || "$METHOD" == "graph" ]]; then
     echo "===== Graph Mining / independent subflows ====="
     graph_command=("$PYTHON_BIN" scripts/run_subflow_eval.py
         --min-sessions "$MIN_SESSIONS"
-        --mining-method "$GRAPH_MINING_METHOD")
+        --mining-method "$GRAPH_MINING_METHOD"
+        --backbone-coverage-lambda "$BACKBONE_COVERAGE_LAMBDA")
     if [[ -n "$ONE_SUBFLOW" ]]; then
         graph_command+=(--subflow "$ONE_SUBFLOW")
     else
