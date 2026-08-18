@@ -27,6 +27,16 @@ At each agent turn:
 - Do not invent missing slot values.
 - If an action takes no slots, output no slots.
 
+## Slot policy
+
+- For each ordered slot, identify whether its value comes from the latest
+  customer utterance, prior dialogue state, or stable scenario facts.
+- Use a value only after it has been established for the current request.
+- When a required value is missing or unverified, ask/verify it or defer the
+  dependent action; do not guess it from a similar dialogue.
+- Reuse an earlier value only when it still refers to the same customer,
+  request, or entity. Preserve slot order whenever values are reused.
+
 ## Response consistency
 
 - The response should reflect the selected action.

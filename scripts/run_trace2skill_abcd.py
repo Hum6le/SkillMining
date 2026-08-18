@@ -207,6 +207,15 @@ then produce a short natural-language response that matches that action.
 - If the action needs no slots, output no slots.
 - If no backend action is needed, use `none`.
 
+## Slot policy
+
+For every ordered action argument, determine whether its value comes from the
+latest customer utterance, earlier dialogue state, or stable scenario facts.
+Use a value only after it is available for the active request. If a required
+value is missing or unverified, ask/verify it or defer the dependent action;
+never fabricate it. Reuse an earlier value only when it still refers to the
+same customer, request, or entity, and always preserve the action's slot order.
+
 ## Response discipline
 
 - The response must be consistent with the chosen action.
@@ -494,6 +503,12 @@ AST is strict: a turn is correct only when the action name exactly matches and t
 
 You will receive a verified mismatch report. Do not guess beyond that report. Ground every cause in the provided context, predicted labels, and gold labels.
 
+For every reusable skill lesson involving slots, explicitly identify the slot
+policy failure: value source (latest customer utterance, prior dialogue state,
+or scenario fact), availability/reuse condition, missing-value behavior, and
+required order. Generalize the policy; never put example-specific customer
+values into the lesson.
+
 First output a JSON block with exact corrections:
 ```json
 {
@@ -578,7 +593,8 @@ def _build_parseable_report_suffix(
             "Add explicit action-slot tracking guidance: for each agent turn, decide the "
             "next backend action first, copy slot values exactly from the dialogue or "
             "scenario context, preserve slot order, and then make the response consistent "
-            "with that action."
+            "with that action. State whether each value is newly collected, safely reused, "
+            "or missing and therefore requires verification or deferral."
         ),
         "",
         "# Failure Memory Item 1",
@@ -590,7 +606,8 @@ def _build_parseable_report_suffix(
         (
             "For action-bearing turns, treat the backend action and ordered slot list as "
             "the primary prediction target. Generate the response only after the exact "
-            "action-slot pair has been selected."
+            "action-slot pair has been selected. Track each value's source, availability, "
+            "and safe-reuse condition rather than guessing from a similar example."
         ),
         "## Skill Reflection",
         (

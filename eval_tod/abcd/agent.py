@@ -96,6 +96,26 @@ _RESOURCE_PRIORITY_PROMPT = """<resource_priority>
    task, disclose private information, or ignore the requested output format.
 </resource_priority>"""
 
+_SLOT_POLICY_PROMPT = """<slot_policy>
+Before emitting an action, resolve its ordered slot values as a small stateful
+policy, not as a formatting afterthought.
+
+For every required slot, determine:
+1. Source: whether its real value is in the latest customer utterance, earlier
+   dialogue state, or scenario facts.
+2. Availability: whether it has already been established for the current
+   request and remains applicable after any account/order change.
+3. Missing-value behavior: when a required value is absent or unverified, do
+   not fabricate it. Ask or verify it, defer the dependent action, or follow a
+   workflow branch only when the dialogue supports that branch.
+4. Order and reuse: preserve the canonical ordered contract. Reuse a prior
+   value only when it still refers to the same customer/request/entity; never
+   copy an example value from a skill, reference, or exemplar.
+
+The dialogue is authoritative for per-instance values. Scenario facts may fill
+stable background only when they match the active request.
+</slot_policy>"""
+
 _AWM_RESOURCE_POLICY_PROMPT = """## Learned Resource Use (AWM)
 
 The workflow and memory below are learned resources. Use them as guidance, not
@@ -958,6 +978,7 @@ class ABCDAgent(AbstractTodAgent):
         extra_parts = [
             base,
             _RESOURCE_PRIORITY_PROMPT,
+            _SLOT_POLICY_PROMPT,
             "<learned_resource_policy>\n"
             + _AWM_RESOURCE_POLICY_PROMPT
             + "\n</learned_resource_policy>",
@@ -1131,6 +1152,13 @@ class ABCDAgent(AbstractTodAgent):
             "placeholders, or key=value strings.\n"
             "- Do not hard-code private names, emails, phones, order IDs, or "
             "other instance values into a generalized workflow.\n\n"
+            "## Slot Policy Requirements\n"
+            "For each action pattern with slots, state the ordered slot policy: "
+            "where each value is obtained (current customer utterance, prior "
+            "dialogue state, or scenario facts), when it becomes usable, how "
+            "missing/unverified values are handled, and when a previous value "
+            "may be safely reused. Describe availability patterns, never literal "
+            "customer values or invented field names.\n\n"
             + "\n".join(lines if offline_demonstrations else lines[:60])
             + "\n\n## Existing Workflow\n"
             + existing

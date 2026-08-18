@@ -77,6 +77,45 @@ def _slot_type(value: str) -> str:
     return "text"
 
 
+def _scenario_values(value: Any) -> list[str]:
+    """Flatten scalar scenario facts for conservative slot-source matching."""
+    if isinstance(value, dict):
+        return [item for child in value.values() for item in _scenario_values(child)]
+    if isinstance(value, list):
+        return [item for child in value for item in _scenario_values(child)]
+    text = str(value or "").strip()
+    return [text] if text else []
+
+
+def _slot_source_before(
+    conversation: dict[str, Any], action_turn_index: int, slot_value: str,
+) -> str:
+    """Classify where an observed value was available before an action."""
+    needle = str(slot_value).strip().casefold()
+    if not needle:
+        return "unresolved"
+    prior_rows = []
+    for index, turn in enumerate(conversation.get("delexed") or []):
+        if index >= action_turn_index:
+            break
+        prior_rows.append((str(turn.get("speaker") or ""), _original_text(conversation, index, turn)))
+    latest_customer_index = max(
+        (index for index, (speaker, _) in enumerate(prior_rows) if speaker.casefold() == "customer"),
+        default=-1,
+    )
+    for index in range(len(prior_rows) - 1, -1, -1):
+        speaker, text = prior_rows[index]
+        if needle in str(text).casefold():
+            return (
+                "current_customer"
+                if speaker.casefold() == "customer" and index == latest_customer_index
+                else "prior_dialogue"
+            )
+    if any(needle == candidate.casefold() for candidate in _scenario_values(conversation.get("scenario") or {})):
+        return "scenario"
+    return "unresolved"
+
+
 def _state_before(conversation: dict[str, Any], action_turn_index: int) -> dict[str, Any]:
     """Build a compact runtime-observable state snapshot before one action."""
     actions: list[str] = []
@@ -192,6 +231,7 @@ def mine_backbone_workflow(
     slot_examples: dict[str, list[list[str]]] = defaultdict(list)
     action_slot_counts: dict[str, Counter[int]] = defaultdict(Counter)
     slot_position_types: dict[str, dict[int, Counter[str]]] = defaultdict(lambda: defaultdict(Counter))
+    slot_position_sources: dict[str, dict[int, Counter[str]]] = defaultdict(lambda: defaultdict(Counter))
     action_schema = load_action_schema()
     operator_results: list[dict[str, Any]] = []
 
@@ -215,6 +255,9 @@ def mine_backbone_workflow(
             action_slot_counts[node][len(slots)] += 1
             for position, value in enumerate(slots):
                 slot_position_types[node][position][_slot_type(value)] += 1
+                slot_position_sources[node][position][
+                    _slot_source_before(conversation, turn_index, value)
+                ] += 1
             if slots and len(slot_examples[node]) < 8:
                 slot_examples[node].append(slots)
         if not steps:
@@ -376,6 +419,9 @@ def mine_backbone_workflow(
                         ),
                         "value_types": [
                             kind for kind, _ in slot_position_types[node][position].most_common()
+                        ],
+                        "source_types": [
+                            source for source, _ in slot_position_sources[node][position].most_common()
                         ],
                     }
                     for position in sorted(slot_position_types[node])
@@ -642,9 +688,14 @@ def sample_transition_cases(
             targets = turn.get("targets") or []
             if len(targets) < 3 or targets[1] != "take_action" or not targets[2]:
                 continue
-            action, _ = canonical_action_name(targets[2], schema.get("actions"))
+            action, suffix_slots = canonical_action_name(targets[2], schema.get("actions"))
             if action:
-                steps.append({"node": _node_id(subflow, action), "turn_index": turn_index})
+                raw_slots = targets[3] if len(targets) > 3 and isinstance(targets[3], list) else []
+                steps.append({
+                    "node": _node_id(subflow, action),
+                    "turn_index": turn_index,
+                    "slots": [str(value) for value in suffix_slots] + [str(value) for value in raw_slots],
+                })
         collapsed: list[dict[str, Any]] = []
         for step in steps:
             if not collapsed or collapsed[-1]["node"] != step["node"]:
@@ -666,6 +717,8 @@ def sample_transition_cases(
             cases[key].append({
                 "conversation_id": str(conversation.get("convo_id") or "?"),
                 "state": _state_before(conversation, target_index),
+                "source_slots": source.get("slots", []),
+                "target_slots": target.get("slots", []),
                 "context": "\n".join(context_lines),
             })
     return dict(cases)

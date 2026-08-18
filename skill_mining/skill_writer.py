@@ -1224,12 +1224,15 @@ def _build_backbone_skill_prompt(
         contract = node.get("slot_contract", {})
         position_contract = "; ".join(
             f"arg{item['position']}: {', '.join(item.get('value_types') or ['value'])} "
-            f"(required rate={item.get('required_rate', 0):.0%})"
+            f"(required rate={item.get('required_rate', 0):.0%}; observed sources="
+            f"{', '.join(item.get('source_types') or ['unresolved'])})"
             for item in contract.get("positions", [])
         )
         action_blocks.append(
             f"### {node['label']}\n"
             f"Ordered slot contract: count={slots or [0]}; {position_contract or 'no observed slot values'}\n"
+            f"Observed slot examples (evidence only; never reuse these values): "
+            f"{json.dumps(node.get('slot_examples', [])[:3], ensure_ascii=False)}\n"
             f"Transitions:\n" + ("\n".join(transition_lines) if transition_lines else "- No retained outgoing transition.")
         )
         if induced_rules.get(node_id):
@@ -1265,6 +1268,14 @@ def _build_backbone_skill_prompt(
   selected and the needed credentials are available").
 - Slots must be REAL values grounded in the current dialogue state. Never put
   field names, placeholders, or example values into an action slot.
+- Mine a reusable slot policy for every action with slots. For each ordered
+  argument, state: (1) allowed source(s): current customer utterance, prior
+  dialogue state, or scenario facts; (2) when it becomes usable; (3) what to
+  do when it is missing (ask/verify, defer the action, or follow an
+  evidence-backed alternative); and (4) whether it is newly collected or
+  safely reused from an earlier action. Use only the observed source evidence
+  and dialogue examples below. Do not invent semantic field names or turn an
+  example-specific value into a rule.
 - Define an explicit State Machine section using only these runtime-observable
   variables: `last_completed_action`, `account_selected`,
   `credential_types`, `credential_count`, and `failure_signal`. For every
@@ -1324,6 +1335,10 @@ Write only this Markdown document:
 - Use only real values available in the current dialogue state.
 - Preserve the action's observed slot order and do not emit schema labels.
 
+## Slot Policies
+#### `action-a`
+- `arg1`: source(s) ..., usable when ..., missing behavior ..., reuse rule ...
+
 ## Reference
 - `action-a`: see `reference.md`.
 ```
@@ -1354,13 +1369,23 @@ def induce_transition_rules(
             key = f"{source} -> {edge['target']}"
             lines.append(f"Target: {edge['target']} ({nodes.get(edge['target'], edge['target'])})")
             for case in edge_cases.get(key, []):
+                lines.append(
+                    "Observed action-slot evidence: "
+                    f"source_slots={case.get('source_slots', [])}; "
+                    f"target_slots={case.get('target_slots', [])}; "
+                    f"state={json.dumps(case.get('state', {}), ensure_ascii=False)}"
+                )
                 lines.append(f"Raw session prefix:\n{case.get('context', '')[:1800]}")
         groups.append("\n".join(lines))
 
     discovery_prompt = f"""Discover continuation modes for a session-mined action graph.
 
 For EACH source, compare ALL outgoing target groups jointly using their raw
-session prefixes. Do not invent a guard merely because every edge needs text.
+session prefixes and observed action-slot evidence. Treat a slot value as an
+instance value, never as a reusable constant. When a branch is supported by a
+value becoming available, missing, changing, or being reused from prior state,
+describe that availability pattern rather than the literal value. Do not invent
+a guard merely because every edge needs text.
 For each target choose exactly one status: `distinguishable` when a current
 dialogue clue selects it, `ordered_fallback` when it is only valid after a
 normal route cannot proceed, or `underspecified` when the supplied prefixes do
@@ -1608,6 +1633,13 @@ Write a Markdown document with this structure:
 [For each branch point, describe WHEN to choose which path. Use edge weights
 as indicators of how common each path is.]
 
+## Slot Policies
+[For each operator that takes slots, describe each ordered argument's allowed
+source (current customer utterance, prior dialogue state, or scenario facts),
+when it becomes available, what to do when it is missing/unverified, and when
+an earlier value may be reused. Do not write example-specific values or invent
+slot field names.]
+
 ## Operator Reference
 [Link each operator to its reference snippet. Format:]
 - `op_name` — [brief description]. See [reference.md#op-name](reference.md#op-name)
@@ -1616,6 +1648,8 @@ as indicators of how common each path is.]
 ## Important
 - Derive branching CONDITIONS from operator names, edge patterns, and snippet context.
 - Higher edge weight = more common transition. Use this to prioritise the main path.
+- Treat slot values as stateful resources: infer source, availability,
+  missing-value behavior, and safe reuse, not only their output order.
 - Write ONLY the Markdown document, no extra commentary."""
 
 
