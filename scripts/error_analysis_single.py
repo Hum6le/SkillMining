@@ -544,6 +544,18 @@ def main() -> None:
     parser.add_argument("--subflow", default="unknown")
     parser.add_argument("--model", default="deepseek-chat")
     parser.add_argument("--no-llm", action="store_true", help="Only compute stats and JSON cases")
+    analysis_scope = parser.add_mutually_exclusive_group()
+    analysis_scope.add_argument(
+        "--all-fail-cases",
+        action="store_true",
+        help="LLM-analyze every AST joint-failure case (this is also the default)",
+    )
+    analysis_scope.add_argument(
+        "--max-fail-cases",
+        type=int,
+        default=None,
+        help="Analyze at most this many AST joint-failure cases, in deterministic dataset order",
+    )
     parser.add_argument("--output-dir", default="", help="Optional explicit output directory")
     parser.add_argument(
         "--resume-dir",
@@ -624,6 +636,10 @@ def main() -> None:
             + categories["both_wrong"]
             + categories["missing_prediction"]
         )
+        if args.max_fail_cases is not None:
+            if args.max_fail_cases < 1:
+                parser.error("--max-fail-cases must be at least 1")
+            cases_to_analyze = cases_to_analyze[:args.max_fail_cases]
         cache_path = out_dir / "case_analyses.json"
         analysis_cache = _load_analysis_cache(cache_path)
         pending = [
@@ -631,8 +647,9 @@ def main() -> None:
             if _case_key(entry) not in analysis_cache
         ]
         log.info(
-            "LLM cases: %d total, %d cached, %d pending",
+            "LLM cases: %d selected (%s), %d cached, %d pending",
             len(cases_to_analyze),
+            "all failures" if args.max_fail_cases is None else f"first {args.max_fail_cases} failures",
             len(cases_to_analyze) - len(pending),
             len(pending),
         )
