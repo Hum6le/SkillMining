@@ -9,6 +9,10 @@ AWM/config.py
 *.env
 *.env.local
 
+# Local LLM routing client/config (workflow provider), not project content
+/config.py
+/llm_new.py
+
 # Large data files (only keep dummy_data.json for testing)
 data/eval/multiwoz21/data.zip
 data/eval/multiwoz21/data/data/dialogues.json
