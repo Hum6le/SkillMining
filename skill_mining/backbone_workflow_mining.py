@@ -655,7 +655,10 @@ def sample_transition_cases(
                 continue
             target_index = target["turn_index"]
             context_lines: list[str] = []
-            for index in range(max(0, target_index - 3), target_index):
+            # Keep the full prefix so continuation-mode induction can inspect
+            # earlier verification, request, and failure turns. The compiler
+            # prompt applies its own per-case character budget.
+            for index in range(0, target_index):
                 turn = (conversation.get("delexed") or [])[index]
                 speaker, text = _get_speaker_text(conversation, index, turn)
                 if text:

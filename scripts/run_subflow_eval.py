@@ -444,8 +444,8 @@ def main():
                         help="Max retained outgoing transitions per action for backbone mining")
     parser.add_argument("--backbone-min-branch-support", type=int, default=2,
                         help="Min support for non-backbone branch/retry transitions")
-    parser.add_argument("--backbone-transition-cases", type=int, default=2,
-                        help="Training cases sampled for each outgoing edge during joint transition induction")
+    parser.add_argument("--backbone-transition-cases", type=int, default=6,
+                        help="Training cases sampled for each outgoing edge during joint continuation-mode induction")
     parser.add_argument("--backbone-coverage-lambda", type=float, default=0.2,
                         help="Weight of session coverage in backbone_coverage edge selection")
     parser.add_argument("--sequence-min-edge-support", type=int, default=2,

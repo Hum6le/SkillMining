@@ -1234,8 +1234,9 @@ def _build_backbone_skill_prompt(
         )
         if induced_rules.get(node_id):
             rendered = "\n".join(
-                f"- priority {rule['priority']}: -> {nodes.get(rule['target'], {}).get('label', rule['target'])}; "
-                f"condition={rule['condition']}; relation={rule['relation']}"
+                f"- -> {nodes.get(rule['target'], {}).get('label', rule['target'])}; "
+                f"mode={rule.get('status', 'underspecified')}; "
+                f"condition={rule.get('condition') or '(insufficient observable evidence)'}"
                 for rule in induced_rules[node_id]
             )
             action_blocks[-1] += "\nJoint transition induction:\n" + rendered
@@ -1274,9 +1275,10 @@ def _build_backbone_skill_prompt(
 - Be concise: one short main path and at most one short transition rule per
   retained outgoing edge. Concision applies within each rule; it does not allow
   omitting retained actions or their supported outgoing transitions.
-- When Joint transition induction is present, it is authoritative for branch
-  conditions, relation (exclusive, overlap, or fallback), and priority. Do not
-  replace it with conditions inferred from a single example.
+- When continuation-mode induction is present, treat `distinguishable` modes as
+  evidence-backed guards, write `ordered_fallback` only after the normal route
+  cannot proceed, and do not invent a deterministic branch condition for an
+  `underspecified` mode.
 
 ## Skill
 Skill ID: {subflow}
@@ -1334,7 +1336,7 @@ def induce_transition_rules(
     edge_cases: dict[str, list[dict[str, Any]]],
     max_retries: int = 3,
 ) -> dict[str, Any]:
-    """Jointly infer outgoing-edge guards for each source action with an LLM."""
+    """Discover and verify continuation modes from grouped session evidence."""
     from llm import chat
 
     nodes = {node["id"]: node["label"] for node in subgraph.get("nodes", [])}
@@ -1350,74 +1352,71 @@ def induce_transition_rules(
         lines = [f"### Source: {source} ({nodes.get(source, source)})"]
         for edge in sorted(edges, key=lambda item: (-item["support"], item["target"])):
             key = f"{source} -> {edge['target']}"
-            lines.append(
-                f"Target: {edge['target']} ({nodes.get(edge['target'], edge['target'])}); "
-                f"support={edge['support']}; P={edge['probability']}; observed={edge.get('condition', {})}"
-            )
+            lines.append(f"Target: {edge['target']} ({nodes.get(edge['target'], edge['target'])})")
             for case in edge_cases.get(key, []):
-                lines.append(
-                    f"Case state={case.get('state', {})}\n"
-                    f"Case context:\n{case.get('context', '')[:500]}"
-                )
+                lines.append(f"Raw session prefix:\n{case.get('context', '')[:1800]}")
         groups.append("\n".join(lines))
 
-    prompt = f"""Infer compact transition guards for a mined customer-service action graph.
+    discovery_prompt = f"""Discover continuation modes for a session-mined action graph.
 
-For EACH source action, compare ALL listed outgoing target cases jointly. Do
-not infer a condition from one target in isolation. Conditions may use only
-runtime-observable dialogue state (previous actions, entity availability,
-customer request, explicit failure signal), never concrete example values.
-
-For every listed target output: a concise condition, an integer priority, and
-one relation label: `exclusive`, `overlap`, or `fallback`. Use `exclusive` only
-when the cases support mutual exclusion. When guards overlap, preserve the
-overlap label and resolve with priority; do not pretend they are disjoint.
-Do not add actions or targets not present below.
+For EACH source, compare ALL outgoing target groups jointly using their raw
+session prefixes. Do not invent a guard merely because every edge needs text.
+For each target choose exactly one status: `distinguishable` when a current
+dialogue clue selects it, `ordered_fallback` when it is only valid after a
+normal route cannot proceed, or `underspecified` when the supplied prefixes do
+not uniquely explain why it differs from another target. Use an empty guard for
+underspecified modes. Do not add targets.
 
 {chr(10).join(groups)}
 
 Return ONLY JSON in this schema:
-{{"rules_by_source": {{
-  "SOURCE_ID": [
-    {{"target": "TARGET_ID", "condition": "...", "priority": 1,
-      "relation": "exclusive|overlap|fallback"}}
-  ]
-}}}}
-"""
+{{"modes_by_source": {{
+  "SOURCE_ID": [{{"target": "TARGET_ID", "status": "distinguishable|ordered_fallback|underspecified", "guard": "...", "evidence": "..."}}]
+}}}}"""
+
+    def clean_modes(payload: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
+        raw_modes = payload.get("modes_by_source", {}) if isinstance(payload, dict) else {}
+        result: dict[str, list[dict[str, str]]] = {}
+        for source, targets in allowed.items():
+            rows = raw_modes.get(source, []) if isinstance(raw_modes, dict) else []
+            parsed = {str(row.get("target")): row for row in rows if isinstance(row, dict)}
+            result[source] = []
+            for target in sorted(targets):
+                row = parsed.get(target, {})
+                status = str(row.get("status") or "underspecified").lower()
+                if status not in {"distinguishable", "ordered_fallback", "underspecified"}:
+                    status = "underspecified"
+                guard = str(row.get("guard") or "").strip() if status != "underspecified" else ""
+                result[source].append({"target": target, "status": status, "condition": guard})
+        return result
 
     last_error: Exception | None = None
     for attempt in range(max_retries):
         try:
-            raw = chat(prompt, temperature=0.0).strip()
-            text = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.I | re.S).strip()
-            parsed = json.loads(text)
-            raw_rules = parsed.get("rules_by_source", {}) if isinstance(parsed, dict) else {}
-            rules_by_source: dict[str, list[dict[str, Any]]] = {}
-            for source, rules in raw_rules.items():
-                if source not in allowed or not isinstance(rules, list):
-                    continue
-                cleaned = []
-                for rule in rules:
-                    target = str(rule.get("target") or "")
-                    relation = str(rule.get("relation") or "overlap").lower()
-                    if target not in allowed[source] or relation not in {"exclusive", "overlap", "fallback"}:
-                        continue
-                    cleaned.append({
-                        "target": target,
-                        "condition": str(rule.get("condition") or "observed dialogue state supports this transition").strip(),
-                        "priority": max(1, int(rule.get("priority", len(cleaned) + 1))),
-                        "relation": relation,
-                    })
-                if cleaned:
-                    rules_by_source[source] = sorted(cleaned, key=lambda item: (item["priority"], item["target"]))
-            if rules_by_source:
-                return {"rules_by_source": rules_by_source, "raw_output": raw}
-            raise ValueError("LLM returned no valid transition rules")
+            discovery_raw = chat(discovery_prompt, temperature=0.0).strip()
+            discovery = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", discovery_raw, flags=re.I | re.S).strip())
+            proposed = clean_modes(discovery)
+            verifier_prompt = f"""Verify proposed continuation modes against the original grouped session prefixes.
+Reject ambiguous guards: if two targets from the same source match the same
+visible situation, mark the unsupported target `underspecified` or
+`ordered_fallback`; never resolve ambiguity with an arbitrary priority.
+
+Original evidence:
+{chr(10).join(groups)}
+
+Proposed modes:
+{json.dumps({"modes_by_source": proposed}, ensure_ascii=False)}
+
+Return ONLY JSON in the same `modes_by_source` schema, covering every target."""
+            verified_raw = chat(verifier_prompt, temperature=0.0).strip()
+            verified = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", verified_raw, flags=re.I | re.S).strip())
+            rules_by_source = clean_modes(verified)
+            return {"rules_by_source": rules_by_source, "discovery_raw_output": discovery_raw, "verifier_raw_output": verified_raw}
         except Exception as exc:
             last_error = exc
             if attempt + 1 < max_retries:
                 time.sleep(_SKILL_LLM_RETRY_BASE_DELAY * (2 ** attempt))
-    raise RuntimeError(f"Transition induction failed for {subflow}: {last_error}")
+    raise RuntimeError(f"Continuation-mode induction failed for {subflow}: {last_error}")
 
 
 def _build_skill_md_from_backbone_fallback(subflow: str, subgraph: dict) -> str:
