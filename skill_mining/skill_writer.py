@@ -249,18 +249,18 @@ def build_skill_md_from_backbone(
     op_snippets: Dict[str, list[dict]],
     use_llm: bool = True,
     transition_induction: dict[str, Any] | None = None,
+    branch_route_plan: dict[str, Any] | None = None,
 ) -> str:
-    """Compile a backbone skill in a main-path seed round plus branch patches.
+    """Compile a backbone skill as a primary route plus routing-policy synthesis.
 
-    The first LLM call writes only the primary execution spine.  Subsequent
-    calls receive one source action's retained local transitions and make a
-    restricted ``upsert_action_rule`` filesystem-style tool call.  The runtime
-    applies that call to exactly one Markdown action-rule block, so a branch
-    refinement cannot erase unrelated rules already accepted into the skill.
+    The first LLM call writes only the stable primary route. A second joint
+    call consumes the deterministic branch-route plan and replaces one bounded
+    routing section, preserving the backbone while organizing branches by
+    decision point, recovery path, and rejoin behavior.
     """
     if use_llm:
-        return _compile_backbone_skill_iteratively(
-            subflow, subgraph, op_snippets, transition_induction,
+        return _compile_structured_backbone_skill(
+            subflow, subgraph, op_snippets, branch_route_plan,
         )
     return _build_skill_md_from_backbone_fallback(subflow, subgraph)
 
@@ -269,6 +269,223 @@ _ACTION_RULES_START = "<!-- ACTION_RULES_START -->"
 _ACTION_RULES_END = "<!-- ACTION_RULES_END -->"
 _TRANSITION_RULES_START = "<!-- TRANSITION_RULES_START -->"
 _TRANSITION_RULES_END = "<!-- TRANSITION_RULES_END -->"
+_ROUTING_SECTION_START = "<!-- ROUTING_SECTION_START -->"
+_ROUTING_SECTION_END = "<!-- ROUTING_SECTION_END -->"
+
+
+def _route_edge_marker(edge_id: str) -> str:
+    return f"<!-- ROUTE_EDGE:{edge_id} -->"
+
+
+def _validate_structured_seed_skill(skill: str) -> None:
+    if skill.count(_ROUTING_SECTION_START) != 1 or skill.count(_ROUTING_SECTION_END) != 1:
+        raise ValueError("structured seed skill must preserve the ROUTING_SECTION anchors exactly once")
+    if skill.index(_ROUTING_SECTION_START) >= skill.index(_ROUTING_SECTION_END):
+        raise ValueError("ROUTING_SECTION anchors are out of order")
+    if "### Primary Route" not in skill:
+        raise ValueError("structured seed skill omitted the primary route")
+
+
+def _replace_routing_section(skill: str, content: str) -> str:
+    if skill.count(_ROUTING_SECTION_START) != 1 or skill.count(_ROUTING_SECTION_END) != 1:
+        raise ValueError("skill does not contain a unique ROUTING_SECTION region")
+    start = skill.index(_ROUTING_SECTION_START) + len(_ROUTING_SECTION_START)
+    end = skill.index(_ROUTING_SECTION_END)
+    if start > end:
+        raise ValueError("ROUTING_SECTION markers are out of order")
+    return skill[:start] + "\n\n" + content.strip() + "\n\n" + skill[end:]
+
+
+def _build_structured_seed_prompt(subflow: str, subgraph: dict[str, Any]) -> str:
+    nodes = {node["id"]: node for node in subgraph.get("nodes", [])}
+    main_path = subgraph.get("backbone", {}).get("main_path", [])
+    main_labels = [nodes[node_id]["label"] for node_id in main_path if node_id in nodes]
+    return f"""Write the stable backbone seed of an evidence-grounded customer-service skill.
+
+This is the first stage of a two-stage compiler. Write the user-facing task
+goal, a concise runtime-state note, and only the primary route. Do not enumerate
+action-level preconditions, post-states, raw edges, branches, or retries here.
+A later routing synthesis stage adds those as organized decision policies.
+
+<backbone>
+Skill ID: {subflow}
+Primary route: {' -> '.join(main_labels) or '(single-action skill)'}
+</backbone>
+
+Return only Markdown and preserve the two HTML anchors exactly:
+
+```markdown
+# Skill: {subflow}
+
+## Intent
+[One concise sentence describing the customer request this skill handles.]
+
+## Runtime State
+- Track only state needed to choose routes, such as completed actions, selected entities, supplied credential types, and explicit failure signals.
+
+## Workflow
+### Primary Route
+1. `action-a` -> `action-b` -> ...
+
+### Routing Policies
+{_ROUTING_SECTION_START}
+{_ROUTING_SECTION_END}
+
+## Reference Use
+- Consult `reference.md` only when a route condition or action-specific dialogue pattern is uncertain.
+```
+"""
+
+
+def _render_route_plan_evidence(
+    plan: dict[str, Any],
+    op_snippets: Dict[str, list[dict]],
+) -> str:
+    parts: list[str] = []
+    seen_sources: set[str] = set()
+    for cluster in plan.get("clusters", []):
+        parts.append(
+            f"## Decision anchor: {cluster['anchor_label']} ({cluster['anchor']})\n"
+            f"Normal main-path continuation: {cluster.get('normal_next_label') or '(none)'}"
+        )
+        for route in cluster.get("routes", []):
+            parts.append(
+                "- edge_id=" + route["edge_id"]
+                + f"; {route['source_label']} -> {route['target_label']}"
+                + f"; type={route['route_type']}; graph_kind={route['kind']}"
+                + f"; priority={route['priority']}; relation={route['relation']}"
+                + f"; condition={route['condition'] or route['observed_condition']}"
+                + f"; likely_rejoin={route['likely_rejoin_label'] or '(none)'}"
+                + f"; suggested_route={' -> '.join(route['suggested_route_labels']) or '(none)'}"
+            )
+            source = route["source"]
+            if source not in seen_sources and op_snippets.get(source):
+                seen_sources.add(source)
+                parts.append("  evidence:\n```text\n" + op_snippets[source][0]["snippet_text"][:320] + "\n```")
+    return "\n".join(parts) if parts else "(No retained non-main transitions.)"
+
+
+def _build_routing_synthesis_prompt(
+    subflow: str,
+    current_skill: str,
+    branch_route_plan: dict[str, Any],
+    op_snippets: Dict[str, list[dict]],
+) -> str:
+    edge_ids = branch_route_plan.get("selected_edge_ids", [])
+    edge_markers = "\n".join("- " + _route_edge_marker(edge_id) for edge_id in edge_ids) or "- (none)"
+    evidence = _render_route_plan_evidence(branch_route_plan, op_snippets)
+    return f"""Organize retained graph branches into a concise routing policy for a
+customer-service skill. The primary route in the current skill is fixed.
+
+Do not produce a flat list of source-target rules or a per-action specification.
+Organize the evidence around its main-path decision anchors. State the normal
+continuation once per anchor, group related alternatives into short routes, and
+explicitly say where a recovery route rejoins an existing/main-path action.
+Put retry or loop behavior under `### Recovery And Retry`. Preserve overlap and
+priority: only call branches mutually exclusive when relation is `exclusive`;
+otherwise write ordered alternatives or fallback. Keep the document compact and
+explain control-flow logic rather than every action's pre/post-condition.
+
+<current_skill>
+{current_skill}
+</current_skill>
+
+<deterministic_branch_route_plan>
+{evidence}
+</deterministic_branch_route_plan>
+
+<coverage_contract>
+Every selected graph edge must have exactly one invisible marker in the routing
+content. Put a marker beside the decision/route it supports. These are compiler
+validation metadata, not user-facing text.
+Required markers:
+{edge_markers}
+</coverage_contract>
+
+<filesystem_mcp>
+Use exactly one constrained operation:
+```json
+{{
+  "operations": [
+    {{
+      "op": "replace_routing_section",
+      "content": "Markdown beginning with ### Decision Point: ... and/or ### Recovery And Retry ..."
+    }}
+  ]
+}}
+```
+It replaces only content between ROUTING_SECTION anchors. It cannot change the
+intent, runtime state, primary route, or reference-use sections.
+</filesystem_mcp>
+
+Return ONLY one valid JSON object, without Markdown fences.
+"""
+
+
+def _parse_routing_patch(raw: str, expected_edge_ids: set[str]) -> str:
+    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.I | re.S).strip()
+    parsed = json.loads(text)
+    operations = parsed.get("operations") if isinstance(parsed, dict) else None
+    if not isinstance(operations, list) or len(operations) != 1:
+        raise ValueError("routing synthesis must return exactly one operation")
+    operation = operations[0]
+    if not isinstance(operation, dict) or operation.get("op") != "replace_routing_section":
+        raise ValueError("unsupported filesystem-MCP routing operation")
+    content = str(operation.get("content") or "").strip()
+    if not content:
+        raise ValueError("routing synthesis returned empty content")
+    found = set(re.findall(r"<!-- ROUTE_EDGE:(.*?) -->", content))
+    if found != expected_edge_ids:
+        missing = sorted(expected_edge_ids - found)
+        unexpected = sorted(found - expected_edge_ids)
+        raise ValueError(f"routing coverage mismatch; missing={missing}, unexpected={unexpected}")
+    return content
+
+
+def _compile_structured_backbone_skill(
+    subflow: str,
+    subgraph: dict[str, Any],
+    op_snippets: Dict[str, list[dict]],
+    branch_route_plan: dict[str, Any] | None,
+) -> str:
+    """Compile a concise backbone skill with one global routing synthesis pass."""
+    if branch_route_plan is None:
+        from skill_mining.branch_route_planning import build_branch_route_plan
+        branch_route_plan = build_branch_route_plan(subgraph)
+    seed = _compile_skill_with_retry(
+        _build_structured_seed_prompt(subflow, subgraph),
+        subflow,
+        validator=_validate_structured_seed_skill,
+    )
+    expected_edge_ids = set(branch_route_plan.get("selected_edge_ids", []))
+    if not expected_edge_ids:
+        return seed
+
+    from llm import chat
+    print(
+        f"  Structured routing synthesis for {subflow}: "
+        f"{len(branch_route_plan.get('clusters', []))} decision anchors, "
+        f"{len(expected_edge_ids)} retained non-main edges, 1 LLM call"
+    )
+    prompt = _build_routing_synthesis_prompt(subflow, seed, branch_route_plan, op_snippets)
+    last_error: Exception | None = None
+    for attempt in range(1, _SKILL_LLM_MAX_RETRIES + 1):
+        try:
+            content = _parse_routing_patch(chat(prompt, temperature=0.0).strip(), expected_edge_ids)
+            return _replace_routing_section(seed, content)
+        except Exception as exc:
+            last_error = exc
+            if attempt < _SKILL_LLM_MAX_RETRIES:
+                delay = _SKILL_LLM_RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                print(
+                    f"  LLM routing synthesis failed for {subflow} "
+                    f"(attempt {attempt}/{_SKILL_LLM_MAX_RETRIES}): {exc}; retrying in {delay:.1f}s"
+                )
+                time.sleep(delay)
+    raise RuntimeError(
+        f"LLM routing synthesis failed for {subflow} after "
+        f"{_SKILL_LLM_MAX_RETRIES} attempts: {last_error}"
+    )
 
 
 def _action_heading(label: str) -> str:
