@@ -222,7 +222,6 @@ def mine_subflow_skill_backbone(
         mine_backbone_workflow, mine_backbone_workflow_session_coverage,
         sample_transition_cases,
     )
-    from skill_mining.branch_route_planning import build_branch_route_plan
     from skill_mining.skill_writer import (
         _find_operator_snippets, build_reference_md,
         build_skill_md_from_backbone, induce_transition_rules,
@@ -260,8 +259,6 @@ def mine_subflow_skill_backbone(
         subflow, mined["subgraph"], edge_cases,
     )
     mined["subgraph"]["transition_induction"] = transition_induction
-    branch_route_plan = build_branch_route_plan(mined["subgraph"])
-    mined["subgraph"]["branch_route_plan"] = branch_route_plan
 
     if artifact_dir is not None:
         artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -277,9 +274,6 @@ def mine_subflow_skill_backbone(
         (artifact_dir / "transition_cases.json").write_text(
             json.dumps(edge_cases, indent=2, ensure_ascii=False), encoding="utf-8",
         )
-        (artifact_dir / "branch_route_plan.json").write_text(
-            json.dumps(branch_route_plan, indent=2, ensure_ascii=False), encoding="utf-8",
-        )
 
     log.info("  Compiling backbone skill.md via LLM...")
     skill_md = build_skill_md_from_backbone(
@@ -288,7 +282,6 @@ def mine_subflow_skill_backbone(
         op_snippets,
         use_llm=True,
         transition_induction=transition_induction,
-        branch_route_plan=branch_route_plan,
     )
     return {**mined, "reference_md": reference_md, "skill_md": skill_md}
 
