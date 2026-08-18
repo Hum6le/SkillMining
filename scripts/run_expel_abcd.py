@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import asdict
 from datetime import datetime
@@ -58,7 +59,10 @@ def main():
     if args.eval_only and not args.eval_from:
         parser.error("--eval-only requires --eval-from")
 
-    out = ROOT / "outputs" / f"expel_abcd_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+    out = Path(os.environ.get(
+        "ABCD_OUTPUT_DIR",
+        str(ROOT / "outputs" / f"expel_abcd_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}")
+    ))
     out.mkdir(parents=True, exist_ok=True)
     train = _load_subflow("train", args.subflow, args.max_train)
     test = _load_subflow("test", args.subflow, args.max_test)
@@ -101,6 +105,15 @@ def main():
     (out / "test_turn_predictions.json").write_text(json.dumps(test_turns, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
     (out / "test_abcd_predictions.json").write_text(json.dumps(abcd_records, indent=2, ensure_ascii=False), encoding="utf-8")
     (out / "result.json").write_text(json.dumps(result, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+    # Match the shared independent-subflow aggregation contract.
+    summary = {
+        "config": {"method": "expel", "subflow": args.subflow},
+        "data": {"train_sessions": len(train), "test_sessions": len(test)},
+        "final_test": result,
+    }
+    (out / "summary.json").write_text(
+        json.dumps(summary, indent=2, ensure_ascii=False, default=str), encoding="utf-8"
+    )
     print(result["summary"])
     print(f"saved: {out}")
 

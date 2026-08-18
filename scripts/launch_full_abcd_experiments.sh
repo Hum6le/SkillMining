@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
-# Launch the complete sequential ABCD runner in the background.
+# Launch the complete ABCD runner in the background. The underlying runner can
+# distribute balanced subflow workers across --workflow-ids.
 # All arguments are forwarded to run_full_abcd_experiments.sh.
 
 set -u

@@ -14,6 +14,7 @@ What it does:
 
 import json
 import logging
+import os
 import re
 import sys
 from datetime import datetime
@@ -37,7 +38,9 @@ SEED = 42
 
 # ── Setup ─────────────────────────────────────────────────────
 _TIMESTAMP = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-OUT_DIR = Path(f"outputs/awm_abcd_{_TIMESTAMP}")
+# The full parallel launcher sets this to a unique method/subflow directory.
+# Retain the timestamped default for direct, standalone invocations.
+OUT_DIR = Path(os.environ.get("ABCD_OUTPUT_DIR", f"outputs/awm_abcd_{_TIMESTAMP}"))
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 TRAINING_TRACE_PATH = OUT_DIR / "training_turns.jsonl"
 

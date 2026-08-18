@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 from collections import defaultdict
 from datetime import datetime
@@ -47,7 +48,9 @@ SPLITS_DIR = Path("data/eval/abcd/splits")
 MODEL = "deepseek-chat"
 
 _TIMESTAMP = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-OUT_DIR = Path(f"outputs/subflow_eval_{_TIMESTAMP}")
+# The full parallel launcher sets this to a unique method/subflow directory.
+# Retain the timestamped default for direct, standalone invocations.
+OUT_DIR = Path(os.environ.get("ABCD_OUTPUT_DIR", f"outputs/subflow_eval_{_TIMESTAMP}"))
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(

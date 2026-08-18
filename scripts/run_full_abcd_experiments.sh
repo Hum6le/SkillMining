@@ -1,16 +1,10 @@
 #!/usr/bin/env bash
 
-# Run the ABCD experiments under the independent-subflow protocol.
+# Run ABCD under the independent-subflow protocol.
 #
-# AWM, ExpeL, and Trace2Skill are invoked once per subflow. Graph Mining uses its
-# independent --all mode. The script activates conda, sets the HF mirror,
-# records failed runs, and writes weighted global summaries.
-#
-# Examples:
-#   bash scripts/run_full_abcd_experiments.sh
-#   bash scripts/run_full_abcd_experiments.sh --method awm
-#   bash scripts/run_full_abcd_experiments.sh --subflow recover_username
-#   bash scripts/run_full_abcd_experiments.sh --method trace2skill --stop-on-error
+# When --workflow-ids is supplied, subflows are balanced by actual agent-turn
+# volume and each bucket is executed by one worker bound to one workflow API.
+# This avoids config.py races and keeps requests to one workflow serial.
 
 set -uo pipefail
 
@@ -30,6 +24,7 @@ EVOLUTION_BATCH_SIZE=25
 CONTINUE_ON_ERROR=1
 PYTHON_BIN="python"
 REBUILD_SPLITS=1
+WORKFLOW_IDS_RAW=""
 
 usage() {
     cat <<'EOF'
@@ -37,361 +32,222 @@ Usage: bash scripts/run_full_abcd_experiments.sh [options]
 
 Options:
   --method NAME              all, awm, expel, trace2skill, or graph (default: all)
-  --subflow NAME             Run one subflow instead of the complete split list
+  --subflow NAME             Run one subflow instead of all complete split directories
+  --workflow-ids IDS         Comma-separated workflow IDs. One balanced, serial worker is
+                             started per ID; workers run in parallel. Example: id_a,id_b,id_c
   --min-sessions N           Graph Mining minimum train sessions (default: 0)
-  --graph-mining-method NAME legacy, sequence, backbone, or backbone_coverage (default: legacy HG vertex cover)
+  --graph-mining-method NAME legacy, sequence, backbone, or backbone_coverage (default: legacy)
   --backbone-coverage-lambda N  Session coverage weight for backbone_coverage (default: 0.2)
-  --with-graph-seed         Also run the empty-workflow HG seed baseline
+  --with-graph-seed          Also run the empty-workflow HG seed baseline
   --evolution-batch-size N   Trace2Skill outer batch size (default: 25)
-  --stop-on-error            Stop at the first failed subflow
+  --stop-on-error            Stop the affected worker at its first failed subflow
   --no-rebuild-splits        Reuse existing subflow session splits
   -h, --help                 Show this help
 
-The script always activates conda environment skillmining310 and sets:
-  HF_ENDPOINT=https://hf-mirror.com
+Worker load is balanced by train+test non-empty agent utterance turns, not
+conversation count. The selected workflow ID is exported as
+SKILLMINING_WORKFLOW_ID; the workflow-aware llm.py must honor this override.
+Without --workflow-ids, one serial worker uses config.py unchanged.
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --method)
-            [[ $# -ge 2 ]] || { echo "Missing value for --method" >&2; exit 2; }
-            METHOD="$2"
-            shift 2
-            ;;
-        --subflow)
-            [[ $# -ge 2 ]] || { echo "Missing value for --subflow" >&2; exit 2; }
-            ONE_SUBFLOW="$2"
-            shift 2
-            ;;
-        --min-sessions)
-            [[ $# -ge 2 ]] || { echo "Missing value for --min-sessions" >&2; exit 2; }
-            MIN_SESSIONS="$2"
-            shift 2
-            ;;
-        --graph-mining-method)
-            [[ $# -ge 2 ]] || { echo "Missing value for --graph-mining-method" >&2; exit 2; }
-            GRAPH_MINING_METHOD="$2"
-            shift 2
-            ;;
-        --backbone-coverage-lambda)
-            [[ $# -ge 2 ]] || { echo "Missing value for --backbone-coverage-lambda" >&2; exit 2; }
-            BACKBONE_COVERAGE_LAMBDA="$2"
-            shift 2
-            ;;
-        --with-graph-seed)
-            SKIP_GRAPH_SEED=0
-            shift
-            ;;
-        --evolution-batch-size)
-            [[ $# -ge 2 ]] || { echo "Missing value for --evolution-batch-size" >&2; exit 2; }
-            EVOLUTION_BATCH_SIZE="$2"
-            shift 2
-            ;;
-        --stop-on-error)
-            CONTINUE_ON_ERROR=0
-            shift
-            ;;
-        --no-rebuild-splits)
-            REBUILD_SPLITS=0
-            shift
-            ;;
-        -h|--help)
-            usage
-            exit 0
-            ;;
-        *)
-            echo "Unknown argument: $1" >&2
-            usage >&2
-            exit 2
-            ;;
+        --method) METHOD="$2"; shift 2 ;;
+        --subflow) ONE_SUBFLOW="$2"; shift 2 ;;
+        --workflow-ids) WORKFLOW_IDS_RAW="$2"; shift 2 ;;
+        --min-sessions) MIN_SESSIONS="$2"; shift 2 ;;
+        --graph-mining-method) GRAPH_MINING_METHOD="$2"; shift 2 ;;
+        --backbone-coverage-lambda) BACKBONE_COVERAGE_LAMBDA="$2"; shift 2 ;;
+        --with-graph-seed) SKIP_GRAPH_SEED=0; shift ;;
+        --evolution-batch-size) EVOLUTION_BATCH_SIZE="$2"; shift 2 ;;
+        --stop-on-error) CONTINUE_ON_ERROR=0; shift ;;
+        --no-rebuild-splits) REBUILD_SPLITS=0; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
     esac
 done
 
-case "$METHOD" in
-    all|awm|expel|trace2skill|graph) ;;
-    *)
-        echo "Invalid --method: $METHOD" >&2
-        exit 2
-        ;;
-esac
-
-case "$GRAPH_MINING_METHOD" in
-    legacy|sequence|backbone|backbone_coverage) ;;
-    *)
-        echo "Invalid --graph-mining-method: $GRAPH_MINING_METHOD" >&2
-        exit 2
-        ;;
-esac
+case "$METHOD" in all|awm|expel|trace2skill|graph) ;; *) echo "Invalid --method: $METHOD" >&2; exit 2 ;; esac
+case "$GRAPH_MINING_METHOD" in legacy|sequence|backbone|backbone_coverage) ;; *) echo "Invalid --graph-mining-method: $GRAPH_MINING_METHOD" >&2; exit 2 ;; esac
 
 if ! command -v conda >/dev/null 2>&1; then
-    for conda_sh in \
-        "$HOME/miniconda3/etc/profile.d/conda.sh" \
-        "$HOME/anaconda3/etc/profile.d/conda.sh" \
-        "/opt/conda/etc/profile.d/conda.sh"; do
-        if [[ -f "$conda_sh" ]]; then
-            # shellcheck disable=SC1090
-            source "$conda_sh"
-            break
-        fi
+    for conda_sh in "$HOME/miniconda3/etc/profile.d/conda.sh" "$HOME/anaconda3/etc/profile.d/conda.sh" "/opt/conda/etc/profile.d/conda.sh"; do
+        [[ -f "$conda_sh" ]] && source "$conda_sh" && break
     done
 fi
-
-if ! command -v conda >/dev/null 2>&1; then
-    echo "conda was not found. Initialize conda before running this script." >&2
-    exit 1
-fi
-
-CONDA_BASE="$(conda info --base 2>/dev/null)" || {
-    echo "Unable to determine the conda installation path." >&2
-    exit 1
-}
-
-if [[ -f "$CONDA_BASE/etc/profile.d/conda.sh" ]]; then
-    # shellcheck disable=SC1090
-    source "$CONDA_BASE/etc/profile.d/conda.sh"
-fi
-
-conda activate "$CONDA_ENV" || {
-    echo "Unable to activate conda environment: $CONDA_ENV" >&2
-    exit 1
-}
-
+command -v conda >/dev/null 2>&1 || { echo "conda was not found." >&2; exit 1; }
+CONDA_BASE="$(conda info --base 2>/dev/null)" || exit 1
+[[ -f "$CONDA_BASE/etc/profile.d/conda.sh" ]] && source "$CONDA_BASE/etc/profile.d/conda.sh"
+conda activate "$CONDA_ENV" || { echo "Unable to activate $CONDA_ENV" >&2; exit 1; }
 export HF_ENDPOINT="$HF_MIRROR"
-
-if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
-    echo "Python was not found after activating $CONDA_ENV." >&2
-    exit 1
-fi
-
-echo "Environment: $CONDA_ENV"
-echo "Python:      $($PYTHON_BIN --version 2>&1)"
-echo "HF_ENDPOINT: $HF_ENDPOINT"
-echo "Root:        $ROOT_DIR"
+command -v "$PYTHON_BIN" >/dev/null 2>&1 || { echo "Python was not found." >&2; exit 1; }
 
 SPLITS_DIR="$ROOT_DIR/data/eval/abcd/splits"
 OUTPUT_DIR="$ROOT_DIR/outputs"
 mkdir -p "$OUTPUT_DIR"
-
 if [[ "$REBUILD_SPLITS" -eq 1 ]]; then
     echo "Building shared per-subflow session splits..."
-    "$PYTHON_BIN" scripts/split_abcd_by_intent.py --seed 42 || {
-        echo "Failed to build shared ABCD splits." >&2
-        exit 1
-    }
+    "$PYTHON_BIN" scripts/split_abcd_by_intent.py --seed 42 || exit 1
 fi
-RUN_ID="$(date +%Y-%m-%d_%H-%M-%S)"
-MANIFEST="$OUTPUT_DIR/full_abcd_${RUN_ID}_manifest.txt"
-: > "$MANIFEST"
-
-echo "Run ID:     $RUN_ID"
-echo "Manifest:   $MANIFEST"
-echo "Output root: $OUTPUT_DIR"
 
 SUBFLOWS=()
 if [[ -n "$ONE_SUBFLOW" ]]; then
     SUBFLOWS=("$ONE_SUBFLOW")
 else
     for split_dir in "$SPLITS_DIR"/*; do
-        [[ -d "$split_dir" ]] || continue
+        [[ -d "$split_dir" && -f "$split_dir/train.json" && -f "$split_dir/test.json" ]] || continue
         SUBFLOWS+=("${split_dir##*/}")
     done
 fi
+[[ ${#SUBFLOWS[@]} -gt 0 ]] || { echo "No subflows found under $SPLITS_DIR" >&2; exit 1; }
 
-if [[ ${#SUBFLOWS[@]} -eq 0 ]]; then
-    echo "No subflow directories found under $SPLITS_DIR" >&2
-    exit 1
+WORKFLOW_IDS=()
+if [[ -n "$WORKFLOW_IDS_RAW" ]]; then
+    IFS=',' read -r -a raw_ids <<< "$WORKFLOW_IDS_RAW"
+    for id in "${raw_ids[@]}"; do
+        id="${id//[[:space:]]/}"
+        [[ -n "$id" ]] && WORKFLOW_IDS+=("$id")
+    done
+    [[ ${#WORKFLOW_IDS[@]} -gt 0 ]] || { echo "--workflow-ids contains no IDs" >&2; exit 2; }
+else
+    WORKFLOW_IDS=("")
 fi
 
-printf 'Subflows:   %d\n' "${#SUBFLOWS[@]}"
-printf 'Methods:    %s\n' "$METHOD"
+RUN_ID="$(date +%Y-%m-%d_%H-%M-%S)"
+RUN_ROOT="$OUTPUT_DIR/full_abcd_$RUN_ID"
+LOG_DIR="$RUN_ROOT/logs"
+mkdir -p "$LOG_DIR"
+PLAN_PATH="$RUN_ROOT/workflow_load_plan.json"
+"$PYTHON_BIN" scripts/plan_abcd_workflow_loads.py \
+    --splits-dir "$SPLITS_DIR" --workers "${#WORKFLOW_IDS[@]}" \
+    --subflows "${SUBFLOWS[@]}" --output "$PLAN_PATH"
 
-FAILED=()
-AWM_RUNS=()
-EXPEL_RUNS=()
-TRACE_RUNS=()
-GRAPH_RUNS=()
+echo "Environment: $CONDA_ENV"
+echo "HF_ENDPOINT: $HF_ENDPOINT"
+echo "Run root:    $RUN_ROOT"
+echo "Load plan:   $PLAN_PATH"
+echo "Subflows:    ${#SUBFLOWS[@]}"
+echo "Workers:     ${#WORKFLOW_IDS[@]}"
 
-latest_run_dir() {
-    local pattern="$1"
-    find "$OUTPUT_DIR" -maxdepth 1 -type d -name "$pattern" -printf '%T@ %p\n' 2>/dev/null |
-        sort -nr |
-        head -n 1 |
-        cut -d' ' -f2-
+worker_subflows() {
+    "$PYTHON_BIN" - "$PLAN_PATH" "$1" <<'PY'
+import json, sys
+plan = json.load(open(sys.argv[1], encoding="utf-8"))
+for item in plan["workers"][int(sys.argv[2])]["subflows"]:
+    print(item["name"])
+PY
 }
 
-run_subflow_command() {
-    local method_name="$1"
-    local subflow="$2"
-    shift 2
-
-    echo
-    echo "===== $method_name / $subflow ====="
-    "$PYTHON_BIN" "$@"
-    local status=$?
-    if [[ $status -ne 0 ]]; then
-        FAILED+=("$method_name:$subflow")
-        echo "FAILED: $method_name / $subflow (exit=$status)" >&2
-        if [[ $CONTINUE_ON_ERROR -eq 0 ]]; then
-            exit "$status"
-        fi
-        return "$status"
-    fi
-    return 0
+train_session_count() {
+    "$PYTHON_BIN" - "$SPLITS_DIR/$1/train.json" <<'PY'
+import json, sys
+print(len(json.load(open(sys.argv[1], encoding="utf-8"))))
+PY
 }
 
-if [[ "$METHOD" == "all" || "$METHOD" == "awm" ]]; then
-    for subflow in "${SUBFLOWS[@]}"; do
-        run_subflow_command "AWM" "$subflow" \
-            scripts/run_awm_abcd.py --subflow "$subflow" || continue
-        run_dir="$(latest_run_dir 'awm_abcd_*')"
-        [[ -n "$run_dir" ]] && AWM_RUNS+=("$run_dir")
-    done
-fi
+run_task() {
+    local worker_index="$1" workflow_id="$2" method_name="$3" subflow="$4"
+    shift 4
+    local task_dir="$RUN_ROOT/$method_name/$subflow"
+    mkdir -p "$task_dir"
+    echo "===== worker=$worker_index workflow=${workflow_id:-config.py} method=$method_name subflow=$subflow ====="
+    SKILLMINING_WORKFLOW_ID="$workflow_id" ABCD_OUTPUT_DIR="$task_dir" "$PYTHON_BIN" "$@"
+}
 
-if [[ "$METHOD" == "all" || "$METHOD" == "expel" ]]; then
-    for subflow in "${SUBFLOWS[@]}"; do
-        run_subflow_command "ExpeL" "$subflow" \
-            scripts/run_expel_abcd.py --subflow "$subflow" || continue
-        run_dir="$(latest_run_dir 'expel_abcd_*')"
-        [[ -n "$run_dir" ]] && EXPEL_RUNS+=("$run_dir")
-    done
-fi
-
-if [[ "$METHOD" == "all" || "$METHOD" == "trace2skill" ]]; then
-    for subflow in "${SUBFLOWS[@]}"; do
-        run_subflow_command "Trace2Skill" "$subflow" \
-            scripts/run_trace2skill_abcd.py \
-            --subflow "$subflow" \
-            --train-file "$SPLITS_DIR/$subflow/train.json" \
-            --test-file "$SPLITS_DIR/$subflow/test.json" \
-            --evolution-batch-size "$EVOLUTION_BATCH_SIZE" \
-            --continue-on-batch-error || continue
-        run_dir="$(latest_run_dir 'abcd_trace2skill_*')"
-        [[ -n "$run_dir" ]] && TRACE_RUNS+=("$run_dir")
-    done
-fi
-
-if [[ "$METHOD" == "all" || "$METHOD" == "graph" ]]; then
-    echo
-    echo "===== Graph Mining / independent subflows ====="
-    graph_command=("$PYTHON_BIN" scripts/run_subflow_eval.py
-        --min-sessions "$MIN_SESSIONS"
-        --mining-method "$GRAPH_MINING_METHOD"
-        --backbone-coverage-lambda "$BACKBONE_COVERAGE_LAMBDA")
-    if [[ -n "$ONE_SUBFLOW" ]]; then
-        graph_command+=(--subflow "$ONE_SUBFLOW")
-    else
-        graph_command+=(--all)
-    fi
-    if [[ "$SKIP_GRAPH_SEED" -eq 1 ]]; then
-        graph_command+=(--skip-seed)
-        echo "HG seed baseline: skipped (mined-skill evaluation only)"
-    else
-        echo "HG seed baseline: enabled"
-    fi
-    "${graph_command[@]}"
-    graph_status=$?
-    if [[ $graph_status -ne 0 ]]; then
-        FAILED+=("Graph Mining:all")
-        if [[ $CONTINUE_ON_ERROR -eq 0 ]]; then
-            exit "$graph_status"
+run_worker() {
+    local worker_index="$1" workflow_id="$2"
+    local failed_path="$RUN_ROOT/worker_${worker_index}_failed.txt"
+    : > "$failed_path"
+    mapfile -t assigned < <(worker_subflows "$worker_index")
+    for subflow in "${assigned[@]}"; do
+        [[ -n "$subflow" ]] || continue
+        if [[ "$METHOD" == "all" || "$METHOD" == "awm" ]]; then
+            run_task "$worker_index" "$workflow_id" awm "$subflow" scripts/run_awm_abcd.py --subflow "$subflow" || {
+                echo "awm:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
         fi
-    else
-        run_dir="$(latest_run_dir 'subflow_eval_*')"
-        [[ -n "$run_dir" ]] && GRAPH_RUNS+=("$run_dir")
-    fi
-fi
+        if [[ "$METHOD" == "all" || "$METHOD" == "expel" ]]; then
+            run_task "$worker_index" "$workflow_id" expel "$subflow" scripts/run_expel_abcd.py --subflow "$subflow" || {
+                echo "expel:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
+        fi
+        if [[ "$METHOD" == "all" || "$METHOD" == "trace2skill" ]]; then
+            # Trace2Skill nests its timestamped directory below this unique
+            # subflow parent; final aggregation searches recursively.
+            mkdir -p "$RUN_ROOT/trace2skill/$subflow"
+            SKILLMINING_WORKFLOW_ID="$workflow_id" "$PYTHON_BIN" scripts/run_trace2skill_abcd.py \
+                --subflow "$subflow" --train-file "$SPLITS_DIR/$subflow/train.json" \
+                --test-file "$SPLITS_DIR/$subflow/test.json" --output-dir "$RUN_ROOT/trace2skill/$subflow" \
+                --evolution-batch-size "$EVOLUTION_BATCH_SIZE" --continue-on-batch-error || {
+                echo "trace2skill:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
+        fi
+        if [[ "$METHOD" == "all" || "$METHOD" == "graph" ]]; then
+            train_sessions="$(train_session_count "$subflow")"
+            if [[ "$train_sessions" -lt "$MIN_SESSIONS" ]]; then
+                echo "Skipping graph/$subflow: train_sessions=$train_sessions < min_sessions=$MIN_SESSIONS"
+                continue
+            fi
+            graph_args=(scripts/run_subflow_eval.py --subflow "$subflow" --min-sessions "$MIN_SESSIONS"
+                --mining-method "$GRAPH_MINING_METHOD" --backbone-coverage-lambda "$BACKBONE_COVERAGE_LAMBDA")
+            [[ "$SKIP_GRAPH_SEED" -eq 1 ]] && graph_args+=(--skip-seed)
+            run_task "$worker_index" "$workflow_id" graph "$subflow" "${graph_args[@]}" || {
+                echo "graph:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
+        fi
+    done
+}
 
-STAMP="$(date +%Y-%m-%d_%H-%M-%S)"
+PIDS=()
+for index in "${!WORKFLOW_IDS[@]}"; do
+    run_worker "$index" "${WORKFLOW_IDS[$index]}" > "$LOG_DIR/worker_${index}.log" 2>&1 &
+    pid="$!"
+    PIDS+=("$pid")
+    echo "Started worker $index (PID $pid), log: $LOG_DIR/worker_${index}.log"
+done
 
-AGGREGATE_FILES=()
+WORKER_FAILURE=0
+for index in "${!PIDS[@]}"; do
+    wait "${PIDS[$index]}" || WORKER_FAILURE=1
+done
 
-if [[ ${#AWM_RUNS[@]} -gt 0 ]]; then
-    aggregate_path="$OUTPUT_DIR/aggregate_awm_$STAMP.json"
-    "$PYTHON_BIN" scripts/aggregate_subflow_results.py \
-        --runs "${AWM_RUNS[@]}" \
-        --output "$aggregate_path"
-    AGGREGATE_FILES+=("$aggregate_path")
-fi
+AGGREGATES=()
+aggregate_method() {
+    local method_name="$1" output="$RUN_ROOT/aggregate_${method_name}.json"
+    [[ -d "$RUN_ROOT/$method_name" ]] || return 0
+    "$PYTHON_BIN" scripts/aggregate_subflow_results.py --runs "$RUN_ROOT/$method_name" --recursive --output "$output" && AGGREGATES+=("$output") || true
+}
+[[ "$METHOD" == "all" || "$METHOD" == "awm" ]] && aggregate_method awm
+[[ "$METHOD" == "all" || "$METHOD" == "expel" ]] && aggregate_method expel
+[[ "$METHOD" == "all" || "$METHOD" == "trace2skill" ]] && aggregate_method trace2skill
+[[ "$METHOD" == "all" || "$METHOD" == "graph" ]] && aggregate_method graph
 
-if [[ ${#EXPEL_RUNS[@]} -gt 0 ]]; then
-    aggregate_path="$OUTPUT_DIR/aggregate_expel_$STAMP.json"
-    "$PYTHON_BIN" scripts/aggregate_subflow_results.py \
-        --runs "${EXPEL_RUNS[@]}" \
-        --output "$aggregate_path"
-    AGGREGATE_FILES+=("$aggregate_path")
-fi
-
-if [[ ${#TRACE_RUNS[@]} -gt 0 ]]; then
-    aggregate_path="$OUTPUT_DIR/aggregate_trace2skill_$STAMP.json"
-    "$PYTHON_BIN" scripts/aggregate_subflow_results.py \
-        --runs "${TRACE_RUNS[@]}" \
-        --output "$aggregate_path"
-    AGGREGATE_FILES+=("$aggregate_path")
-fi
-
-if [[ ${#GRAPH_RUNS[@]} -gt 0 ]]; then
-    aggregate_path="$OUTPUT_DIR/aggregate_graph_mining_$STAMP.json"
-    "$PYTHON_BIN" scripts/aggregate_subflow_results.py \
-        --runs "${GRAPH_RUNS[@]}" \
-        --output "$aggregate_path"
-    AGGREGATE_FILES+=("$aggregate_path")
-fi
-
+MANIFEST="$RUN_ROOT/manifest.txt"
 {
     echo "run_id=$RUN_ID"
     echo "method=$METHOD"
-    echo "hf_endpoint=$HF_ENDPOINT"
-    echo "output_root=$OUTPUT_DIR"
+    echo "workflow_ids=${WORKFLOW_IDS_RAW:-config.py}"
+    echo "run_root=$RUN_ROOT"
+    echo "load_plan=$PLAN_PATH"
     echo ""
-    echo "[AWM run directories]"
-    printf '%s\n' "${AWM_RUNS[@]}"
+    echo "[worker_logs]"
+    find "$LOG_DIR" -type f -name 'worker_*.log' -print | sort
     echo ""
-    echo "[ExpeL run directories]"
-    printf '%s\n' "${EXPEL_RUNS[@]}"
+    echo "[aggregate_files]"
+    printf '%s\n' "${AGGREGATES[@]}"
     echo ""
-    echo "[Trace2Skill run directories]"
-    printf '%s\n' "${TRACE_RUNS[@]}"
-    echo ""
-    echo "[Graph Mining run directories]"
-    printf '%s\n' "${GRAPH_RUNS[@]}"
-    echo ""
-    echo "[Aggregate files]"
-    printf '%s\n' "${AGGREGATE_FILES[@]}"
-    echo ""
-    echo "[Failed runs]"
-    printf '%s\n' "${FAILED[@]}"
+    echo "[failed_tasks]"
+    cat "$RUN_ROOT"/worker_*_failed.txt 2>/dev/null || true
 } > "$MANIFEST"
 
-echo
 echo "===== Full ABCD experiment finished ====="
-echo "Result and artifact locations:"
-echo "  Manifest: $MANIFEST"
-echo "  Output root: $OUTPUT_DIR"
-if [[ ${#AWM_RUNS[@]} -gt 0 ]]; then
-    echo "  AWM run directories:"
-    printf '    %s\n' "${AWM_RUNS[@]}"
+echo "Run root:  $RUN_ROOT"
+echo "Load plan: $PLAN_PATH"
+echo "Manifest:  $MANIFEST"
+echo "Worker logs: $LOG_DIR"
+if [[ ${#AGGREGATES[@]} -gt 0 ]]; then
+    echo "Aggregate files:"
+    printf '  %s\n' "${AGGREGATES[@]}"
 fi
-if [[ ${#EXPEL_RUNS[@]} -gt 0 ]]; then
-    echo "  ExpeL run directories:"
-    printf '    %s\n' "${EXPEL_RUNS[@]}"
-fi
-if [[ ${#TRACE_RUNS[@]} -gt 0 ]]; then
-    echo "  Trace2Skill run directories:"
-    printf '    %s\n' "${TRACE_RUNS[@]}"
-fi
-if [[ ${#GRAPH_RUNS[@]} -gt 0 ]]; then
-    echo "  Graph Mining run directories:"
-    printf '    %s\n' "${GRAPH_RUNS[@]}"
-fi
-if [[ ${#AGGREGATE_FILES[@]} -gt 0 ]]; then
-    echo "  Aggregate files:"
-    printf '    %s\n' "${AGGREGATE_FILES[@]}"
-fi
-if [[ ${#FAILED[@]} -gt 0 ]]; then
-    printf 'Failed runs:\n'
-    printf '  %s\n' "${FAILED[@]}"
+if [[ "$WORKER_FAILURE" -ne 0 ]] || grep -q . "$RUN_ROOT"/worker_*_failed.txt 2>/dev/null; then
+    echo "Some subflow tasks failed; see $MANIFEST and worker logs." >&2
     exit 1
 fi
-echo "All requested runs completed successfully."
+echo "All requested tasks completed successfully."
