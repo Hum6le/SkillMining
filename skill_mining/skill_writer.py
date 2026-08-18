@@ -252,11 +252,18 @@ def build_skill_md_from_backbone(
 ) -> str:
     """Compile one complete backbone skill from all retained graph evidence."""
     if use_llm:
+        nodes = {node["id"]: node for node in subgraph.get("nodes", [])}
+        required_actions = [
+            nodes[node_id]["label"]
+            for node_id in subgraph.get("backbone", {}).get("compilation_order", [])
+            if node_id in nodes
+        ]
         return _compile_skill_with_retry(
             _build_backbone_skill_prompt(
                 subflow, subgraph, op_snippets, transition_induction,
             ),
             subflow,
+            validator=lambda text: _validate_backbone_action_coverage(text, required_actions),
         )
     return _build_skill_md_from_backbone_fallback(subflow, subgraph)
 
@@ -498,6 +505,15 @@ def _action_heading(label: str) -> str:
 
 def _action_rule_labels(skill: str) -> set[str]:
     return set(re.findall(r"^####\s+`([^`]+)`\s*$", skill, flags=re.MULTILINE))
+
+
+def _validate_backbone_action_coverage(skill: str, required_actions: list[str]) -> None:
+    headings = set(re.findall(r"^#{3,6}\s+`([^`]+)`\s*$", skill, flags=re.MULTILINE))
+    missing = [action for action in required_actions if action not in headings]
+    if missing:
+        raise ValueError(
+            "compiled skill omitted retained action rules: " + ", ".join(missing)
+        )
 
 
 def _validate_main_path_skill(skill: str, main_labels: list[str]) -> None:
@@ -1237,6 +1253,9 @@ def _build_backbone_skill_prompt(
 
 ## Contract
 - Allowed actions, and only allowed actions: {', '.join(allowed_actions)}
+- Coverage is mandatory: write exactly one `#### ` action-rule heading for EVERY
+  allowed action listed above, including actions outside the Main Path. Do not
+  omit a retained action merely because it belongs to a branch or retry route.
 - The Main Path MUST follow this backbone order exactly: {' -> '.join(main_labels) or '(no multi-step path)'}
 - For each action, use only its listed local transitions. Do not add actions,
   transitions, database outcomes, or policy requirements absent from evidence.
@@ -1253,7 +1272,8 @@ def _build_backbone_skill_prompt(
 - Evaluate each action's outgoing rules in the listed priority order. Do not
   claim that branches are mutually exclusive unless their observed guards are.
 - Be concise: one short main path and at most one short transition rule per
-  retained outgoing edge. Do not repeat the global workflow under every node.
+  retained outgoing edge. Concision applies within each rule; it does not allow
+  omitting retained actions or their supported outgoing transitions.
 - When Joint transition induction is present, it is authoritative for branch
   conditions, relation (exclusive, overlap, or fallback), and priority. Do not
   replace it with conditions inferred from a single example.
@@ -1294,6 +1314,9 @@ Write only this Markdown document:
 - Slots: ordered real values only; `arg1` is ...
 - Post-state: ...
 - Priority 1: when [observed condition], transition to `action-b`.
+
+#### `every-other-retained-action`
+- [Repeat one concise rule for every remaining allowed action, including branch and retry actions.]
 
 ## Slot Discipline
 - Use only real values available in the current dialogue state.
