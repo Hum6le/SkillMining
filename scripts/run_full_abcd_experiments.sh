@@ -19,6 +19,8 @@ ONE_SUBFLOW=""
 MIN_SESSIONS=0
 GRAPH_MINING_METHOD="legacy"
 BACKBONE_COVERAGE_LAMBDA="0.2"
+BACKBONE_COMPILER="organized"
+BACKBONE_ABLATION_ONLY=0
 SKIP_GRAPH_SEED=1
 EVOLUTION_BATCH_SIZE=25
 CONTINUE_ON_ERROR=1
@@ -41,6 +43,8 @@ Options:
   --min-sessions N           Graph Mining minimum train sessions (default: 0)
   --graph-mining-method NAME legacy, sequence, backbone, or backbone_coverage (default: legacy)
   --backbone-coverage-lambda N  Session coverage weight for backbone_coverage (default: 0.2)
+  --backbone-compiler NAME   organized, unordered, or compare (default: organized)
+  --backbone-ablation-only   Only run unordered compiler ablation; skip organized original
   --with-graph-seed          Also run the empty-workflow HG seed baseline
   --evolution-batch-size N   Trace2Skill outer batch size (default: 25)
   --stop-on-error            Stop the affected worker at its first failed subflow
@@ -65,6 +69,8 @@ while [[ $# -gt 0 ]]; do
         --min-sessions) MIN_SESSIONS="$2"; shift 2 ;;
         --graph-mining-method) GRAPH_MINING_METHOD="$2"; shift 2 ;;
         --backbone-coverage-lambda) BACKBONE_COVERAGE_LAMBDA="$2"; shift 2 ;;
+        --backbone-compiler) BACKBONE_COMPILER="$2"; shift 2 ;;
+        --backbone-ablation-only) BACKBONE_ABLATION_ONLY=1; shift ;;
         --with-graph-seed) SKIP_GRAPH_SEED=0; shift ;;
         --evolution-batch-size) EVOLUTION_BATCH_SIZE="$2"; shift 2 ;;
         --stop-on-error) CONTINUE_ON_ERROR=0; shift ;;
@@ -76,6 +82,11 @@ done
 
 case "$METHOD" in all|awm|expel|trace2skill|graph) ;; *) echo "Invalid --method: $METHOD" >&2; exit 2 ;; esac
 case "$GRAPH_MINING_METHOD" in legacy|sequence|backbone|backbone_coverage) ;; *) echo "Invalid --graph-mining-method: $GRAPH_MINING_METHOD" >&2; exit 2 ;; esac
+case "$BACKBONE_COMPILER" in organized|unordered|compare) ;; *) echo "Invalid --backbone-compiler: $BACKBONE_COMPILER" >&2; exit 2 ;; esac
+if [[ "$BACKBONE_ABLATION_ONLY" -eq 1 ]]; then
+    [[ "$BACKBONE_COMPILER" != "compare" ]] || { echo "--backbone-ablation-only cannot be combined with --backbone-compiler compare" >&2; exit 2; }
+    BACKBONE_COMPILER="unordered"
+fi
 
 if ! command -v conda >/dev/null 2>&1; then
     for conda_sh in "$HOME/miniconda3/etc/profile.d/conda.sh" "$HOME/anaconda3/etc/profile.d/conda.sh" "/opt/conda/etc/profile.d/conda.sh"; do
@@ -212,6 +223,8 @@ echo "Run root:    $RUN_ROOT"
 echo "Load plan:   $PLAN_PATH"
 echo "Subflows:    ${#SUBFLOWS[@]}"
 echo "Workers:     ${#WORKFLOW_IDS[@]}"
+echo "Compiler:    $BACKBONE_COMPILER"
+[[ "$BACKBONE_ABLATION_ONLY" -eq 1 ]] && echo "Ablation:    unordered only (organized compiler skipped)"
 [[ -n "$RESUME_RUN" ]] && echo "Resume:      enabled (completed subflows will be skipped)"
 
 worker_subflows() {
@@ -243,12 +256,12 @@ run_task() {
 
 task_is_complete() {
     local method_name="$1" subflow="$2" task_dir="$RUN_ROOT/$method_name/$subflow"
-    "$PYTHON_BIN" - "$method_name" "$subflow" "$task_dir" <<'PY'
+    "$PYTHON_BIN" - "$method_name" "$subflow" "$task_dir" "$BACKBONE_COMPILER" <<'PY'
 import json
 import sys
 from pathlib import Path
 
-method, subflow, task_dir = sys.argv[1:]
+method, subflow, task_dir, backbone_compiler = sys.argv[1:]
 root = Path(task_dir)
 paths = [root / "summary.json"]
 if method == "trace2skill" and root.exists():
@@ -263,7 +276,10 @@ for path in paths:
         continue
     if method == "graph":
         row = summary.get(subflow) if isinstance(summary, dict) else None
-        if isinstance(row, dict) and isinstance(row.get("mined"), dict):
+        complete = isinstance(row, dict) and isinstance(row.get("mined"), dict)
+        if backbone_compiler == "compare":
+            complete = complete and isinstance(row.get("unordered"), dict)
+        if complete:
             raise SystemExit(0)
     elif isinstance(summary, dict):
         config = summary.get("config", {})
@@ -331,7 +347,8 @@ run_worker() {
                 continue
             fi
             graph_args=(scripts/run_subflow_eval.py --subflow "$subflow" --min-sessions "$MIN_SESSIONS"
-                --mining-method "$GRAPH_MINING_METHOD" --backbone-coverage-lambda "$BACKBONE_COVERAGE_LAMBDA")
+                --mining-method "$GRAPH_MINING_METHOD" --backbone-coverage-lambda "$BACKBONE_COVERAGE_LAMBDA"
+                --backbone-compiler "$BACKBONE_COMPILER")
             [[ "$SKIP_GRAPH_SEED" -eq 1 ]] && graph_args+=(--skip-seed)
             run_or_resume_task "$worker_index" "$workflow_id" graph "$subflow" "${graph_args[@]}" || {
                 echo "graph:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }

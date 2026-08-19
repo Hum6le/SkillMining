@@ -18,6 +18,7 @@ r"""Per-Intent Skill.md + Reference.md 生成器。
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -266,6 +267,175 @@ def build_skill_md_from_backbone(
             validator=lambda text: _validate_backbone_action_coverage(text, required_actions),
         )
     return _build_skill_md_from_backbone_fallback(subflow, subgraph)
+
+
+def build_skill_md_from_unordered_backbone(
+    subflow: str,
+    subgraph: dict,
+    op_snippets: Dict[str, list[dict]],
+    transition_induction: dict[str, Any] | None = None,
+    use_llm: bool = True,
+) -> str:
+    """Compile a flat induced-transition control for the organization ablation."""
+    nodes = {node["id"]: node for node in subgraph.get("nodes", [])}
+    required_actions = [node["label"] for node in nodes.values()]
+    if use_llm:
+        return _compile_skill_with_retry(
+            _build_unordered_backbone_skill_prompt(
+                subflow, subgraph, op_snippets, transition_induction,
+            ),
+            subflow,
+            validator=lambda text: _validate_unordered_backbone_skill(text, required_actions),
+        )
+    return _build_skill_md_from_unordered_backbone_fallback(
+        subflow, subgraph, transition_induction,
+    )
+
+
+def _stable_unordered(items: list[Any], subflow: str, key: Callable[[Any], str]) -> list[Any]:
+    """Return a reproducible non-semantic ordering for the flat control."""
+    return sorted(
+        items,
+        key=lambda item: hashlib.sha256(
+            f"{subflow}::organization-ablation::{key(item)}".encode("utf-8")
+        ).hexdigest(),
+    )
+
+
+def _build_unordered_backbone_skill_prompt(
+    subflow: str,
+    subgraph: dict,
+    op_snippets: Dict[str, list[dict]],
+    transition_induction: dict[str, Any] | None,
+) -> str:
+    """Render induced edge semantics without exposing a workflow organization."""
+    nodes = {node["id"]: node for node in subgraph.get("nodes", [])}
+    node_blocks: list[str] = []
+    for node in _stable_unordered(list(nodes.values()), subflow, lambda item: item["id"]):
+        contract = node.get("slot_contract", {})
+        positions = "; ".join(
+            f"arg{item['position']}: types={','.join(item.get('value_types') or ['value'])}; "
+            f"observed_sources={','.join(item.get('source_types') or ['unresolved'])}; "
+            f"required_rate={item.get('required_rate', 0):.0%}"
+            for item in contract.get("positions", [])
+        ) or "no observed slot values"
+        snippets = op_snippets.get(node["id"], [])
+        evidence = snippets[0]["snippet_text"][:280] if snippets else "(no local snippet)"
+        node_blocks.append(
+            f"Action: {node['label']}\n"
+            f"Observed slot contract: count={node.get('observed_slot_counts', [0])}; {positions}\n"
+            f"Example dialogue evidence (do not copy values): {evidence}"
+        )
+
+    edge_cards: list[dict[str, str]] = []
+    for source, rules in (transition_induction or {}).get("rules_by_source", {}).items():
+        for rule in rules or []:
+            target = str(rule.get("target", ""))
+            if not target:
+                continue
+            edge_cards.append({
+                "source": str(source),
+                "target": target,
+                "status": str(rule.get("status", "underspecified")),
+                "condition": str(rule.get("condition") or ""),
+            })
+    edge_blocks: list[str] = []
+    for card in _stable_unordered(
+        edge_cards, subflow, lambda item: f"{item['source']}->{item['target']}",
+    ):
+        source = nodes.get(card["source"], {"label": _short_label(card["source"])})
+        target = nodes.get(card["target"], {"label": _short_label(card["target"])})
+        condition = card["condition"] or "insufficient observable evidence to state a unique trigger"
+        edge_blocks.append(
+            f"Induced transition card: {source['label']} -> {target['label']}\n"
+            f"Induction status: {card['status']}\n"
+            f"Induced transition condition: {condition}"
+        )
+
+    allowed_actions = [node["label"] for node in nodes.values()]
+    return f"""You are compiling a deliberately flat customer-service skill for a controlled ablation.
+The supplied evidence contains all mined action nodes and all pre-induced edge-level transition cards, but it is intentionally unordered.
+
+## Strict Control Condition
+- Allowed actions, and only allowed actions: {', '.join(allowed_actions)}
+- Write exactly one `#### ` action card for every allowed action.
+- Preserve the supplied induced transition cards; do not invent actions, edges, conditions, business policies, database outcomes, or semantic slot names.
+- Do NOT infer, name, or present a main path, backbone, decision hierarchy, edge priority, branch/retry category, route grouping, or global state machine. Do not reorder the cards into a workflow.
+- Keep one flat `## Unordered Interaction Cards` section. Each action card may list its induced transitions in the evidence order below. No card may claim that it is the normal or preferred next step.
+- Slots must be real values available in the current dialogue. Never put field names, placeholders, or demonstration values into action slots. Mention only the observed source categories and missing-value behavior when evidence makes this clear.
+
+## Skill ID
+{subflow}
+
+## Unordered Node Cards
+{chr(10).join(node_blocks) if node_blocks else '(none)'}
+
+## Unordered Induced Transition Cards
+{chr(10).join(edge_blocks) if edge_blocks else '(none)'}
+
+## Required Output
+Return only Markdown in this form:
+
+```markdown
+# Skill: {subflow}
+
+## Intent
+[One concise description of the customer request.]
+
+## Unordered Interaction Cards
+#### `action-a`
+- Slots: ...
+- Induced transition: `action-a` -> `action-b` when ...
+
+#### `every-other-action`
+- Slots: ...
+- Induced transitions: ...
+
+## Reference
+- Consult `reference.md` for dialogue wording when uncertain.
+```
+"""
+
+
+def _build_skill_md_from_unordered_backbone_fallback(
+    subflow: str,
+    subgraph: dict,
+    transition_induction: dict[str, Any] | None = None,
+) -> str:
+    """No-LLM rendering for inspection-only organization ablations."""
+    nodes = {node["id"]: node for node in subgraph.get("nodes", [])}
+    lines = [f"# Skill: {subflow}", "", "## Intent", "", f"Handle `{subflow}` requests using observed interactions.", "", "## Unordered Interaction Cards", ""]
+    for node in _stable_unordered(list(nodes.values()), subflow, lambda item: item["id"]):
+        lines.extend([f"#### `{node['label']}`", ""])
+        contract = node.get("slot_contract", {})
+        lines.append(f"- Slots: {contract.get('min_slots', 0)}-{contract.get('max_slots', 0)} ordered real value(s).")
+        rules = (transition_induction or {}).get("rules_by_source", {}).get(node["id"], [])
+        for rule in _stable_unordered(
+            list(rules), subflow,
+            lambda item: f"{node['id']}->{item.get('target', '')}",
+        ):
+            target_id = str(rule.get("target", ""))
+            target = nodes.get(target_id, {"label": _short_label(target_id)})
+            condition = str(rule.get("condition") or "insufficient observable evidence")
+            lines.append(f"- Induced transition: `{node['label']}` -> `{target['label']}` when {condition}.")
+        lines.append("")
+    lines.extend(["## Reference", "", "- Consult `reference.md` for dialogue wording when uncertain."])
+    return "\n".join(lines)
+
+
+def _validate_unordered_backbone_skill(skill: str, required_actions: list[str]) -> None:
+    """Reject controls that reconstruct the organized compiler's structure."""
+    _validate_backbone_action_coverage(skill, required_actions)
+    if "## Unordered Interaction Cards" not in skill:
+        raise ValueError("unordered control omitted its flat interaction-card section")
+    forbidden_headings = re.compile(
+        r"^#{1,6}\s+(?:Main Path|Workflow|State Machine|Decision Point|Recovery And Retry|Backbone)\b",
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
+    if forbidden_headings.search(skill):
+        raise ValueError("unordered control reconstructed a structured routing section")
+    if re.search(r"\bpriority\s*\d+\b", skill, flags=re.IGNORECASE):
+        raise ValueError("unordered control introduced edge priorities")
 
 
 _ACTION_RULES_START = "<!-- ACTION_RULES_START -->"
@@ -1200,7 +1370,6 @@ def _build_backbone_skill_prompt(
     backbone = subgraph.get("backbone", {})
     main_path = backbone.get("main_path", [])
     order = backbone.get("compilation_order", [])
-    local = subgraph.get("local_transitions", {})
     induced_rules = (transition_induction or {}).get("rules_by_source", {})
 
     allowed_actions = [nodes[node_id]["label"] for node_id in order if node_id in nodes]
@@ -1210,16 +1379,6 @@ def _build_backbone_skill_prompt(
         node = nodes.get(node_id)
         if not node:
             continue
-        transitions = local.get(node_id, [])
-        transition_lines = []
-        for edge in transitions:
-            target = nodes.get(edge["target"], {"label": _short_label(edge["target"])})
-            transition_lines.append(
-                f"- {node['label']} -> {target['label']} "
-                f"[priority={edge.get('priority', 1)}; {edge['kind']}; support={edge['support']}; "
-                f"P={edge['probability']}; observed state: "
-                f"{_format_observed_condition(edge.get('condition', {}))}]"
-            )
         slots = node.get("observed_slot_counts", [])
         contract = node.get("slot_contract", {})
         position_contract = "; ".join(
@@ -1232,8 +1391,7 @@ def _build_backbone_skill_prompt(
             f"### {node['label']}\n"
             f"Ordered slot contract: count={slots or [0]}; {position_contract or 'no observed slot values'}\n"
             f"Observed slot examples (evidence only; never reuse these values): "
-            f"{json.dumps(node.get('slot_examples', [])[:3], ensure_ascii=False)}\n"
-            f"Transitions:\n" + ("\n".join(transition_lines) if transition_lines else "- No retained outgoing transition.")
+            f"{json.dumps(node.get('slot_examples', [])[:3], ensure_ascii=False)}"
         )
         if induced_rules.get(node_id):
             rendered = "\n".join(
@@ -1242,7 +1400,9 @@ def _build_backbone_skill_prompt(
                 f"condition={rule.get('condition') or '(insufficient observable evidence)'}"
                 for rule in induced_rules[node_id]
             )
-            action_blocks[-1] += "\nJoint transition induction:\n" + rendered
+            action_blocks[-1] += "\nPre-induced transition cards:\n" + rendered
+        else:
+            action_blocks[-1] += "\nPre-induced transition cards:\n- No observed outgoing transition."
 
     evidence_blocks: list[str] = []
     for node_id in order:
@@ -1261,11 +1421,11 @@ def _build_backbone_skill_prompt(
   allowed action listed above, including actions outside the Main Path. Do not
   omit a retained action merely because it belongs to a branch or retry route.
 - The Main Path MUST follow this backbone order exactly: {' -> '.join(main_labels) or '(no multi-step path)'}
-- For each action, use only its listed local transitions. Do not add actions,
-  transitions, database outcomes, or policy requirements absent from evidence.
-- A transition condition is an observed state pattern, not a universal business
-  rule. Phrase it conservatively (for example, "when an account is already
-  selected and the needed credentials are available").
+- For each action, use only its listed pre-induced transition cards. Do not add
+  actions, transitions, database outcomes, or policy requirements absent from
+  those cards.
+- A transition condition is an induced summary of observed session evidence,
+  not a universal business rule. Phrase it conservatively.
 - Slots must be REAL values grounded in the current dialogue state. Never put
   field names, placeholders, or example values into an action slot.
 - Mine a reusable slot policy for every action with slots. For each ordered
@@ -1281,15 +1441,15 @@ def _build_backbone_skill_prompt(
   `credential_types`, `credential_count`, and `failure_signal`. For every
   action rule, state a precondition, an ordered slot contract, and a post-state
   update. Use `last_completed_action=<action>` as the default post-state update.
-- Evaluate each action's outgoing rules in the listed priority order. Do not
-  claim that branches are mutually exclusive unless their observed guards are.
+- Use backbone organization to explain how the primary route relates to each
+  action's transition cards. Do not claim that branches are mutually exclusive
+  unless their induced guards are.
 - Be concise: one short main path and at most one short transition rule per
-  retained outgoing edge. Concision applies within each rule; it does not allow
-  omitting retained actions or their supported outgoing transitions.
-- When continuation-mode induction is present, treat `distinguishable` modes as
-  evidence-backed guards, write `ordered_fallback` only after the normal route
-  cannot proceed, and do not invent a deterministic branch condition for an
-  `underspecified` mode.
+  pre-induced edge card. Concision applies within each rule; it does not allow
+  omitting retained actions or their induced transitions.
+- Treat `distinguishable` modes as evidence-backed guards, write
+  `ordered_fallback` only after the normal route cannot proceed, and do not
+  invent a deterministic branch condition for an `underspecified` mode.
 
 ## Skill
 Skill ID: {subflow}
@@ -1299,7 +1459,7 @@ All actions are retained; the backbone only determines the primary order.
 ## Main Backbone
 {' -> '.join(main_labels) or '(single-action skill)'}
 
-## Per-Action Local Transition Evidence
+## Per-Action Pre-Induced Transition Evidence
 {chr(10).join(action_blocks) if action_blocks else '(none)'}
 
 ## Representative Dialogue Evidence
@@ -1326,7 +1486,7 @@ Write only this Markdown document:
 - Preconditions: ...
 - Slots: ordered real values only; `arg1` is ...
 - Post-state: ...
-- Priority 1: when [observed condition], transition to `action-b`.
+- When [induced condition], transition to `action-b`.
 
 #### `every-other-retained-action`
 - [Repeat one concise rule for every remaining allowed action, including branch and retry actions.]

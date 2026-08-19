@@ -83,7 +83,10 @@ def _records_from_summary(path: Path) -> list[dict[str, Any]]:
             data = {
                 "test_sessions": row.get("test_sessions", 0),
             }
-            for phase in ("seed", "mined"):
+            # ``unordered`` is the flat node/edge compiler control used by
+            # the backbone skill-organization ablation. Older graph summaries
+            # simply omit it.
+            for phase in ("seed", "mined", "unordered"):
                 record = _record_from_eval(
                     method="graph_mining", phase=phase, subflow=str(subflow),
                     run_dir=run_dir, payload=row.get(phase), data=data,

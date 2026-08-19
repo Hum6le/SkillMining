@@ -218,6 +218,7 @@ def mine_subflow_skill_backbone(
     transition_cases_per_edge: int = 2,
     coverage_aware: bool = False,
     coverage_lambda: float = 0.2,
+    compiler: str = "organized",
     artifact_dir: Path | None = None,
 ) -> dict:
     """Mine an all-action arborescence plus compact local transitions."""
@@ -227,7 +228,8 @@ def mine_subflow_skill_backbone(
     )
     from skill_mining.skill_writer import (
         _find_operator_snippets, build_reference_md,
-        build_skill_md_from_backbone, induce_transition_rules,
+        build_skill_md_from_backbone, build_skill_md_from_unordered_backbone,
+        induce_transition_rules,
     )
 
     miner = mine_backbone_workflow_session_coverage if coverage_aware else mine_backbone_workflow
@@ -257,7 +259,10 @@ def mine_subflow_skill_backbone(
     edge_cases = sample_transition_cases(
         subflow, train_convs, max_cases_per_edge=transition_cases_per_edge,
     )
-    log.info("  Inducing joint transition guards from outgoing-edge cases...")
+    # Both compilers consume this same per-edge induction. The organized
+    # compiler groups it around backbone decisions; the control only receives
+    # a shuffled flat list of these induced transition cards.
+    log.info("  Inducing joint transition guards for all observed edge types...")
     transition_induction = induce_transition_rules(
         subflow, mined["subgraph"], edge_cases,
     )
@@ -278,15 +283,30 @@ def mine_subflow_skill_backbone(
             json.dumps(edge_cases, indent=2, ensure_ascii=False), encoding="utf-8",
         )
 
-    log.info("  Compiling backbone skill.md via LLM...")
-    skill_md = build_skill_md_from_backbone(
-        subflow,
-        mined["subgraph"],
-        op_snippets,
-        use_llm=True,
-        transition_induction=transition_induction,
-    )
-    return {**mined, "reference_md": reference_md, "skill_md": skill_md}
+    result = {**mined, "reference_md": reference_md, "compiler": compiler}
+    if compiler in {"organized", "compare"}:
+        log.info("  Compiling organized backbone skill.md via LLM...")
+        result["skill_md"] = build_skill_md_from_backbone(
+            subflow,
+            mined["subgraph"],
+            op_snippets,
+            use_llm=True,
+            transition_induction=transition_induction,
+        )
+    if compiler in {"unordered", "compare"}:
+        log.info("  Compiling unordered node-edge control skill via LLM...")
+        unordered_skill = build_skill_md_from_unordered_backbone(
+            subflow,
+            mined["subgraph"],
+            op_snippets,
+            transition_induction=transition_induction,
+            use_llm=True,
+        )
+        if compiler == "unordered":
+            result["skill_md"] = unordered_skill
+        else:
+            result["unordered_skill_md"] = unordered_skill
+    return result
 
 
 def evaluate_agent_on_subflow(
@@ -451,6 +471,11 @@ def main():
                         help="Training cases sampled for each outgoing edge during joint continuation-mode induction")
     parser.add_argument("--backbone-coverage-lambda", type=float, default=0.2,
                         help="Weight of session coverage in backbone_coverage edge selection")
+    parser.add_argument("--backbone-compiler", choices=["organized", "unordered", "compare"],
+                        default="organized",
+                        help="Backbone graph-to-skill compiler: organized (default), flat unordered control, or evaluate both on one mined graph")
+    parser.add_argument("--backbone-ablation-only", action="store_true",
+                        help="Only compile/evaluate the unordered backbone ablation; skip the organized original")
     parser.add_argument("--sequence-min-edge-support", type=int, default=2,
                         help="Min transition support for sequence mining")
     parser.add_argument("--sequence-min-edge-ratio", type=float, default=0.1,
@@ -461,6 +486,13 @@ def main():
     parser.add_argument("--max-train", type=int, default=None)
     parser.add_argument("--max-test", type=int, default=None)
     args = parser.parse_args()
+
+    if args.backbone_ablation_only:
+        if args.backbone_compiler == "compare":
+            parser.error("--backbone-ablation-only cannot be combined with --backbone-compiler compare")
+        args.backbone_compiler = "unordered"
+    if args.skip_mining and args.backbone_compiler == "compare":
+        parser.error("--backbone-compiler compare requires mining so both skills use the same graph evidence")
 
     # Determine subflows to process
     if args.all:
@@ -531,6 +563,7 @@ def main():
                     transition_cases_per_edge=args.backbone_transition_cases,
                     coverage_aware=args.mining_method == "backbone_coverage",
                     coverage_lambda=args.backbone_coverage_lambda,
+                    compiler=args.backbone_compiler,
                     artifact_dir=sf_out,
                 )
             elif args.mining_method == "sequence":
@@ -550,6 +583,23 @@ def main():
 
             # Save skill.md + reference.md + subgraph
             (sf_out / "skill.md").write_text(skill_text, encoding="utf-8")
+            if args.backbone_compiler == "compare" and mined.get("unordered_skill_md"):
+                (sf_out / "organized_skill.md").write_text(skill_text, encoding="utf-8")
+                (sf_out / "unordered_skill.md").write_text(
+                    mined["unordered_skill_md"], encoding="utf-8")
+                (sf_out / "skill_compilation_ablation.json").write_text(
+                    json.dumps({
+                        "protocol": "same_backbone_graph_same_reference_same_transition_induction",
+                        "organized_skill": "organized_skill.md",
+                        "unordered_skill": "unordered_skill.md",
+                        "unordered_control": (
+                            "All mined nodes and the shared pre-induced transition cards are rendered "
+                            "in a deterministic non-semantic order; no main path, edge priorities, "
+                            "branch groups, or routing hierarchy are provided to its compiler."
+                        ),
+                    }, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
             (sf_out / "reference.md").write_text(
                 mined.get("reference_md", ""), encoding="utf-8")
             (sf_out / "subgraph.json").write_text(
@@ -602,6 +652,31 @@ def main():
                  f"Action={mined_result['ast_cds']['ast_action_name']:.4f}  "
                  f"Slot={mined_result['ast_cds']['ast_slot_value']:.4f}")
 
+        unordered_result = None
+        if args.backbone_compiler == "compare":
+            unordered_text = mined.get("unordered_skill_md", "")
+            log.info("  Unordered node-edge control evaluation...")
+            unordered_wf = WorkflowStore()
+            if unordered_text:
+                unordered_wf.update(unordered_text)
+            unordered_agent = ABCDAgent(
+                model=args.model,
+                workflow=unordered_wf,
+                memory=MemoryStore(),
+                reference_text="" if args.disable_reference_lookup else reference_text,
+                reference_top_k=args.reference_top_k,
+                reference_max_chars=args.reference_max_chars,
+            )
+            unordered_result = evaluate_agent_on_subflow(
+                unordered_agent, test_convs, "unordered", subflow, save_dir=sf_out)
+            log.info(f"    BERT={unordered_result['text']['bert_f1']:.4f}  "
+                     f"BLEU-4={unordered_result['text']['bleu_4']:.1f}  "
+                     f"ROUGE-L={unordered_result['text']['rouge_l']:.4f}  "
+                     f"METEOR={unordered_result['text']['meteor']:.4f}  "
+                     f"AST={unordered_result['ast_cds']['ast_joint']:.4f}  "
+                     f"Action={unordered_result['ast_cds']['ast_action_name']:.4f}  "
+                     f"Slot={unordered_result['ast_cds']['ast_slot_value']:.4f}")
+
         # ── 5. Delta ──────────────────────────────────────────
         delta = {}
         if seed_result:
@@ -616,12 +691,23 @@ def main():
             "train_sessions": len(train_convs),
             "test_sessions": len(test_convs),
             "mining_method": args.mining_method,
+            "backbone_compiler": args.backbone_compiler if args.mining_method in {"backbone", "backbone_coverage"} else None,
             "skill_vertices": skill_info.get("num_selected", 0),
             "coverage_pct": skill_info.get("coverage_pct", 0),
             "seed": seed_result,
             "mined": mined_result,
+            "unordered": unordered_result,
             "delta": delta,
         }
+        if unordered_result:
+            all_results[subflow]["organization_delta"] = {
+                "organized_minus_unordered": {
+                    "bert_f1": round(mined_result["text"]["bert_f1"] - unordered_result["text"]["bert_f1"], 4),
+                    "ast": round(mined_result["ast_cds"]["ast_joint"] - unordered_result["ast_cds"]["ast_joint"], 4),
+                    "action": round(mined_result["ast_cds"]["ast_action_name"] - unordered_result["ast_cds"]["ast_action_name"], 4),
+                    "slot": round(mined_result["ast_cds"]["ast_slot_value"] - unordered_result["ast_cds"]["ast_slot_value"], 4),
+                },
+            }
 
     # ── 6. Summary ────────────────────────────────────────────
     print(f"\n{'='*55}")
@@ -655,7 +741,7 @@ def main():
     # CDS by test conversations. This avoids treating tiny and large subflows
     # as equally representative.
     global_metrics = {}
-    for phase in ("seed", "mined"):
+    for phase in ("seed", "mined", "unordered"):
         rows = [row for row in all_results.values() if row.get(phase)]
         if not rows:
             continue
