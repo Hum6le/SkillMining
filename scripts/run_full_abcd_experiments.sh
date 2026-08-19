@@ -353,15 +353,35 @@ for index in "${!PIDS[@]}"; do
 done
 
 AGGREGATES=()
+AGGREGATE_DIRS=()
+AGGREGATE_FAILURE=0
 aggregate_method() {
     local method_name="$1" output="$RUN_ROOT/aggregate_${method_name}.json"
     [[ -d "$RUN_ROOT/$method_name" ]] || return 0
-    "$PYTHON_BIN" scripts/aggregate_subflow_results.py --runs "$RUN_ROOT/$method_name" --recursive --output "$output" && AGGREGATES+=("$output") || true
+    AGGREGATE_DIRS+=("$RUN_ROOT/$method_name")
+    if "$PYTHON_BIN" scripts/aggregate_subflow_results.py \
+        --runs "$RUN_ROOT/$method_name" --recursive --output "$output"; then
+        AGGREGATES+=("$output")
+    else
+        AGGREGATE_FAILURE=1
+        echo "Aggregation failed for method=$method_name; inspect summaries under $RUN_ROOT/$method_name." >&2
+    fi
 }
 [[ "$METHOD" == "all" || "$METHOD" == "awm" ]] && aggregate_method awm
 [[ "$METHOD" == "all" || "$METHOD" == "expel" ]] && aggregate_method expel
 [[ "$METHOD" == "all" || "$METHOD" == "trace2skill" ]] && aggregate_method trace2skill
 [[ "$METHOD" == "all" || "$METHOD" == "graph" ]] && aggregate_method graph
+
+FINAL_SUMMARY="$RUN_ROOT/final_summary.json"
+if [[ ${#AGGREGATE_DIRS[@]} -gt 0 ]]; then
+    if "$PYTHON_BIN" scripts/aggregate_subflow_results.py \
+        --runs "${AGGREGATE_DIRS[@]}" --recursive --output "$FINAL_SUMMARY"; then
+        echo "Final summary: $FINAL_SUMMARY"
+    else
+        AGGREGATE_FAILURE=1
+        echo "Final cross-method aggregation failed; inspect worker outputs under $RUN_ROOT." >&2
+    fi
+fi
 
 echo "===== Full ABCD experiment finished ====="
 echo "Run root:  $RUN_ROOT"
@@ -371,7 +391,7 @@ if [[ ${#AGGREGATES[@]} -gt 0 ]]; then
     echo "Aggregate files:"
     printf '  %s\n' "${AGGREGATES[@]}"
 fi
-if [[ "$WORKER_FAILURE" -ne 0 ]] || grep -q . "$RUN_ROOT"/worker_*_failed.txt 2>/dev/null; then
+if [[ "$WORKER_FAILURE" -ne 0 ]] || [[ "$AGGREGATE_FAILURE" -ne 0 ]] || grep -q . "$RUN_ROOT"/worker_*_failed.txt 2>/dev/null; then
     echo "Some subflow tasks failed; see worker failure files and logs under $RUN_ROOT." >&2
     exit 1
 fi
