@@ -123,8 +123,32 @@ if [[ -n "$RESUME_RUN" ]]; then
 fi
 
 WORKFLOW_IDS=()
-# Older distributed runs do not have manifest.txt. Resume therefore never
-# depends on it; explicit --workflow-ids is the authoritative worker mapping.
+# Resume the original worker-to-workflow mapping from worker logs when the
+# caller did not provide IDs. The run log contains lines such as
+# ``workflow=<id> method=...`` for each worker's tasks.
+if [[ -n "$RESUME_RUN" && -z "$WORKFLOW_IDS_RAW" ]]; then
+    WORKFLOW_IDS_RAW="$($PYTHON_BIN - "$RUN_ROOT/logs" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+log_dir = Path(sys.argv[1])
+ids = []
+for path in sorted(log_dir.glob("worker_*.log")):
+    text = path.read_text(encoding="utf-8", errors="ignore") if path.is_file() else ""
+    match = re.search(r"\bworkflow=([^\s]+)", text)
+    if match:
+        value = match.group(1).strip()
+        if value and value != "config.py":
+            ids.append(value)
+if ids:
+    print(",".join(ids))
+PY
+    )"
+    if [[ -n "$WORKFLOW_IDS_RAW" ]]; then
+        echo "Recovered workflow IDs from worker logs: ${#WORKFLOW_IDS_RAW} characters across $(awk -F, '{print NF}' <<< "$WORKFLOW_IDS_RAW") worker(s)."
+    fi
+fi
 if [[ -n "$WORKFLOW_IDS_RAW" ]]; then
     IFS=',' read -r -a raw_ids <<< "$WORKFLOW_IDS_RAW"
     for id in "${raw_ids[@]}"; do
