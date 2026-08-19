@@ -25,6 +25,7 @@ CONTINUE_ON_ERROR=1
 PYTHON_BIN="python"
 REBUILD_SPLITS=1
 WORKFLOW_IDS_RAW=""
+RESUME_RUN=""
 
 usage() {
     cat <<'EOF'
@@ -35,6 +36,8 @@ Options:
   --subflow NAME             Run one subflow instead of all complete split directories
   --workflow-ids IDS         Comma-separated workflow IDs. One balanced, serial worker is
                              started per ID; workers run in parallel. Example: id_a,id_b,id_c
+  --resume-run DIR           Resume an existing outputs/full_abcd_* run. Reuses its load
+                             plan and skips subflows with a complete final summary.
   --min-sessions N           Graph Mining minimum train sessions (default: 0)
   --graph-mining-method NAME legacy, sequence, backbone, or backbone_coverage (default: legacy)
   --backbone-coverage-lambda N  Session coverage weight for backbone_coverage (default: 0.2)
@@ -48,6 +51,9 @@ Worker load is balanced by train+test non-empty agent utterance turns, not
 conversation count. The selected workflow ID is exported as
 SKILLMINING_WORKFLOW_ID; the workflow-aware llm.py must honor this override.
 Without --workflow-ids, one serial worker uses config.py unchanged.
+When --resume-run is used without --workflow-ids, IDs are recovered from the
+existing manifest. Pass --workflow-ids only to replace them with the same
+number of workers.
 EOF
 }
 
@@ -56,6 +62,7 @@ while [[ $# -gt 0 ]]; do
         --method) METHOD="$2"; shift 2 ;;
         --subflow) ONE_SUBFLOW="$2"; shift 2 ;;
         --workflow-ids) WORKFLOW_IDS_RAW="$2"; shift 2 ;;
+        --resume-run) RESUME_RUN="$2"; shift 2 ;;
         --min-sessions) MIN_SESSIONS="$2"; shift 2 ;;
         --graph-mining-method) GRAPH_MINING_METHOD="$2"; shift 2 ;;
         --backbone-coverage-lambda) BACKBONE_COVERAGE_LAMBDA="$2"; shift 2 ;;
@@ -86,6 +93,9 @@ command -v "$PYTHON_BIN" >/dev/null 2>&1 || { echo "Python was not found." >&2; 
 SPLITS_DIR="$ROOT_DIR/data/eval/abcd/splits"
 OUTPUT_DIR="$ROOT_DIR/outputs"
 mkdir -p "$OUTPUT_DIR"
+if [[ -n "$RESUME_RUN" ]]; then
+    REBUILD_SPLITS=0
+fi
 if [[ "$REBUILD_SPLITS" -eq 1 ]]; then
     echo "Building shared per-subflow session splits..."
     "$PYTHON_BIN" scripts/split_abcd_by_intent.py --seed 42 || exit 1
@@ -102,7 +112,23 @@ else
 fi
 [[ ${#SUBFLOWS[@]} -gt 0 ]] || { echo "No subflows found under $SPLITS_DIR" >&2; exit 1; }
 
+RUN_ID=""
+RUN_ROOT=""
+PLAN_PATH=""
+if [[ -n "$RESUME_RUN" ]]; then
+    RUN_ROOT="$(cd "$RESUME_RUN" 2>/dev/null && pwd)" || {
+        echo "--resume-run does not exist: $RESUME_RUN" >&2; exit 2;
+    }
+    PLAN_PATH="$RUN_ROOT/workflow_load_plan.json"
+    [[ -f "$PLAN_PATH" ]] || { echo "Missing resume load plan: $PLAN_PATH" >&2; exit 2; }
+    RUN_ID="${RUN_ROOT##*/}"
+fi
+
 WORKFLOW_IDS=()
+if [[ -n "$RESUME_RUN" && -z "$WORKFLOW_IDS_RAW" && -f "$RUN_ROOT/manifest.txt" ]]; then
+    saved_ids="$(sed -n 's/^workflow_ids=//p' "$RUN_ROOT/manifest.txt" | head -n 1)"
+    [[ "$saved_ids" != "config.py" ]] && WORKFLOW_IDS_RAW="$saved_ids"
+fi
 if [[ -n "$WORKFLOW_IDS_RAW" ]]; then
     IFS=',' read -r -a raw_ids <<< "$WORKFLOW_IDS_RAW"
     for id in "${raw_ids[@]}"; do
@@ -114,14 +140,43 @@ else
     WORKFLOW_IDS=("")
 fi
 
-RUN_ID="$(date +%Y-%m-%d_%H-%M-%S)"
-RUN_ROOT="$OUTPUT_DIR/full_abcd_$RUN_ID"
+if [[ -z "$RUN_ROOT" ]]; then
+    RUN_ID="$(date +%Y-%m-%d_%H-%M-%S)"
+    RUN_ROOT="$OUTPUT_DIR/full_abcd_$RUN_ID"
+    PLAN_PATH="$RUN_ROOT/workflow_load_plan.json"
+fi
 LOG_DIR="$RUN_ROOT/logs"
 mkdir -p "$LOG_DIR"
-PLAN_PATH="$RUN_ROOT/workflow_load_plan.json"
-"$PYTHON_BIN" scripts/plan_abcd_workflow_loads.py \
-    --splits-dir "$SPLITS_DIR" --workers "${#WORKFLOW_IDS[@]}" \
-    --subflows "${SUBFLOWS[@]}" --output "$PLAN_PATH"
+if [[ -n "$RESUME_RUN" ]]; then
+    planned_workers="$("$PYTHON_BIN" - "$PLAN_PATH" <<'PY'
+import json, sys
+print(len(json.load(open(sys.argv[1], encoding="utf-8"))["workers"]))
+PY
+)"
+    [[ "$planned_workers" -eq "${#WORKFLOW_IDS[@]}" ]] || {
+        echo "Resume worker count mismatch: plan has $planned_workers, but ${#WORKFLOW_IDS[@]} workflow ID(s) were supplied/recovered." >&2
+        exit 2
+    }
+    if [[ -n "$ONE_SUBFLOW" ]]; then
+        "$PYTHON_BIN" - "$PLAN_PATH" "$ONE_SUBFLOW" <<'PY' || {
+import json, sys
+plan = json.load(open(sys.argv[1], encoding="utf-8"))
+target = sys.argv[2]
+raise SystemExit(0 if any(
+    item["name"] == target
+    for worker in plan["workers"]
+    for item in worker["subflows"]
+) else 1)
+PY
+            echo "Subflow $ONE_SUBFLOW is not part of resume plan: $PLAN_PATH" >&2
+            exit 2
+        }
+    fi
+else
+    "$PYTHON_BIN" scripts/plan_abcd_workflow_loads.py \
+        --splits-dir "$SPLITS_DIR" --workers "${#WORKFLOW_IDS[@]}" \
+        --subflows "${SUBFLOWS[@]}" --output "$PLAN_PATH"
+fi
 
 echo "Environment: $CONDA_ENV"
 echo "HF_ENDPOINT: $HF_ENDPOINT"
@@ -129,13 +184,16 @@ echo "Run root:    $RUN_ROOT"
 echo "Load plan:   $PLAN_PATH"
 echo "Subflows:    ${#SUBFLOWS[@]}"
 echo "Workers:     ${#WORKFLOW_IDS[@]}"
+[[ -n "$RESUME_RUN" ]] && echo "Resume:      enabled (completed subflows will be skipped)"
 
 worker_subflows() {
-    "$PYTHON_BIN" - "$PLAN_PATH" "$1" <<'PY'
+    "$PYTHON_BIN" - "$PLAN_PATH" "$1" "$ONE_SUBFLOW" <<'PY'
 import json, sys
 plan = json.load(open(sys.argv[1], encoding="utf-8"))
+requested = sys.argv[3]
 for item in plan["workers"][int(sys.argv[2])]["subflows"]:
-    print(item["name"])
+    if not requested or item["name"] == requested:
+        print(item["name"])
 PY
 }
 
@@ -155,6 +213,52 @@ run_task() {
     SKILLMINING_WORKFLOW_ID="$workflow_id" ABCD_OUTPUT_DIR="$task_dir" "$PYTHON_BIN" "$@"
 }
 
+task_is_complete() {
+    local method_name="$1" subflow="$2" task_dir="$RUN_ROOT/$method_name/$subflow"
+    "$PYTHON_BIN" - "$method_name" "$subflow" "$task_dir" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+method, subflow, task_dir = sys.argv[1:]
+root = Path(task_dir)
+paths = [root / "summary.json"]
+if method == "trace2skill" and root.exists():
+    paths.extend(root.glob("**/summary.json"))
+
+for path in paths:
+    if not path.is_file():
+        continue
+    try:
+        summary = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        continue
+    if method == "graph":
+        row = summary.get(subflow) if isinstance(summary, dict) else None
+        if isinstance(row, dict) and isinstance(row.get("mined"), dict):
+            raise SystemExit(0)
+    elif isinstance(summary, dict):
+        config = summary.get("config", {})
+        if str(config.get("subflow", "")) != subflow:
+            continue
+        if method == "trace2skill" and isinstance(summary.get("evolved_test"), dict):
+            raise SystemExit(0)
+        if method in {"awm", "expel"} and isinstance(summary.get("final_test"), dict):
+            raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+run_or_resume_task() {
+    local worker_index="$1" workflow_id="$2" method_name="$3" subflow="$4"
+    shift 4
+    if [[ -n "$RESUME_RUN" ]] && task_is_complete "$method_name" "$subflow"; then
+        echo "SKIP completed: worker=$worker_index method=$method_name subflow=$subflow"
+        return 0
+    fi
+    run_task "$worker_index" "$workflow_id" "$method_name" "$subflow" "$@"
+}
+
 run_worker() {
     local worker_index="$1" workflow_id="$2"
     local failed_path="$RUN_ROOT/worker_${worker_index}_failed.txt"
@@ -163,22 +267,34 @@ run_worker() {
     for subflow in "${assigned[@]}"; do
         [[ -n "$subflow" ]] || continue
         if [[ "$METHOD" == "all" || "$METHOD" == "awm" ]]; then
-            run_task "$worker_index" "$workflow_id" awm "$subflow" scripts/run_awm_abcd.py --subflow "$subflow" || {
+            run_or_resume_task "$worker_index" "$workflow_id" awm "$subflow" scripts/run_awm_abcd.py --subflow "$subflow" || {
                 echo "awm:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
         fi
         if [[ "$METHOD" == "all" || "$METHOD" == "expel" ]]; then
-            run_task "$worker_index" "$workflow_id" expel "$subflow" scripts/run_expel_abcd.py --subflow "$subflow" || {
+            run_or_resume_task "$worker_index" "$workflow_id" expel "$subflow" scripts/run_expel_abcd.py --subflow "$subflow" || {
                 echo "expel:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
         fi
         if [[ "$METHOD" == "all" || "$METHOD" == "trace2skill" ]]; then
             # Trace2Skill nests its timestamped directory below this unique
             # subflow parent; final aggregation searches recursively.
-            mkdir -p "$RUN_ROOT/trace2skill/$subflow"
-            SKILLMINING_WORKFLOW_ID="$workflow_id" "$PYTHON_BIN" scripts/run_trace2skill_abcd.py \
-                --subflow "$subflow" --train-file "$SPLITS_DIR/$subflow/train.json" \
-                --test-file "$SPLITS_DIR/$subflow/test.json" --output-dir "$RUN_ROOT/trace2skill/$subflow" \
-                --evolution-batch-size "$EVOLUTION_BATCH_SIZE" --continue-on-batch-error || {
+            if [[ -n "$RESUME_RUN" ]] && task_is_complete trace2skill "$subflow"; then
+                echo "SKIP completed: worker=$worker_index method=trace2skill subflow=$subflow"
+            else
+                mkdir -p "$RUN_ROOT/trace2skill/$subflow"
+                trace_resume_args=()
+                if [[ -n "$RESUME_RUN" ]]; then
+                    mapfile -t trace_candidates < <(find "$RUN_ROOT/trace2skill/$subflow" -mindepth 1 -maxdepth 1 -type d -name 'abcd_trace2skill_*' | sort)
+                    if [[ ${#trace_candidates[@]} -eq 1 ]]; then
+                        trace_resume_args=(--resume-dir "${trace_candidates[0]}")
+                        echo "Resuming Trace2Skill checkpoint: ${trace_candidates[0]}"
+                    fi
+                fi
+                SKILLMINING_WORKFLOW_ID="$workflow_id" "$PYTHON_BIN" scripts/run_trace2skill_abcd.py \
+                    --subflow "$subflow" --train-file "$SPLITS_DIR/$subflow/train.json" \
+                    --test-file "$SPLITS_DIR/$subflow/test.json" --output-dir "$RUN_ROOT/trace2skill/$subflow" \
+                    --evolution-batch-size "$EVOLUTION_BATCH_SIZE" --continue-on-batch-error "${trace_resume_args[@]}" || {
                 echo "trace2skill:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
+            fi
         fi
         if [[ "$METHOD" == "all" || "$METHOD" == "graph" ]]; then
             train_sessions="$(train_session_count "$subflow")"
@@ -189,7 +305,7 @@ run_worker() {
             graph_args=(scripts/run_subflow_eval.py --subflow "$subflow" --min-sessions "$MIN_SESSIONS"
                 --mining-method "$GRAPH_MINING_METHOD" --backbone-coverage-lambda "$BACKBONE_COVERAGE_LAMBDA")
             [[ "$SKIP_GRAPH_SEED" -eq 1 ]] && graph_args+=(--skip-seed)
-            run_task "$worker_index" "$workflow_id" graph "$subflow" "${graph_args[@]}" || {
+            run_or_resume_task "$worker_index" "$workflow_id" graph "$subflow" "${graph_args[@]}" || {
                 echo "graph:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
         fi
     done
