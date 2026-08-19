@@ -51,9 +51,8 @@ Worker load is balanced by train+test non-empty agent utterance turns, not
 conversation count. The selected workflow ID is exported as
 SKILLMINING_WORKFLOW_ID; the workflow-aware llm.py must honor this override.
 Without --workflow-ids, one serial worker uses config.py unchanged.
-When --resume-run is used without --workflow-ids, IDs are recovered from the
-existing manifest. Pass --workflow-ids only to replace them with the same
-number of workers.
+Resume does not require a manifest. If the old run has no load plan, a new
+plan is created from the current split list and the supplied workflow IDs.
 EOF
 }
 
@@ -120,15 +119,12 @@ if [[ -n "$RESUME_RUN" ]]; then
         echo "--resume-run does not exist: $RESUME_RUN" >&2; exit 2;
     }
     PLAN_PATH="$RUN_ROOT/workflow_load_plan.json"
-    [[ -f "$PLAN_PATH" ]] || { echo "Missing resume load plan: $PLAN_PATH" >&2; exit 2; }
     RUN_ID="${RUN_ROOT##*/}"
 fi
 
 WORKFLOW_IDS=()
-if [[ -n "$RESUME_RUN" && -z "$WORKFLOW_IDS_RAW" && -f "$RUN_ROOT/manifest.txt" ]]; then
-    saved_ids="$(sed -n 's/^workflow_ids=//p' "$RUN_ROOT/manifest.txt" | head -n 1)"
-    [[ "$saved_ids" != "config.py" ]] && WORKFLOW_IDS_RAW="$saved_ids"
-fi
+# Older distributed runs do not have manifest.txt. Resume therefore never
+# depends on it; explicit --workflow-ids is the authoritative worker mapping.
 if [[ -n "$WORKFLOW_IDS_RAW" ]]; then
     IFS=',' read -r -a raw_ids <<< "$WORKFLOW_IDS_RAW"
     for id in "${raw_ids[@]}"; do
@@ -148,11 +144,19 @@ fi
 LOG_DIR="$RUN_ROOT/logs"
 mkdir -p "$LOG_DIR"
 if [[ -n "$RESUME_RUN" ]]; then
-    planned_workers="$("$PYTHON_BIN" - "$PLAN_PATH" <<'PY'
+    if [[ -f "$PLAN_PATH" ]]; then
+        planned_workers="$("$PYTHON_BIN" - "$PLAN_PATH" <<'PY'
 import json, sys
 print(len(json.load(open(sys.argv[1], encoding="utf-8"))["workers"]))
 PY
-)"
+        )"
+    else
+        echo "Resume run has no workflow_load_plan.json; creating a new plan from current splits."
+        "$PYTHON_BIN" scripts/plan_abcd_workflow_loads.py \
+            --splits-dir "$SPLITS_DIR" --workers "${#WORKFLOW_IDS[@]}" \
+            --subflows "${SUBFLOWS[@]}" --output "$PLAN_PATH"
+        planned_workers="${#WORKFLOW_IDS[@]}"
+    fi
     [[ "$planned_workers" -eq "${#WORKFLOW_IDS[@]}" ]] || {
         echo "Resume worker count mismatch: plan has $planned_workers, but ${#WORKFLOW_IDS[@]} workflow ID(s) were supplied/recovered." >&2
         exit 2
@@ -335,35 +339,16 @@ aggregate_method() {
 [[ "$METHOD" == "all" || "$METHOD" == "trace2skill" ]] && aggregate_method trace2skill
 [[ "$METHOD" == "all" || "$METHOD" == "graph" ]] && aggregate_method graph
 
-MANIFEST="$RUN_ROOT/manifest.txt"
-{
-    echo "run_id=$RUN_ID"
-    echo "method=$METHOD"
-    echo "workflow_ids=${WORKFLOW_IDS_RAW:-config.py}"
-    echo "run_root=$RUN_ROOT"
-    echo "load_plan=$PLAN_PATH"
-    echo ""
-    echo "[worker_logs]"
-    find "$LOG_DIR" -type f -name 'worker_*.log' -print | sort
-    echo ""
-    echo "[aggregate_files]"
-    printf '%s\n' "${AGGREGATES[@]}"
-    echo ""
-    echo "[failed_tasks]"
-    cat "$RUN_ROOT"/worker_*_failed.txt 2>/dev/null || true
-} > "$MANIFEST"
-
 echo "===== Full ABCD experiment finished ====="
 echo "Run root:  $RUN_ROOT"
 echo "Load plan: $PLAN_PATH"
-echo "Manifest:  $MANIFEST"
 echo "Worker logs: $LOG_DIR"
 if [[ ${#AGGREGATES[@]} -gt 0 ]]; then
     echo "Aggregate files:"
     printf '  %s\n' "${AGGREGATES[@]}"
 fi
 if [[ "$WORKER_FAILURE" -ne 0 ]] || grep -q . "$RUN_ROOT"/worker_*_failed.txt 2>/dev/null; then
-    echo "Some subflow tasks failed; see $MANIFEST and worker logs." >&2
+    echo "Some subflow tasks failed; see worker failure files and logs under $RUN_ROOT." >&2
     exit 1
 fi
 echo "All requested tasks completed successfully."
