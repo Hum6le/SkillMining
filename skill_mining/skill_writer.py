@@ -1354,6 +1354,30 @@ def induce_transition_rules(
     """Discover and verify continuation modes from grouped session evidence."""
     from llm import chat
 
+    def parse_json_object(raw: str) -> dict[str, Any] | None:
+        """Best-effort parse for workflow responses that contain JSON noise.
+
+        Workflow APIs occasionally return markdown fences, literal control
+        characters, or a truncated JSON object. The transition compiler must
+        degrade to conservative underspecified rules in those cases rather
+        than fail an otherwise valid subflow.
+        """
+        text = str(raw or "").strip()
+        text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.I | re.S).strip()
+        candidates = [text]
+        start = text.find("{")
+        if start >= 0:
+            candidates.append(text[start:])
+        for candidate in candidates:
+            for value in (candidate, re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", " ", candidate)):
+                try:
+                    parsed = json.loads(value)
+                    if isinstance(parsed, dict):
+                        return parsed
+                except (json.JSONDecodeError, TypeError):
+                    continue
+        return None
+
     nodes = {node["id"]: node["label"] for node in subgraph.get("nodes", [])}
     outgoing: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for edge in subgraph.get("edges", []):
@@ -1415,11 +1439,31 @@ Return ONLY JSON in this schema:
                 result[source].append({"target": target, "status": status, "condition": guard})
         return result
 
+    def underspecified_modes() -> dict[str, list[dict[str, str]]]:
+        return {
+            source: [
+                {"target": target, "status": "underspecified", "condition": ""}
+                for target in sorted(targets)
+            ]
+            for source, targets in allowed.items()
+        }
+
     last_error: Exception | None = None
     for attempt in range(max_retries):
         try:
             discovery_raw = chat(discovery_prompt, temperature=0.0).strip()
-            discovery = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", discovery_raw, flags=re.I | re.S).strip())
+            discovery = parse_json_object(discovery_raw)
+            if discovery is None:
+                print(
+                    f"  Transition induction warning for {subflow}: "
+                    f"discovery returned invalid or truncated JSON; using conservative fallback"
+                )
+                return {
+                    "rules_by_source": underspecified_modes(),
+                    "discovery_raw_output": discovery_raw,
+                    "verifier_raw_output": "",
+                    "parse_warning": "invalid_or_truncated_discovery_json",
+                }
             proposed = clean_modes(discovery)
             verifier_prompt = f"""Verify proposed continuation modes against the original grouped session prefixes.
 Reject ambiguous guards: if two targets from the same source match the same
@@ -1434,9 +1478,24 @@ Proposed modes:
 
 Return ONLY JSON in the same `modes_by_source` schema, covering every target."""
             verified_raw = chat(verifier_prompt, temperature=0.0).strip()
-            verified = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", verified_raw, flags=re.I | re.S).strip())
+            verified = parse_json_object(verified_raw)
+            if verified is None:
+                print(
+                    f"  Transition induction warning for {subflow}: "
+                    f"verifier returned invalid or truncated JSON; keeping discovery result"
+                )
+                return {
+                    "rules_by_source": proposed,
+                    "discovery_raw_output": discovery_raw,
+                    "verifier_raw_output": verified_raw,
+                    "parse_warning": "invalid_or_truncated_verifier_json",
+                }
             rules_by_source = clean_modes(verified)
-            return {"rules_by_source": rules_by_source, "discovery_raw_output": discovery_raw, "verifier_raw_output": verified_raw}
+            return {
+                "rules_by_source": rules_by_source,
+                "discovery_raw_output": discovery_raw,
+                "verifier_raw_output": verified_raw,
+            }
         except Exception as exc:
             last_error = exc
             if attempt + 1 < max_retries:
