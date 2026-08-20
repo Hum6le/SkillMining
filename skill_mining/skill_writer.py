@@ -163,49 +163,71 @@ def build_reference_md(
     subflow: str,
     op_snippets: Dict[str, list[dict]],
     max_snippets_per_op: int = 5,
+    transition_cases: dict[str, list[dict[str, Any]]] | None = None,
+    max_snippets_per_transition: int = 3,
 ) -> str:
     """Generate reference.md from operator→snippets mapping.
 
     Each operator gets up to ``max_snippets_per_op`` snippets, deduplicated
     by snippet text.  Sections have HTML anchors so skill.md can link to them.
     """
-    lines: list[str] = []
-    lines.append(f"# Reference: {subflow}")
-    lines.append("")
-    lines.append(f"Dialogue snippets for the `{subflow}` skill. "
-                 f"Each section shows one operator with example contexts.")
-    lines.append("")
+    transition_cases = transition_cases or {}
+    max_snippets_per_transition = max(1, min(max_snippets_per_transition, 3))
+    transition_by_source: dict[str, list[tuple[str, list[dict[str, Any]]]]] = defaultdict(list)
+    for key, cases in transition_cases.items():
+        if " -> " in key:
+            source, target = key.split(" -> ", 1)
+            transition_by_source[source].append((target, cases or []))
 
-    for op, snippets in sorted(op_snippets.items()):
-        parts = op.split(":", 1)
-        display_op = parts[1] if len(parts) == 2 else op
-        anchor = display_op.replace(":", "-").replace(" ", "-").lower()
+    def display_action(operator: str) -> str:
+        parts = operator.split(":", 1)
+        return parts[1] if len(parts) == 2 else operator
 
-        lines.append(f'<a id="operator-{anchor}"></a>')
-        lines.append(f"## {display_op}")
-        lines.append("")
+    def unique(values: list[str], limit: int) -> list[str]:
+        result: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            value = str(value or "").strip()
+            if not value or value[:160] in seen:
+                continue
+            seen.add(value[:160])
+            result.append(value)
+            if len(result) >= limit:
+                break
+        return result
 
-        # Deduplicate by snippet text, keep most diverse
-        seen_texts: set[str] = set()
-        unique_snippets = []
-        for snip in snippets:
-            key = snip["snippet_text"][:100].strip()
-            if key not in seen_texts:
-                seen_texts.add(key)
-                unique_snippets.append(snip)
-
-        for i, snip in enumerate(unique_snippets[:max_snippets_per_op], 1):
-            lines.append(f"### Example {i} (convo={snip['convo_id']}, turn={snip['turn_index']})")
-            lines.append("")
-            lines.append("```text")
-            lines.append(snip["snippet_text"])
-            lines.append("```")
-            lines.append("")
-
-        if len(unique_snippets) > max_snippets_per_op:
-            lines.append(f"*({len(unique_snippets) - max_snippets_per_op} more snippets not shown)*")
-            lines.append("")
-
+    lines = [
+        f"# Reference: {subflow}", "",
+        f"Transition-centered dialogue evidence for `{subflow}`.",
+        "Values in snippets are reference examples, not executable slot values.", "",
+    ]
+    source_ids = set(op_snippets) | set(transition_by_source)
+    for source in sorted(source_ids):
+        source_label = display_action(source)
+        anchor = source_label.replace(":", "-").replace(" ", "-").lower()
+        lines.extend([f'<a id="operator-{anchor}"></a>', f"## {source_label}", ""])
+        transitions = sorted(transition_by_source.get(source, []), key=lambda item: item[0])
+        source_snippets = [item.get("snippet_text", "") for item in op_snippets.get(source, [])]
+        if not transitions:
+            lines.extend(["### Terminal action evidence", ""])
+            for snippet in unique(source_snippets, 1):
+                lines.extend(["```text", snippet, "```", ""])
+            continue
+        for target, cases in transitions:
+            target_label = display_action(target)
+            lines.extend([f"### {source_label} -> {target_label}", ""])
+            snippets = unique([case.get("context", "") for case in cases], max_snippets_per_transition)
+            if not snippets:
+                snippets = unique(source_snippets, 1)
+            # Keep the transition contract explicit even when a malformed or
+            # unusually sparse conversation has no recoverable text.  The
+            # section must still contain one evidence item; the note is
+            # intentionally non-executable and cannot be mistaken for a slot
+            # value or a learned routing rule.
+            if not snippets:
+                snippets = ["No dialogue snippet was available for this observed transition."]
+            for index, snippet in enumerate(snippets, 1):
+                lines.extend([f"#### Example {index}", "", "```text", snippet, "```", ""])
     return "\n".join(lines)
 
 
@@ -250,6 +272,7 @@ def build_skill_md_from_backbone(
     op_snippets: Dict[str, list[dict]],
     use_llm: bool = True,
     transition_induction: dict[str, Any] | None = None,
+    seed_skill: str | None = None,
 ) -> str:
     """Compile one complete backbone skill from all retained graph evidence."""
     if use_llm:
@@ -259,12 +282,13 @@ def build_skill_md_from_backbone(
             for node_id in subgraph.get("backbone", {}).get("compilation_order", [])
             if node_id in nodes
         ]
-        return _compile_skill_with_retry(
-            _build_backbone_skill_prompt(
-                subflow, subgraph, op_snippets, transition_induction,
-            ),
+        return _compile_backbone_skill_with_transition_mcp(
             subflow,
-            validator=lambda text: _validate_backbone_action_coverage(text, required_actions),
+            subgraph,
+            op_snippets,
+            transition_induction,
+            required_actions,
+            seed_skill=seed_skill,
         )
     return _build_skill_md_from_backbone_fallback(subflow, subgraph)
 
@@ -324,7 +348,7 @@ def _build_unordered_backbone_skill_prompt(
         node_blocks.append(
             f"Action: {node['label']}\n"
             f"Observed slot contract: count={node.get('observed_slot_counts', [0])}; {positions}\n"
-            f"Example dialogue evidence (do not copy values): {evidence}"
+            f"Reference-only dialogue evidence (do not copy slot values): {evidence}"
         )
 
     edge_cards: list[dict[str, str]] = []
@@ -362,7 +386,16 @@ The supplied evidence contains all mined action nodes and all pre-induced edge-l
 - Preserve the supplied induced transition cards; do not invent actions, edges, conditions, business policies, database outcomes, or semantic slot names.
 - Do NOT infer, name, or present a main path, backbone, decision hierarchy, edge priority, branch/retry category, route grouping, or global state machine. Do not reorder the cards into a workflow.
 - Keep one flat `## Unordered Interaction Cards` section. Each action card may list its induced transitions in the evidence order below. No card may claim that it is the normal or preferred next step.
-- Slots must be real values available in the current dialogue. Never put field names, placeholders, or demonstration values into action slots. Mention only the observed source categories and missing-value behavior when evidence makes this clear.
+- Slot values in node cards and dialogue snippets are REFERENCE-ONLY evidence.
+  They describe observed usage patterns and must never be hard-coded into the
+  executable skill or emitted as default action arguments. At runtime, use only
+  values explicitly present in the current dialogue state. A few-shot example
+  is allowed only in a clearly labelled illustrative section, must use masked
+  placeholders such as `<VALUE_1>`, and must never become a literal rule.
+- Slots must be real values available in the current dialogue. Never put field
+  names, placeholders, or demonstration values into action calls. Mention only
+  the observed source categories and missing-value behavior when evidence makes
+  this clear.
 
 ## Skill ID
 {subflow}
@@ -467,6 +500,178 @@ def _replace_routing_section(skill: str, content: str) -> str:
     if start > end:
         raise ValueError("ROUTING_SECTION markers are out of order")
     return skill[:start] + "\n\n" + content.strip() + "\n\n" + skill[end:]
+
+
+def _transition_induction_edge_ids(
+    transition_induction: dict[str, Any] | None,
+) -> set[str]:
+    rules_by_source = (transition_induction or {}).get("rules_by_source", {})
+    return {
+        f"{source}=>{rule['target']}"
+        for source, rules in rules_by_source.items()
+        for rule in rules or []
+        if isinstance(rule, dict) and rule.get("target")
+    }
+
+
+def _build_transition_write_prompt(
+    subflow: str,
+    current_skill: str,
+    transition_induction: dict[str, Any] | None,
+    nodes: dict[str, dict[str, Any]],
+) -> str:
+    """Ask the LLM to write induced transitions as natural routing prose."""
+    rows: list[str] = []
+    rules_by_source = (transition_induction or {}).get("rules_by_source", {})
+    for source, rules in rules_by_source.items():
+        source_label = nodes.get(source, {}).get("label", _short_label(source))
+        for rule in rules or []:
+            if not isinstance(rule, dict) or not rule.get("target"):
+                continue
+            target = str(rule["target"])
+            target_label = nodes.get(target, {}).get("label", _short_label(target))
+            edge_id = f"{source}=>{target}"
+            status = str(rule.get("status") or "underspecified")
+            condition = str(rule.get("condition") or "")
+            evidence = str(rule.get("evidence") or "")
+            rows.append(
+                f"{_route_edge_marker(edge_id)} transition={source_label} -> {target_label}; "
+                f"induction_mode={status}; induced_guard={condition or '(uncertain)'}; "
+                f"induction_note={evidence or '(none)'}"
+            )
+    return f"""You are making one constrained routing edit to an existing customer-service skill.
+
+Write the supplied transition induction into the skill's Routing Policies
+section as concise, natural-language workflow prose. This is an editorial
+integration pass, not a re-induction or a verification pass.
+
+<current_skill>
+{current_skill}
+</current_skill>
+
+<induced_transition_evidence>
+{chr(10).join(rows) if rows else '(no transition evidence)'}
+</induced_transition_evidence>
+
+Writing requirements:
+- Preserve the complete Backbone Tree and all action rules conceptually.
+- Organize related transitions around meaningful backbone decision points.
+- Explain normal continuation, alternative routes, retries, loops, and
+  rejoining behavior in connected prose. Do not produce one repetitive
+  `source -> target: condition` line per edge.
+- Use the induced guard as evidence, but phrase it naturally and
+  conservatively. If the mode is `underspecified` or the guard is uncertain,
+  say that the route is an observed alternative whose exact trigger is not
+  fully identifiable; do not invent a precise condition.
+- A self-transition means repeated action / retry behavior. Describe it as a
+  retry or continued attempt when supported, not as a new action.
+- Do not claim mutual exclusion unless the evidence explicitly supports it.
+- Keep reference slot values out of the skill. Describe slot availability or
+  reuse patterns, and use only masked placeholders in any illustrative few-shot.
+- Preserve every invisible edge marker exactly once somewhere in the prose.
+  Markers are compiler metadata and must not be explained to the end user.
+
+<filesystem_mcp>
+Use exactly one constrained operation:
+```json
+{{
+  "operations": [
+    {{
+      "op": "replace_routing_section",
+      "content": "natural Markdown prose containing every required invisible edge marker"
+    }}
+  ]
+}}
+```
+It replaces only content between `ROUTING_SECTION_START` and
+`ROUTING_SECTION_END`. It cannot change the intent, Backbone Tree, action
+rules, slot policies, or reference-use sections.
+</filesystem_mcp>
+
+Return only one valid JSON object, without Markdown fences.
+"""
+
+
+def _parse_transition_write(raw: str, expected_edge_ids: set[str]) -> str:
+    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.I | re.S).strip()
+    parsed = json.loads(text)
+    operations = parsed.get("operations") if isinstance(parsed, dict) else None
+    if not isinstance(operations, list) or len(operations) != 1:
+        raise ValueError("transition write must return exactly one filesystem-MCP operation")
+    operation = operations[0]
+    if not isinstance(operation, dict) or operation.get("op") != "replace_routing_section":
+        raise ValueError("transition write returned an unsupported filesystem-MCP operation")
+    content = str(operation.get("content") or "").strip()
+    if not content:
+        raise ValueError("transition write returned empty routing prose")
+    found = set(re.findall(r"<!-- ROUTE_EDGE:(.*?) -->", content))
+    if found != expected_edge_ids:
+        raise ValueError(
+            f"transition write coverage mismatch; missing={sorted(expected_edge_ids - found)}, "
+            f"unexpected={sorted(found - expected_edge_ids)}"
+        )
+    return content
+
+
+def build_backbone_seed_skill(
+    subflow: str,
+    subgraph: dict[str, Any],
+    op_snippets: Dict[str, list[dict]],
+    required_actions: list[str] | None = None,
+) -> str:
+    """Compile the reusable backbone seed before transition induction."""
+    if required_actions is None:
+        nodes = {node["id"]: node for node in subgraph.get("nodes", [])}
+        required_actions = [
+            nodes[node_id]["label"]
+            for node_id in subgraph.get("backbone", {}).get("compilation_order", [])
+            if node_id in nodes
+        ]
+    return _compile_skill_with_retry(
+        _build_backbone_skill_prompt(subflow, subgraph, op_snippets, None),
+        subflow,
+        validator=lambda text: _validate_backbone_skill(text, required_actions),
+    )
+
+
+def _compile_backbone_skill_with_transition_mcp(
+    subflow: str,
+    subgraph: dict[str, Any],
+    op_snippets: Dict[str, list[dict]],
+    transition_induction: dict[str, Any] | None,
+    required_actions: list[str],
+    seed_skill: str | None = None,
+) -> str:
+    """Compile a seed, then write transition prose through the constrained MCP."""
+    seed = seed_skill or build_backbone_seed_skill(
+        subflow, subgraph, op_snippets, required_actions,
+    )
+    expected_edge_ids = _transition_induction_edge_ids(transition_induction)
+    if not expected_edge_ids:
+        return seed
+
+    from llm import chat
+    nodes = {node["id"]: node for node in subgraph.get("nodes", [])}
+    prompt = _build_transition_write_prompt(subflow, seed, transition_induction, nodes)
+    last_error: Exception | None = None
+    for attempt in range(1, _SKILL_LLM_MAX_RETRIES + 1):
+        try:
+            content = _parse_transition_write(chat(prompt, temperature=0.0).strip(), expected_edge_ids)
+            return _replace_routing_section(seed, content)
+        except Exception as exc:
+            last_error = exc
+            if attempt < _SKILL_LLM_MAX_RETRIES:
+                delay = _SKILL_LLM_RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                print(
+                    f"  LLM transition write failed for {subflow} "
+                    f"(attempt {attempt}/{_SKILL_LLM_MAX_RETRIES}): {exc}; "
+                    f"retrying in {delay:.1f}s"
+                )
+                time.sleep(delay)
+    raise RuntimeError(
+        f"LLM transition write failed for {subflow} after "
+        f"{_SKILL_LLM_MAX_RETRIES} attempts: {last_error}"
+    )
 
 
 def _build_structured_seed_prompt(subflow: str, subgraph: dict[str, Any]) -> str:
@@ -684,6 +889,15 @@ def _validate_backbone_action_coverage(skill: str, required_actions: list[str]) 
         raise ValueError(
             "compiled skill omitted retained action rules: " + ", ".join(missing)
         )
+
+
+def _validate_backbone_skill(skill: str, required_actions: list[str]) -> None:
+    """Validate action coverage and preservation of the complete tree section."""
+    _validate_backbone_action_coverage(skill, required_actions)
+    if "### Backbone Tree" not in skill:
+        raise ValueError("compiled skill omitted the complete Backbone Tree")
+    if skill.count(_ROUTING_SECTION_START) != 1 or skill.count(_ROUTING_SECTION_END) != 1:
+        raise ValueError("compiled skill omitted the unique routing MCP region")
 
 
 def _validate_main_path_skill(skill: str, main_labels: list[str]) -> None:
@@ -1360,6 +1574,58 @@ def _format_observed_condition(condition: dict[str, Any]) -> str:
     return "; ".join(facts) if facts else "when this transition is observed in similar sessions"
 
 
+def _render_backbone_tree(subgraph: dict[str, Any]) -> str:
+    """Render the complete arborescence as a compact ASCII tree for the LLM."""
+    nodes = {node["id"]: node for node in subgraph.get("nodes", [])}
+    backbone = subgraph.get("backbone", {})
+    root = backbone.get("root", "ROOT")
+    children: dict[str, list[str]] = defaultdict(list)
+    for edge in backbone.get("edges", []):
+        source = str(edge.get("source", ""))
+        target = str(edge.get("target", ""))
+        if target in nodes:
+            children[source].append(target)
+    order = {node_id: index for index, node_id in enumerate(backbone.get("compilation_order", []))}
+    for source in children:
+        children[source].sort(key=lambda node_id: (order.get(node_id, 10**9), nodes[node_id].get("label", node_id)))
+
+    lines = ["ROOT"]
+    visited: set[str] = set()
+
+    def walk(source: str, prefix: str) -> None:
+        child_nodes = [node_id for node_id in children.get(source, []) if node_id not in visited]
+        for index, node_id in enumerate(child_nodes):
+            visited.add(node_id)
+            is_last = index == len(child_nodes) - 1
+            connector = "`-- " if is_last else "|-- "
+            label = nodes[node_id].get("label", node_id)
+            lines.append(prefix + connector + f"`{label}`")
+            walk(node_id, prefix + ("    " if is_last else "|   "))
+
+    walk(root, "")
+    # Keep disconnected artifacts visible instead of silently omitting them.
+    for node_id in backbone.get("compilation_order", []):
+        if node_id in nodes and node_id not in visited:
+            lines.append("`-- " + f"`{nodes[node_id].get('label', node_id)}` (unattached)")
+    return "\n".join(lines)
+
+
+def _render_backbone_edge_table(subgraph: dict[str, Any]) -> str:
+    """Render every selected backbone edge, including its support score."""
+    nodes = {node["id"]: node for node in subgraph.get("nodes", [])}
+    rows = []
+    for edge in subgraph.get("backbone", {}).get("edges", []):
+        source = str(edge.get("source", "ROOT"))
+        target = str(edge.get("target", ""))
+        source_label = "ROOT" if source == subgraph.get("backbone", {}).get("root", "ROOT") else nodes.get(source, {}).get("label", source)
+        target_label = nodes.get(target, {}).get("label", target)
+        rows.append(
+            f"- `{source_label}` -> `{target_label}`; "
+            f"support={edge.get('support', 0)}; score={edge.get('score', 0)}"
+        )
+    return "\n".join(rows) if rows else "(empty backbone)"
+
+
 def _build_backbone_skill_prompt(
     subflow: str,
     subgraph: dict,
@@ -1368,12 +1634,12 @@ def _build_backbone_skill_prompt(
 ) -> str:
     nodes = {node["id"]: node for node in subgraph.get("nodes", [])}
     backbone = subgraph.get("backbone", {})
-    main_path = backbone.get("main_path", [])
     order = backbone.get("compilation_order", [])
     induced_rules = (transition_induction or {}).get("rules_by_source", {})
 
     allowed_actions = [nodes[node_id]["label"] for node_id in order if node_id in nodes]
-    main_labels = [nodes[node_id]["label"] for node_id in main_path if node_id in nodes]
+    backbone_tree = _render_backbone_tree(subgraph)
+    backbone_edge_table = _render_backbone_edge_table(subgraph)
     action_blocks: list[str] = []
     for node_id in order:
         node = nodes.get(node_id)
@@ -1390,7 +1656,7 @@ def _build_backbone_skill_prompt(
         action_blocks.append(
             f"### {node['label']}\n"
             f"Ordered slot contract: count={slots or [0]}; {position_contract or 'no observed slot values'}\n"
-            f"Observed slot examples (evidence only; never reuse these values): "
+            f"Reference-only slot examples (pattern evidence; never hard-code or reuse these values): "
             f"{json.dumps(node.get('slot_examples', [])[:3], ensure_ascii=False)}"
         )
         if induced_rules.get(node_id):
@@ -1400,9 +1666,9 @@ def _build_backbone_skill_prompt(
                 f"condition={rule.get('condition') or '(insufficient observable evidence)'}"
                 for rule in induced_rules[node_id]
             )
-            action_blocks[-1] += "\nPre-induced transition cards:\n" + rendered
+            action_blocks[-1] += "\nTransition evidence available for the later routing write pass:\n" + rendered
         else:
-            action_blocks[-1] += "\nPre-induced transition cards:\n- No observed outgoing transition."
+            action_blocks[-1] += "\nTransition evidence available for the later routing write pass:\n- No observed outgoing transition."
 
     evidence_blocks: list[str] = []
     for node_id in order:
@@ -1410,7 +1676,8 @@ def _build_backbone_skill_prompt(
         if snippets:
             evidence_blocks.append(
                 f"**{nodes.get(node_id, {}).get('label', node_id)}**\n"
-                f"```text\n{snippets[0]['snippet_text'][:280]}\n```"
+                f"```text\n{snippets[0]['snippet_text'][:280]}\n```\n"
+                "These are reference examples only; abstract any slot values before writing rules."
             )
 
     return f"""You are compiling a compact, evidence-grounded customer-service skill.
@@ -1418,14 +1685,19 @@ def _build_backbone_skill_prompt(
 ## Contract
 - Allowed actions, and only allowed actions: {', '.join(allowed_actions)}
 - Coverage is mandatory: write exactly one `#### ` action-rule heading for EVERY
-  allowed action listed above, including actions outside the Main Path. Do not
-  omit a retained action merely because it belongs to a branch or retry route.
-- The Main Path MUST follow this backbone order exactly: {' -> '.join(main_labels) or '(no multi-step path)'}
-- For each action, use only its listed pre-induced transition cards. Do not add
-  actions, transitions, database outcomes, or policy requirements absent from
-  those cards.
-- A transition condition is an induced summary of observed session evidence,
-  not a universal business rule. Phrase it conservatively.
+  allowed action listed above, including actions in any backbone branch. Do not
+  omit a retained action merely because it belongs to a branch or recovery route.
+- Do not reduce the backbone to a single main path. The complete maximum
+  spanning backbone below is the structural organization of the skill and
+  every retained backbone node must remain visible in the Backbone Tree.
+- The routing prose will be written by a later constrained filesystem-MCP pass.
+  In this seed pass, describe the action inventory and backbone organization;
+  do not turn transition evidence into a rigid per-edge rule table.
+- Slot examples and reference snippets are evidence, not executable values.
+  Never hard-code any observed/reference slot value into the skill. At runtime,
+  use only values explicitly available in the current dialogue state. If a
+  few-shot illustration is useful, mask values as `<VALUE_1>`, `<VALUE_2>`,
+  etc., label it as illustrative, and never turn it into a default argument.
 - Slots must be REAL values grounded in the current dialogue state. Never put
   field names, placeholders, or example values into an action slot.
 - Mine a reusable slot policy for every action with slots. For each ordered
@@ -1441,28 +1713,30 @@ def _build_backbone_skill_prompt(
   `credential_types`, `credential_count`, and `failure_signal`. For every
   action rule, state a precondition, an ordered slot contract, and a post-state
   update. Use `last_completed_action=<action>` as the default post-state update.
-- Use backbone organization to explain how the primary route relates to each
-  action's transition cards. Do not claim that branches are mutually exclusive
-  unless their induced guards are.
-- Be concise: one short main path and at most one short transition rule per
-  pre-induced edge card. Concision applies within each rule; it does not allow
-  omitting retained actions or their induced transitions.
-- Treat `distinguishable` modes as evidence-backed guards, write
-  `ordered_fallback` only after the normal route cannot proceed, and do not
-  invent a deterministic branch condition for an `underspecified` mode.
+- Use the complete backbone tree to explain parent-child organization, branch
+  attachment, and rejoining relations for each action's transition cards. Do
+  not claim that branches are mutually exclusive unless their induced guards
+  are.
+- Be concise and natural. Explain the workflow as a coherent procedure rather
+  than a list of mechanically repeated edge rules.
 
 ## Skill
 Skill ID: {subflow}
 Sessions: {subgraph.get('n_sessions', 0)}
-All actions are retained; the backbone only determines the primary order.
+All actions are retained; the maximum spanning backbone determines the global
+tree organization. It is not a single linear route.
 
-## Main Backbone
-{' -> '.join(main_labels) or '(single-action skill)'}
+## Maximum Spanning Backbone (Directed MST / Arborescence)
+Tree view:
+{backbone_tree}
+
+Backbone edge table:
+{backbone_edge_table}
 
 ## Per-Action Pre-Induced Transition Evidence
 {chr(10).join(action_blocks) if action_blocks else '(none)'}
 
-## Representative Dialogue Evidence
+## Reference-Only Dialogue Evidence (Not Executable Values)
 {chr(10).join(evidence_blocks) if evidence_blocks else '(see reference.md)'}
 
 ## Required Output
@@ -1475,8 +1749,20 @@ Write only this Markdown document:
 [One short evidence-grounded sentence.]
 
 ## Workflow
-### Main Path
-1. `action-a` -> `action-b` -> ...
+### Backbone Tree
+```text
+ROOT
+└── `action-a`
+    ├── `action-b`
+    └── `action-c`
+```
+Reproduce the complete retained maximum spanning backbone as a compact tree.
+Do not collapse it into one main path. Preserve every backbone node and parent-child edge.
+Use ASCII connectors such as pipe-dash-dash and backtick-dash-dash; do not use Unicode box-drawing characters.
+
+### Routing Policies
+<!-- ROUTING_SECTION_START -->
+<!-- ROUTING_SECTION_END -->
 
 ## State Machine
 - Variables: ...
@@ -1486,7 +1772,8 @@ Write only this Markdown document:
 - Preconditions: ...
 - Slots: ordered real values only; `arg1` is ...
 - Post-state: ...
-- When [induced condition], transition to `action-b`.
+- Backbone children: ...
+- Routing details are written in the Routing Policies section.
 
 #### `every-other-retained-action`
 - [Repeat one concise rule for every remaining allowed action, including branch and retry actions.]
@@ -1494,6 +1781,8 @@ Write only this Markdown document:
 ## Slot Discipline
 - Use only real values available in the current dialogue state.
 - Preserve the action's observed slot order and do not emit schema labels.
+- Reference examples are not defaults. Never copy their literal slot values.
+- Few-shot illustrations, if included, must use masked values such as `<VALUE_1>`.
 
 ## Slot Policies
 #### `action-a`
@@ -1510,8 +1799,9 @@ def induce_transition_rules(
     subgraph: dict[str, Any],
     edge_cases: dict[str, list[dict[str, Any]]],
     max_retries: int = 3,
+    skill_context: str | None = None,
 ) -> dict[str, Any]:
-    """Discover and verify continuation modes from grouped session evidence."""
+    """Induce continuation modes using local cases and the global skill draft."""
     from llm import chat
 
     def parse_json_object(raw: str) -> dict[str, Any] | None:
@@ -1562,19 +1852,50 @@ def induce_transition_rules(
                 lines.append(f"Raw session prefix:\n{case.get('context', '')[:1800]}")
         groups.append("\n".join(lines))
 
+    graph_overview = []
+    for source, edges in sorted(outgoing.items()):
+        targets = ", ".join(
+            f"{edge['target']} (support={edge.get('support', 0)})"
+            for edge in sorted(edges, key=lambda item: (-item.get("support", 0), item["target"]))
+        )
+        graph_overview.append(f"{source} -> {targets}")
+    global_skill = str(skill_context or "(No previously compiled skill draft is available.)")
+
     discovery_prompt = f"""Discover continuation modes for a session-mined action graph.
 
+The graph overview and current skill draft provide global context. Use them to
+understand how a local transition fits the whole workflow, including its
+backbone position, likely rejoin points, and neighboring decisions. Do not
+rewrite the skill and do not invent graph edges.
+
 For EACH source, compare ALL outgoing target groups jointly using their raw
-session prefixes and observed action-slot evidence. Treat a slot value as an
-instance value, never as a reusable constant. When a branch is supported by a
-value becoming available, missing, changing, or being reused from prior state,
-describe that availability pattern rather than the literal value. Do not invent
-a guard merely because every edge needs text.
-For each target choose exactly one status: `distinguishable` when a current
-dialogue clue selects it, `ordered_fallback` when it is only valid after a
-normal route cannot proceed, or `underspecified` when the supplied prefixes do
-not uniquely explain why it differs from another target. Use an empty guard for
-underspecified modes. Do not add targets.
+session prefixes and observed action-slot evidence. Read the customer/user
+utterances in each prefix as transition evidence: identify what the user
+asked, supplied, corrected, denied, or left missing, and how that changed the
+conversation state before the target action. Also consider preceding agent
+utterances as part of the dialogue history, especially when an agent request
+elicited the user information that enables the next transition. Do not treat
+the mere presence of an action label as sufficient evidence for a guard.
+Treat a slot value as an instance value, never as a reusable constant. Do not
+force the explanation into an explicit variable, boolean, or formal predicate.
+A valid explanation may instead be a natural-language contrast between the
+conversation prefixes, such as what the user asked for, what the user had not
+provided, or which earlier exchange led to a different continuation. It is
+also valid to say that the distinction is only supported by the preceding
+dialogue context and cannot be reduced to a stable standalone condition.
+For each target choose exactly one status: `distinguishable` when the supplied
+dialogue gives a meaningful clue, `ordered_fallback` when it is only valid
+after a normal route cannot proceed, or `underspecified` when the evidence does
+not uniquely explain the difference. For `underspecified`, leave `guard` empty
+and preserve the uncertainty in `evidence`. Do not add targets.
+
+<global_graph_overview>
+{chr(10).join(graph_overview) or '(no retained graph edges)'}
+</global_graph_overview>
+
+<existing_skill_draft>
+{global_skill}
+</existing_skill_draft>
 
 {chr(10).join(groups)}
 
@@ -1596,13 +1917,23 @@ Return ONLY JSON in this schema:
                 if status not in {"distinguishable", "ordered_fallback", "underspecified"}:
                     status = "underspecified"
                 guard = str(row.get("guard") or "").strip() if status != "underspecified" else ""
-                result[source].append({"target": target, "status": status, "condition": guard})
+                result[source].append({
+                    "target": target,
+                    "status": status,
+                    "condition": guard,
+                    "evidence": str(row.get("evidence") or "").strip(),
+                })
         return result
 
     def underspecified_modes() -> dict[str, list[dict[str, str]]]:
         return {
             source: [
-                {"target": target, "status": "underspecified", "condition": ""}
+                {
+                    "target": target,
+                    "status": "underspecified",
+                    "condition": "",
+                    "evidence": "",
+                }
                 for target in sorted(targets)
             ]
             for source, targets in allowed.items()
@@ -1624,37 +1955,16 @@ Return ONLY JSON in this schema:
                     "verifier_raw_output": "",
                     "parse_warning": "invalid_or_truncated_discovery_json",
                 }
-            proposed = clean_modes(discovery)
-            verifier_prompt = f"""Verify proposed continuation modes against the original grouped session prefixes.
-Reject ambiguous guards: if two targets from the same source match the same
-visible situation, mark the unsupported target `underspecified` or
-`ordered_fallback`; never resolve ambiguity with an arbitrary priority.
-
-Original evidence:
-{chr(10).join(groups)}
-
-Proposed modes:
-{json.dumps({"modes_by_source": proposed}, ensure_ascii=False)}
-
-Return ONLY JSON in the same `modes_by_source` schema, covering every target."""
-            verified_raw = chat(verifier_prompt, temperature=0.0).strip()
-            verified = parse_json_object(verified_raw)
-            if verified is None:
-                print(
-                    f"  Transition induction warning for {subflow}: "
-                    f"verifier returned invalid or truncated JSON; keeping discovery result"
-                )
-                return {
-                    "rules_by_source": proposed,
-                    "discovery_raw_output": discovery_raw,
-                    "verifier_raw_output": verified_raw,
-                    "parse_warning": "invalid_or_truncated_verifier_json",
-                }
-            rules_by_source = clean_modes(verified)
+            # Keep the single joint induction result as evidence for the
+            # later filesystem-MCP writing pass. Do not run a second verifier:
+            # the writer should express uncertainty naturally instead of
+            # forcing every edge through another rigid classification step.
+            rules_by_source = clean_modes(discovery)
             return {
                 "rules_by_source": rules_by_source,
                 "discovery_raw_output": discovery_raw,
-                "verifier_raw_output": verified_raw,
+                "verifier_raw_output": "",
+                "verification_skipped": True,
             }
         except Exception as exc:
             last_error = exc
@@ -1667,12 +1977,15 @@ def _build_skill_md_from_backbone_fallback(subflow: str, subgraph: dict) -> str:
     """Deterministic compact rendering used by tests or offline inspection."""
     nodes = {node["id"]: node for node in subgraph.get("nodes", [])}
     backbone = subgraph.get("backbone", {})
-    main_path = backbone.get("main_path", [])
     order = backbone.get("compilation_order", [])
     local = subgraph.get("local_transitions", {})
-    lines = [f"# Skill: {subflow}", "", "## Intent", "", f"Handle `{subflow}` requests using the observed action workflow.", "", "## Workflow", "", "### Main Path", ""]
-    labels = [nodes[node_id]["label"] for node_id in main_path if node_id in nodes]
-    lines.append(" -> ".join(f"`{label}`" for label in labels) if labels else "Use the retained action rules below.")
+    lines = [
+        f"# Skill: {subflow}", "", "## Intent", "",
+        f"Handle `{subflow}` requests using the observed action workflow.",
+        "", "## Workflow", "", "### Backbone Tree", "", "```text",
+        _render_backbone_tree(subgraph), "```",
+        "", "Preserve the complete maximum spanning backbone; do not collapse it into one route.",
+    ]
     lines.extend([
         "", "## State Machine", "",
         "- Track `last_completed_action`, `account_selected`, `credential_types`, `credential_count`, and `failure_signal`.",
@@ -2094,8 +2407,16 @@ def write_skill_and_reference(
     skill_path = intent_dir / "skill.md"
     skill_path.write_text(skill_md, encoding="utf-8")
 
-    # Generate reference.md (max 5 diverse snippets per operator)
-    reference_md = build_reference_md(subflow, op_snippets, max_snippets_per_op=5)
+    # Generate transition-centered reference evidence. The graph miner is
+    # deterministic here, so this does not add an LLM call.
+    from skill_mining.backbone_workflow_mining import sample_transition_cases
+    transition_cases = sample_transition_cases(
+        subflow, conversations, max_cases_per_edge=3,
+    )
+    reference_md = build_reference_md(
+        subflow, op_snippets, max_snippets_per_transition=3,
+        transition_cases=transition_cases,
+    )
     ref_path = intent_dir / "reference.md"
     ref_path.write_text(reference_md, encoding="utf-8")
 

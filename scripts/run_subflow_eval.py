@@ -130,9 +130,16 @@ def mine_subflow_skill(
         _find_operator_snippets, build_reference_md,
         build_skill_md_from_subgraph,
     )
+    from skill_mining.backbone_workflow_mining import sample_transition_cases
     operators = skill_info["selected_vertices"]
     op_snippets = _find_operator_snippets(train_convs, subflow, operators)
-    reference_md = build_reference_md(subflow, op_snippets, max_snippets_per_op=5)
+    transition_cases = sample_transition_cases(
+        subflow, train_convs, max_cases_per_edge=3,
+    )
+    reference_md = build_reference_md(
+        subflow, op_snippets, max_snippets_per_transition=3,
+        transition_cases=transition_cases,
+    )
 
     # Persist deterministic mining artifacts before optional LLM compilation.
     if artifact_dir is not None:
@@ -168,6 +175,7 @@ def mine_subflow_skill_sequence(
         _find_operator_snippets, build_reference_md,
         build_skill_md_from_subgraph,
     )
+    from skill_mining.backbone_workflow_mining import sample_transition_cases
 
     mined = mine_sequence_workflow(
         subflow,
@@ -179,7 +187,13 @@ def mine_subflow_skill_sequence(
 
     operators = mined["skill_info"]["selected_vertices"]
     op_snippets = _find_operator_snippets(train_convs, subflow, operators)
-    reference_md = build_reference_md(subflow, op_snippets, max_snippets_per_op=5)
+    transition_cases = sample_transition_cases(
+        subflow, train_convs, max_cases_per_edge=3,
+    )
+    reference_md = build_reference_md(
+        subflow, op_snippets, max_snippets_per_transition=3,
+        transition_cases=transition_cases,
+    )
 
     # Sequence mining is deterministic; save its artifacts before the
     # optional LLM compiler so a slow/failed API call cannot hide them.
@@ -228,7 +242,8 @@ def mine_subflow_skill_backbone(
     )
     from skill_mining.skill_writer import (
         _find_operator_snippets, build_reference_md,
-        build_skill_md_from_backbone, build_skill_md_from_unordered_backbone,
+        build_backbone_seed_skill, build_skill_md_from_backbone,
+        build_skill_md_from_unordered_backbone,
         induce_transition_rules,
     )
 
@@ -255,9 +270,24 @@ def mine_subflow_skill_backbone(
         )
     operators = mined["skill_info"]["selected_vertices"]
     op_snippets = _find_operator_snippets(train_convs, subflow, operators)
-    reference_md = build_reference_md(subflow, op_snippets, max_snippets_per_op=5)
     edge_cases = sample_transition_cases(
         subflow, train_convs, max_cases_per_edge=transition_cases_per_edge,
+    )
+    reference_md = build_reference_md(
+        subflow, op_snippets, max_snippets_per_transition=3,
+        transition_cases=edge_cases,
+    )
+    # Compile the stable backbone once before induction so the inducer can
+    # place each local transition in the context of the complete skill.
+    nodes = {node["id"]: node for node in mined["subgraph"].get("nodes", [])}
+    required_actions = [
+        nodes[node_id]["label"]
+        for node_id in mined["subgraph"].get("backbone", {}).get("compilation_order", [])
+        if node_id in nodes
+    ]
+    log.info("  Compiling backbone seed for global transition induction context...")
+    seed_skill = build_backbone_seed_skill(
+        subflow, mined["subgraph"], op_snippets, required_actions,
     )
     # Both compilers consume this same per-edge induction. The organized
     # compiler groups it around backbone decisions; the control only receives
@@ -265,6 +295,7 @@ def mine_subflow_skill_backbone(
     log.info("  Inducing joint transition guards for all observed edge types...")
     transition_induction = induce_transition_rules(
         subflow, mined["subgraph"], edge_cases,
+        skill_context=seed_skill,
     )
     mined["subgraph"]["transition_induction"] = transition_induction
 
@@ -292,6 +323,7 @@ def mine_subflow_skill_backbone(
             op_snippets,
             use_llm=True,
             transition_induction=transition_induction,
+            seed_skill=seed_skill,
         )
     if compiler in {"unordered", "compare"}:
         log.info("  Compiling unordered node-edge control skill via LLM...")

@@ -268,7 +268,10 @@ def mine_backbone_workflow(
             if not collapsed or collapsed[-1]["node"] != step["node"]:
                 collapsed.append(step)
         start_counts[collapsed[0]["node"]] += 1
-        for source, target in zip(collapsed, collapsed[1:]):
+        # Collapse consecutive repetitions for the session's canonical
+        # operator sequence, but retain each repetition as an explicit
+        # self-edge in the transition graph (e.g. A -> A -> B).
+        for source, target in zip(steps, steps[1:]):
             key = (source["node"], target["node"])
             edge_counts[key] += 1
             edge_sessions[key].add(sid)
@@ -303,6 +306,10 @@ def mine_backbone_workflow(
     # Each node chooses its strongest observed predecessor or the virtual root.
     candidates: dict[str, list[dict[str, Any]]] = {node: [] for node in nodes}
     for edge in edge_rows.values():
+        # A self-edge is useful evidence for retry/repetition induction, but
+        # cannot be a parent edge in a directed spanning arborescence.
+        if edge["source"] == edge["target"]:
+            continue
         candidates[edge["target"]].append({**edge, "score": float(edge["score"])})
     for node in nodes:
         root_score = math.log1p(start_counts[node]) - 0.25
@@ -506,7 +513,7 @@ def mine_backbone_workflow_session_coverage(
             targets = turn.get("targets") or []
             if len(targets) >= 3 and targets[1] == "take_action" and targets[2]:
                 action, _ = canonical_action_name(targets[2], schema.get("actions"))
-                if action and (not actions or actions[-1] != action):
+                if action:
                     actions.append(action)
         session_edges.append({
             (_node_id(subflow, source), _node_id(subflow, target))
@@ -696,11 +703,9 @@ def sample_transition_cases(
                     "turn_index": turn_index,
                     "slots": [str(value) for value in suffix_slots] + [str(value) for value in raw_slots],
                 })
-        collapsed: list[dict[str, Any]] = []
-        for step in steps:
-            if not collapsed or collapsed[-1]["node"] != step["node"]:
-                collapsed.append(step)
-        for source, target in zip(collapsed, collapsed[1:]):
+        # Keep repeated actions as self-edge evidence. The same action node is
+        # still used; repetition is represented by source == target.
+        for source, target in zip(steps, steps[1:]):
             key = f"{source['node']} -> {target['node']}"
             if len(cases[key]) >= max_cases_per_edge:
                 continue
