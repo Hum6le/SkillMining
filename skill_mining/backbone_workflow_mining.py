@@ -719,12 +719,22 @@ def sample_transition_cases(
                 speaker, text = _get_speaker_text(conversation, index, turn)
                 if text:
                     context_lines.append(f"{speaker}: {text}")
+            inter_action_lines: list[str] = []
+            # This is the interaction which actually mediates an action edge.
+            # It may contain an agent proposal followed by a user acceptance,
+            # neither of which is represented by the action graph alone.
+            for index in range(source["turn_index"] + 1, target_index):
+                turn = (conversation.get("delexed") or [])[index]
+                speaker, text = _get_speaker_text(conversation, index, turn)
+                if text:
+                    inter_action_lines.append(f"{speaker}: {text}")
             cases[key].append({
                 "conversation_id": str(conversation.get("convo_id") or "?"),
                 "state": _state_before(conversation, target_index),
                 "source_slots": source.get("slots", []),
                 "target_slots": target.get("slots", []),
                 "context": "\n".join(context_lines),
+                "inter_action_dialogue": "\n".join(inter_action_lines),
             })
     return dict(cases)
 
