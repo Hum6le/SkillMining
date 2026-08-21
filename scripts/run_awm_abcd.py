@@ -264,7 +264,7 @@ def main():
     agent = ABCDAgent(
         model=MODEL, workflow=workflow, memory=memory,
         reference_text=reference_text,
-        expose_scenario_labels=True,
+        expose_scenario_labels=False,
         response_logger=logger,
     )
 
@@ -437,7 +437,7 @@ def main():
     test_agent = ABCDAgent(
         model=MODEL, workflow=workflow, memory=memory,
         reference_text=reference_text,
-        expose_scenario_labels=True,
+        expose_scenario_labels=False,
         response_logger=logger,
     )
 

@@ -77,7 +77,7 @@ def main():
         source = Path(args.resume_from)
         rule_path = source / "expel_rules.json"
     rules = ExpeLRuleStore.load(rule_path) if rule_path and rule_path.exists() else ExpeLRuleStore(args.max_rules)
-    agent = ExpeLABCDAgent(model=args.model, rule_store=rules, expose_scenario_labels=True)
+    agent = ExpeLABCDAgent(model=args.model, rule_store=rules, expose_scenario_labels=False)
     batch_records = []
 
     if not args.eval_only:

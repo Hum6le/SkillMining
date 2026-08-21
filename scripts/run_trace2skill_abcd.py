@@ -1089,7 +1089,7 @@ def run_pipeline(args) -> PipelineOutputs:
         log.info("Stage 1: seed run on training set")
         seed_train_agent = _build_agent(
             model, seed_skill_text, response_logger, seed_reference_text,
-            expose_scenario_labels=True,
+            expose_scenario_labels=False,
         )
         seed_train_turns = seed_train_agent.generate_all_turn_predictions(
             train_convs,
@@ -1187,7 +1187,7 @@ def run_pipeline(args) -> PipelineOutputs:
             current_skill_text,
             response_logger,
             current_reference_text,
-            expose_scenario_labels=True,
+            expose_scenario_labels=False,
         )
         batch_turns = batch_agent.generate_all_turn_predictions(
             batch_convs,
@@ -1305,7 +1305,7 @@ def run_pipeline(args) -> PipelineOutputs:
         log.info("Stage 4: seed evaluation on test")
         seed_test_agent = _build_agent(
             model, seed_skill_text, response_logger, seed_reference_text,
-            expose_scenario_labels=True,
+            expose_scenario_labels=False,
         )
         seed_test_turns = seed_test_agent.generate_all_turn_predictions(
             test_convs,
@@ -1335,7 +1335,7 @@ def run_pipeline(args) -> PipelineOutputs:
         evolved_skill_text,
         response_logger,
         evolved_reference_text,
-        expose_scenario_labels=True,
+        expose_scenario_labels=False,
     )
     evolved_test_turns = evolved_test_agent.generate_all_turn_predictions(
         test_convs,

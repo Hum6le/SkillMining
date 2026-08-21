@@ -656,7 +656,9 @@ def main():
         if not args.skip_seed:
             log.info("  Seed baseline...")
             seed_agent = ABCDAgent(
-                model=args.model, workflow=WorkflowStore(), memory=MemoryStore())
+                model=args.model, workflow=WorkflowStore(), memory=MemoryStore(),
+                expose_scenario_labels=False,
+            )
             seed_result = evaluate_agent_on_subflow(
                 seed_agent, test_convs, "seed", subflow, save_dir=sf_out)
             log.info(f"    BERT={seed_result['text']['bert_f1']:.4f}  "
@@ -679,6 +681,7 @@ def main():
             reference_text="" if args.disable_reference_lookup else reference_text,
             reference_top_k=args.reference_top_k,
             reference_max_chars=args.reference_max_chars,
+            expose_scenario_labels=False,
         )
         mined_result = evaluate_agent_on_subflow(
             mined_agent, test_convs, "mined", subflow, save_dir=sf_out)
@@ -704,6 +707,7 @@ def main():
                 reference_text="" if args.disable_reference_lookup else reference_text,
                 reference_top_k=args.reference_top_k,
                 reference_max_chars=args.reference_max_chars,
+                expose_scenario_labels=False,
             )
             unordered_result = evaluate_agent_on_subflow(
                 unordered_agent, test_convs, "unordered", subflow, save_dir=sf_out)

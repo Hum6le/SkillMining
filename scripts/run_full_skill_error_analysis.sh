@@ -20,7 +20,7 @@ RESUME_DIR=""
 BATCH_SIZE=8
 SAMPLE_ERRORS=10
 SEED=17
-EXPECTED_SUBFLOWS=96
+EXPECTED_SUBFLOWS=10
 METHODS=()
 SUBFLOWS=()
 
@@ -40,7 +40,7 @@ Optional:
   --batch-size N            Subflows per batch summary (default: 8)
   --sample-errors N         Error samples per subflow (default: 10)
   --seed N                  Sampling seed (default: 17)
-  --expected-subflows N     Sanity check (default: 96)
+  --expected-subflows N     Sanity check (default: 10 high-level flows)
   --methods "LIST"          Method filter, e.g. "awm trace2skill"
   --subflows "LIST"         Subflow filter, e.g. "cost status"
   --python PATH             Python executable (default: python)

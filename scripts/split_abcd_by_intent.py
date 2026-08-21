@@ -31,12 +31,12 @@ ABCD_DIR = "data/eval/abcd/data"
 DEFAULT_OUT = Path("data/eval/abcd/splits")
 
 
-def split_subflow_convs(
+def split_flow_conversations(
     convs: list[dict],
     train_frac: float = 0.8,
     seed: int = 42,
 ) -> tuple[list[dict], list[dict]]:
-    """Split a single subflow's conversations into train/test."""
+    """Split one high-level flow's conversations into train/test."""
     rng = random.Random(seed)
     shuffled = list(convs)
     rng.shuffle(shuffled)
@@ -87,7 +87,7 @@ def main():
         if len(convs) < args.min_sessions:
             continue
 
-        train, test = split_subflow_convs(convs, args.train_frac, args.seed)
+        train, test = split_flow_conversations(convs, args.train_frac, args.seed)
 
         sf_dir = out_dir / sf
         sf_dir.mkdir(parents=True, exist_ok=True)
