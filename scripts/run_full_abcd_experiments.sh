@@ -23,11 +23,44 @@ BACKBONE_COMPILER="organized"
 BACKBONE_ABLATION_ONLY=0
 SKIP_GRAPH_SEED=1
 EVOLUTION_BATCH_SIZE=25
+AWM_INDUCTION_MODE="online"
 CONTINUE_ON_ERROR=1
 PYTHON_BIN="python"
 REBUILD_SPLITS=1
 WORKFLOW_IDS_RAW=""
 RESUME_RUN=""
+PIDS=()
+
+terminate_descendants() {
+    local parent_pid="$1"
+    local child_pid
+    # A worker is a background Bash process whose foreground child is Python.
+    # Stop descendants first so killing the coordinator cannot orphan them.
+    while IFS= read -r child_pid; do
+        [[ -n "$child_pid" ]] || continue
+        terminate_descendants "$child_pid"
+        kill -TERM "$child_pid" 2>/dev/null || true
+    done < <(pgrep -P "$parent_pid" 2>/dev/null || true)
+}
+
+stop_workers() {
+    local signal_name="$1"
+    echo "Received ${signal_name}; stopping ${#PIDS[@]} worker(s) and their child processes..." >&2
+    for pid in "${PIDS[@]}"; do
+        [[ -n "$pid" ]] || continue
+        terminate_descendants "$pid"
+        kill -TERM "$pid" 2>/dev/null || true
+    done
+    for pid in "${PIDS[@]}"; do
+        [[ -n "$pid" ]] || continue
+        wait "$pid" 2>/dev/null || true
+    done
+    exit 130
+}
+
+trap 'stop_workers INT' INT
+trap 'stop_workers TERM' TERM
+trap 'stop_workers HUP' HUP
 
 usage() {
     cat <<'EOF'
@@ -47,6 +80,7 @@ Options:
   --backbone-ablation-only   Only run unordered compiler ablation; skip organized original
   --with-graph-seed          Also run the empty-workflow HG seed baseline
   --evolution-batch-size N   Trace2Skill outer batch size (default: 25)
+  --awm-induction-mode NAME  AWM induction: online or offline (default: online)
   --stop-on-error            Stop the affected worker at its first failed subflow
   --no-rebuild-splits        Reuse existing subflow session splits
   -h, --help                 Show this help
@@ -73,6 +107,7 @@ while [[ $# -gt 0 ]]; do
         --backbone-ablation-only) BACKBONE_ABLATION_ONLY=1; shift ;;
         --with-graph-seed) SKIP_GRAPH_SEED=0; shift ;;
         --evolution-batch-size) EVOLUTION_BATCH_SIZE="$2"; shift 2 ;;
+        --awm-induction-mode) AWM_INDUCTION_MODE="$2"; shift 2 ;;
         --stop-on-error) CONTINUE_ON_ERROR=0; shift ;;
         --no-rebuild-splits) REBUILD_SPLITS=0; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -81,6 +116,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$METHOD" in all|awm|expel|trace2skill|graph) ;; *) echo "Invalid --method: $METHOD" >&2; exit 2 ;; esac
+case "$AWM_INDUCTION_MODE" in online|offline) ;; *) echo "Invalid --awm-induction-mode: $AWM_INDUCTION_MODE" >&2; exit 2 ;; esac
 case "$GRAPH_MINING_METHOD" in legacy|sequence|backbone|backbone_coverage) ;; *) echo "Invalid --graph-mining-method: $GRAPH_MINING_METHOD" >&2; exit 2 ;; esac
 case "$BACKBONE_COMPILER" in organized|unordered|compare) ;; *) echo "Invalid --backbone-compiler: $BACKBONE_COMPILER" >&2; exit 2 ;; esac
 if [[ "$BACKBONE_ABLATION_ONLY" -eq 1 ]]; then
@@ -234,6 +270,7 @@ echo "Load plan:   $PLAN_PATH"
 echo "Subflows:    ${#SUBFLOWS[@]}"
 echo "Workers:     ${#WORKFLOW_IDS[@]}"
 echo "Compiler:    $BACKBONE_COMPILER"
+[[ "$METHOD" == "all" || "$METHOD" == "awm" ]] && echo "AWM mode:    $AWM_INDUCTION_MODE"
 [[ "$BACKBONE_ABLATION_ONLY" -eq 1 ]] && echo "Ablation:    unordered only (organized compiler skipped)"
 [[ -n "$RESUME_RUN" ]] && echo "Resume:      enabled (completed subflows will be skipped)"
 
@@ -321,7 +358,8 @@ run_worker() {
     for subflow in "${assigned[@]}"; do
         [[ -n "$subflow" ]] || continue
         if [[ "$METHOD" == "all" || "$METHOD" == "awm" ]]; then
-            run_or_resume_task "$worker_index" "$workflow_id" awm "$subflow" scripts/run_awm_abcd.py --subflow "$subflow" || {
+            run_or_resume_task "$worker_index" "$workflow_id" awm "$subflow" scripts/run_awm_abcd.py \
+                --subflow "$subflow" --induction-mode "$AWM_INDUCTION_MODE" || {
                 echo "awm:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
         fi
         if [[ "$METHOD" == "all" || "$METHOD" == "expel" ]]; then
@@ -366,7 +404,6 @@ run_worker() {
     done
 }
 
-PIDS=()
 for index in "${!WORKFLOW_IDS[@]}"; do
     run_worker "$index" "${WORKFLOW_IDS[$index]}" > "$LOG_DIR/worker_${index}.log" 2>&1 &
     pid="$!"
