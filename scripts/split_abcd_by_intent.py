@@ -65,11 +65,19 @@ def main():
                  load_abcd_data("test", ABCD_DIR))
     print(f"  {len(all_convs)} total conversations")
 
-    # Group by subflow
+    # Group by the 10 high-level flows. Preserve the original fine-grained
+    # subflow for analysis, but do not use it as the experiment grouping key.
     by_subflow: dict[str, list[dict]] = defaultdict(list)
     for conv in all_convs:
-        sf = str(conv.get("scenario", {}).get("subflow", "unknown"))
-        by_subflow[sf].append(conv)
+        scenario = dict(conv.get("scenario") or {})
+        flow = str(scenario.get("flow") or "unknown")
+        scenario.setdefault("original_subflow", str(scenario.get("subflow") or "unknown"))
+        # Existing runners use scenario.subflow as their grouping key. Set it
+        # to flow so all methods consume the same 10-way split.
+        scenario["subflow"] = flow
+        grouped = dict(conv)
+        grouped["scenario"] = scenario
+        by_subflow[flow].append(grouped)
 
     # Split each subflow
     summary = {}
@@ -100,9 +108,9 @@ def main():
         json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
 
     n = len(summary)
-    print(f"\nSplit complete: {n} subflows")
+    print(f"\nSplit complete: {n} flows")
     print(f"  Total train: {total_train}, Total test: {total_test}")
-    print(f"\n{'Subflow':35s} {'Train':>6s} {'Test':>6s} {'Total':>6s}")
+    print(f"\n{'Flow':35s} {'Train':>6s} {'Test':>6s} {'Total':>6s}")
     print("-" * 55)
     for sf, counts in sorted(summary.items(), key=lambda x: -x[1]["total"]):
         print(f"{sf:35s} {counts['train']:6d} {counts['test']:6d} {counts['total']:6d}")

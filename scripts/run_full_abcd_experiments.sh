@@ -115,10 +115,20 @@ SUBFLOWS=()
 if [[ -n "$ONE_SUBFLOW" ]]; then
     SUBFLOWS=("$ONE_SUBFLOW")
 else
-    for split_dir in "$SPLITS_DIR"/*; do
-        [[ -d "$split_dir" && -f "$split_dir/train.json" && -f "$split_dir/test.json" ]] || continue
-        SUBFLOWS+=("${split_dir##*/}")
-    done
+    SPLIT_INDEX="$SPLITS_DIR/INDEX.json"
+    [[ -f "$SPLIT_INDEX" ]] || { echo "Missing split index: $SPLIT_INDEX" >&2; exit 1; }
+    mapfile -t SUBFLOWS < <("$PYTHON_BIN" - "$SPLIT_INDEX" "$SPLITS_DIR" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+index = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+root = Path(sys.argv[2])
+for name in sorted(index):
+    if (root / name / "train.json").is_file() and (root / name / "test.json").is_file():
+        print(name)
+PY
+    )
 fi
 [[ ${#SUBFLOWS[@]} -gt 0 ]] || { echo "No subflows found under $SPLITS_DIR" >&2; exit 1; }
 
@@ -373,7 +383,10 @@ AGGREGATES=()
 AGGREGATE_DIRS=()
 AGGREGATE_FAILURE=0
 aggregate_method() {
-    local method_name="$1" output="$RUN_ROOT/aggregate_${method_name}.json"
+    # With `set -u`, Bash expands all assignments on one `local` statement
+    # before `method_name` is bound. Assign it first, then construct output.
+    local method_name="$1"
+    local output="$RUN_ROOT/aggregate_${method_name}.json"
     [[ -d "$RUN_ROOT/$method_name" ]] || return 0
     AGGREGATE_DIRS+=("$RUN_ROOT/$method_name")
     if "$PYTHON_BIN" scripts/aggregate_subflow_results.py \

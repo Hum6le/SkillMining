@@ -531,9 +531,15 @@ def main():
         if not SPLITS_DIR.exists():
             log.error("No splits found. Run: python scripts/split_abcd_by_intent.py")
             sys.exit(1)
+        index_path = SPLITS_DIR / "INDEX.json"
+        if not index_path.exists():
+            log.error("No split index found: %s", index_path)
+            sys.exit(1)
+        split_index = json.loads(index_path.read_text(encoding="utf-8"))
         subflows = sorted(
-            d.name for d in SPLITS_DIR.iterdir()
-            if d.is_dir() and (d / "train.json").exists()
+            name for name in split_index
+            if (SPLITS_DIR / name / "train.json").exists()
+            and (SPLITS_DIR / name / "test.json").exists()
         )
         # Filter by min_sessions
         filtered = []
