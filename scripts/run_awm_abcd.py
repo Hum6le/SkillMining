@@ -120,6 +120,14 @@ def main():
         default=None,
         help="Optional reference.md or Trace2Skill skill directory to load",
     )
+    _parser.add_argument(
+        "--workflow-max-chars", type=int, default=8000,
+        help="Maximum workflow characters injected into one inference prompt",
+    )
+    _parser.add_argument(
+        "--exemplar-max-chars", type=int, default=3000,
+        help="Maximum retrieved exemplar characters injected into one inference prompt",
+    )
     _args, _unknown = _parser.parse_known_args()
 
     if _args.eval_only and not _args.eval_from:
@@ -264,6 +272,8 @@ def main():
     agent = ABCDAgent(
         model=MODEL, workflow=workflow, memory=memory,
         reference_text=reference_text,
+        workflow_max_chars=_args.workflow_max_chars,
+        exemplar_max_chars=_args.exemplar_max_chars,
         expose_scenario_labels=False,
         response_logger=logger,
     )
@@ -437,6 +447,8 @@ def main():
     test_agent = ABCDAgent(
         model=MODEL, workflow=workflow, memory=memory,
         reference_text=reference_text,
+        workflow_max_chars=_args.workflow_max_chars,
+        exemplar_max_chars=_args.exemplar_max_chars,
         expose_scenario_labels=False,
         response_logger=logger,
     )
@@ -525,8 +537,11 @@ def main():
             "model": MODEL, "seed": SEED,
             "dataset": "abcd", "eval_mode": "single_subflow",
             "subflow": subflow,
+            "induction_mode": _args.induction_mode,
             "max_train": _args.max_train, "max_dev": _args.max_dev,
             "max_test": _args.max_test,
+            "workflow_max_chars": _args.workflow_max_chars,
+            "exemplar_max_chars": _args.exemplar_max_chars,
             "reference_path": str(Path(_args.reference_path).resolve()) if _args.reference_path else None,
             "eval_only": bool(_args.eval_only),
             "eval_from": str(eval_source_dir) if eval_source_dir else None,

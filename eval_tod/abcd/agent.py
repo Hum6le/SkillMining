@@ -342,6 +342,8 @@ class ABCDAgent(AbstractTodAgent):
         reference_text: str | None = None,
         reference_top_k: int = 3,
         reference_max_chars: int = 1800,
+        workflow_max_chars: int = 8000,
+        exemplar_max_chars: int = 3000,
         delay: float = 0.3,
         response_logger=None,
         expose_scenario_labels: bool = True,
@@ -359,6 +361,8 @@ class ABCDAgent(AbstractTodAgent):
         self.reference_sections = _parse_reference_sections(self.reference_text)
         self.reference_top_k = max(0, reference_top_k)
         self.reference_max_chars = max(200, reference_max_chars)
+        self.workflow_max_chars = max(1000, workflow_max_chars)
+        self.exemplar_max_chars = max(500, exemplar_max_chars)
         self._response_logger = response_logger
         self.expose_scenario_labels = expose_scenario_labels
         self.action_schema = load_action_schema()
@@ -369,6 +373,7 @@ class ABCDAgent(AbstractTodAgent):
             "query": {},
             "selected_exemplars": [],
         }
+        self._last_prompt_budget: dict[str, int] = {}
 
     def set_reference_text(self, reference_text: str | None) -> None:
         """Replace prompt-time mined-reference material."""
@@ -412,9 +417,6 @@ class ABCDAgent(AbstractTodAgent):
         scenario = conversation.get("scenario", {})
         delexed = conversation.get("delexed", [])
 
-        # Build system prompt
-        system = self._build_system_prompt(scenario)
-
         # Build conversation history (all turns up to the last)
         history_lines: list[str] = []
         last_agent_idx = -1
@@ -428,6 +430,7 @@ class ABCDAgent(AbstractTodAgent):
                 last_agent_idx = i
 
         context = "\n".join(history_lines[:-1]) if len(history_lines) > 1 else history_lines[0] if history_lines else ""
+        system = self._build_system_prompt(scenario, context)
 
         reference_plan = self._plan_reference_lookup(context, scenario, verbose=False)
         reference_lookup = self._lookup_reference(
@@ -493,7 +496,6 @@ class ABCDAgent(AbstractTodAgent):
         convo_id = str(conversation.get("convo_id", "?"))
         scenario = conversation.get("scenario", {})
         delexed = conversation.get("delexed", [])
-        system = self._build_system_prompt(scenario)
         results: list[dict] = []
 
         # Keep both target types.  Agent turns are used for response metrics;
@@ -531,6 +533,8 @@ class ABCDAgent(AbstractTodAgent):
             )
             if not context or not reference:
                 continue
+
+            system = self._build_system_prompt(scenario, context)
 
             reference_plan = self._plan_reference_lookup(context, scenario, verbose=verbose)
             reference_lookup = self._lookup_reference(
@@ -579,6 +583,9 @@ class ABCDAgent(AbstractTodAgent):
                 "context_view": "original",
                 "workflow_injected": bool(self.workflow.text.strip()),
                 "workflow_chars": len(self.workflow.text),
+                "workflow_injected_chars": self._last_prompt_budget.get("workflow_chars", 0),
+                "exemplar_injected_chars": self._last_prompt_budget.get("exemplar_chars", 0),
+                "system_prompt_chars": self._last_prompt_budget.get("system_chars", 0),
                 "memory_exemplars": len(self.memory),
                 "reference_lookup": reference_lookup,
                 "exemplar_lookup": getattr(self, "_last_exemplar_lookup", {}),
@@ -750,7 +757,7 @@ class ABCDAgent(AbstractTodAgent):
             top_k=self.reference_top_k,
         )
         messages = [
-            {"role": "system", "content": self._build_system_prompt(scenario)},
+            {"role": "system", "content": self._build_system_prompt(scenario, context)},
             {"role": "user", "content": user_prompt},
         ]
 
@@ -983,7 +990,7 @@ class ABCDAgent(AbstractTodAgent):
 
         return all_results
 
-    def _build_system_prompt(self, scenario: dict[str, Any]) -> str:
+    def _build_system_prompt(self, scenario: dict[str, Any], context: str = "") -> str:
         """Build system prompt with scenario context + workflow + memory."""
         flow = scenario.get("flow", "unknown")
         subflow = scenario.get("subflow", "unknown")
@@ -1046,7 +1053,10 @@ class ABCDAgent(AbstractTodAgent):
         if self.reference_sections and self.reference_top_k > 0:
             extra_parts.append(_REFERENCE_TOOL_PROMPT)
 
-        wf = self.workflow.format_prompt()
+        wf = self.workflow.format_prompt(
+            query_text=self._recent_context_excerpt(context, max_lines=8),
+            max_chars=self.workflow_max_chars,
+        )
         if wf:
             extra_parts.append("<mined_skill>\n" + wf + "\n</mined_skill>")
         # For memory, we need domains — use flow as domain
@@ -1087,11 +1097,18 @@ class ABCDAgent(AbstractTodAgent):
         ex = self.memory.format_prompt(
             memory_domains,
             include_metadata=self.expose_scenario_labels,
+            max_chars=self.exemplar_max_chars,
         )
         if ex:
             extra_parts.append("<awm_exemplars>\n" + ex + "\n</awm_exemplars>")
 
-        return "\n\n".join(extra_parts)
+        system = "\n\n".join(extra_parts)
+        self._last_prompt_budget = {
+            "workflow_chars": len(wf),
+            "exemplar_chars": len(ex),
+            "system_chars": len(system),
+        }
+        return system
 
     def induce(
         self,

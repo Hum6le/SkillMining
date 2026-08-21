@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 from pathlib import Path
 
 
@@ -90,6 +91,7 @@ class MemoryStore:
         domains: list[str],
         k: int | None = None,
         include_metadata: bool = True,
+        max_chars: int | None = None,
     ) -> str:
         """Format retrieved exemplars as few-shot prompt section."""
         exemplars = self.retrieve(domains, k)
@@ -97,12 +99,14 @@ class MemoryStore:
             return ""
         lines = ["## Past Verified Successful Examples",
                  "Each example passed joint action-and-slot validation."]
+        used_chars = sum(len(line) + 1 for line in lines)
         for i, ex in enumerate(exemplars, 1):
+            example_lines: list[str] = []
             if include_metadata:
-                lines.append(f"\n### Example {i}: {', '.join(ex['domains'])}")
-                lines.append(f"Goal: {ex['goal'][:300]}")
+                example_lines.append(f"\n### Example {i}: {', '.join(ex['domains'])}")
+                example_lines.append(f"Goal: {ex['goal'][:300]}")
             else:
-                lines.append(f"\n### Example {i}")
+                example_lines.append(f"\n### Example {i}")
             trajectory = ex.get("trajectory", "")
             structured_turns = ex.get("trajectory_turns")
             if isinstance(structured_turns, list) and structured_turns:
@@ -127,7 +131,15 @@ class MemoryStore:
                     )
                 trajectory = "\n".join(compact_rows)
             if trajectory:
-                lines.append(f"Trajectory:\n{trajectory[:2000]}")
+                example_lines.append(f"Trajectory:\n{trajectory[:2000]}")
+            block = "\n".join(example_lines)
+            if max_chars is not None and used_chars + len(block) > max_chars:
+                remaining = max_chars - used_chars
+                if remaining > 160:
+                    lines.append(block[:remaining].rstrip() + "\n...")
+                break
+            lines.extend(example_lines)
+            used_chars += len(block) + 1
         return "\n".join(lines) + "\n"
 
     # ── I/O ──────────────────────────────────────────────────
@@ -181,15 +193,45 @@ class WorkflowStore:
         """Replace the entire workflow text (used by LLM-managed update)."""
         self._text = workflow.strip()
 
-    def format_prompt(self) -> str:
+    def format_prompt(
+        self,
+        query_text: str = "",
+        max_chars: int | None = None,
+    ) -> str:
         """Format workflow for prompt injection — mirrors the user message in get_exemplars."""
         if not self._text:
             return ""
+        workflow = self._text
+        if max_chars is not None and len(workflow) > max_chars:
+            tokens = {
+                token.lower() for token in re.findall(r"[A-Za-z0-9_'-]+", query_text)
+                if len(token) >= 3
+            }
+            chunks = re.split(r"(?=^###\s+)", workflow, flags=re.MULTILINE)
+            scored = []
+            for index, chunk in enumerate(chunks):
+                chunk_tokens = {
+                    token.lower() for token in re.findall(r"[A-Za-z0-9_'-]+", chunk)
+                    if len(token) >= 3
+                }
+                scored.append((len(tokens & chunk_tokens), index, chunk))
+            selected = []
+            if chunks and not chunks[0].lstrip().startswith("###"):
+                selected.append((0, chunks[0]))
+            for _, index, chunk in sorted(scored, key=lambda row: (-row[0], row[1])):
+                if index == 0 and selected:
+                    continue
+                candidate = "".join(part for _, part in sorted(selected + [(index, chunk)]))
+                if len(candidate) <= max_chars:
+                    selected.append((index, chunk))
+            workflow = "".join(part for _, part in sorted(selected)).strip()
+            if not workflow:
+                workflow = self._text[:max_chars].rstrip()
         return (
             "## Induced Workflow Patterns\n"
             "The following patterns were extracted from past agent trajectories. "
             "Follow these strategies when applicable.\n\n"
-            + self._text + "\n"
+            + workflow + "\n"
         )
 
     def save(self, path: str):
