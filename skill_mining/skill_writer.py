@@ -293,6 +293,43 @@ def build_skill_md_from_backbone(
     return _build_skill_md_from_backbone_fallback(subflow, subgraph)
 
 
+def materialize_progressive_disclosure(skill_md: str) -> tuple[str, str, str]:
+    """Split compiled action/slot knowledge into bounded runtime resources.
+
+    The backbone and routing policy remain in ``skill.md``.  Per-action rules
+    and ordered slot policies are persisted separately so inference can fetch
+    only the few sections relevant to the current dialogue.
+    """
+    def section(start: str, end: str) -> str:
+        match = re.search(
+            rf"(?ms)^{re.escape(start)}\s*$\n?(.*?)(?=^{re.escape(end)}\s*$|\Z)",
+            skill_md,
+        )
+        return match.group(1).strip() if match else ""
+
+    action_body = section("### Action Rules", "## Slot Discipline")
+    slot_body = section("## Slot Policies", "## Reference")
+    action_rules = "# Action Rules\n\n" + (action_body or "No action rules were compiled.") + "\n"
+    slot_policies = "# Slot Policies\n\n" + (slot_body or "No slot policies were compiled.") + "\n"
+
+    compact = re.sub(
+        r"(?ms)^### Action Rules\s*$.*?(?=^## Slot Discipline\s*$)",
+        "### Action Rules\n"
+        "- Use `retrieve_action_rule` when the applicable action procedure is uncertain. "
+        "The full per-action rules are stored in `action_rules.md`.\n\n",
+        skill_md,
+    )
+    compact = re.sub(
+        r"(?ms)^## Slot Policies\s*$.*?(?=^## Reference\s*$|\Z)",
+        "## Slot Policies\n"
+        "- Use `retrieve_slot_policy` after selecting an action when ordered value "
+        "sources, reuse, or missing-value behavior are uncertain. The full policies "
+        "are stored in `slot_policies.md`.\n\n",
+        compact,
+    )
+    return compact, action_rules, slot_policies
+
+
 def build_skill_md_from_unordered_backbone(
     subflow: str,
     subgraph: dict,
@@ -926,6 +963,10 @@ def _validate_backbone_skill(
     _validate_backbone_action_coverage(skill, required_actions)
     if "### Backbone Tree" not in skill:
         raise ValueError("compiled skill omitted the complete Backbone Tree")
+    if "### Action Rules" not in skill:
+        raise ValueError("compiled skill omitted the Action Rules section")
+    if "## Slot Policies" not in skill:
+        raise ValueError("compiled skill omitted the Slot Policies section")
     for source, target in required_backbone_edges or []:
         edge_text = f"`{source}` -> `{target}`"
         if edge_text not in skill:

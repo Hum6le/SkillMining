@@ -36,6 +36,7 @@ class ResponseLogger:
         os.makedirs(self.log_dir, exist_ok=True)
         self._counter = 0
         self._lock = threading.Lock()
+        self._usage_by_tag: dict[str, dict[str, int]] = {}
 
     def log(
         self,
@@ -103,16 +104,83 @@ class ResponseLogger:
             encoding="utf-8",
         )
 
+        usage = _extract_usage(response_record)
+        if usage is not None:
+            with self._lock:
+                totals = self._usage_by_tag.setdefault(call_tag, {
+                    "calls_with_usage": 0,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                })
+                totals["calls_with_usage"] += 1
+                for key, value in usage.items():
+                    totals[key] += value
+
         return idx
 
     @property
     def count(self) -> int:
         return self._counter
 
+    def usage_summary(self, call_tag: str | None = None) -> dict[str, Any]:
+        """Return exact API-reported token usage for all calls or one tag."""
+        with self._lock:
+            rows = (
+                {call_tag: self._usage_by_tag.get(call_tag, {})}
+                if call_tag is not None else self._usage_by_tag
+            )
+            result = {
+                "calls": self._counter if call_tag is None else sum(
+                    1 for path in self.log_dir.glob("*_prompt.json")
+                    if _prompt_tag(path) == call_tag
+                ),
+                "calls_with_usage": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "usage_available": False,
+            }
+            for row in rows.values():
+                result["calls_with_usage"] += int(row.get("calls_with_usage", 0))
+                for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                    result[key] += int(row.get(key, 0))
+            result["usage_available"] = result["calls_with_usage"] > 0
+            return result
+
 
 def _sanitize_tag(tag: str) -> str:
     """Replace characters that are unsafe in filenames."""
     return "".join(c if c.isalnum() or c in "_-." else "_" for c in tag)[:80]
+
+
+def _prompt_tag(path: Path) -> str:
+    try:
+        return str(json.loads(path.read_text(encoding="utf-8")).get("call_tag", ""))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return ""
+
+
+def _extract_usage(record: dict[str, Any]) -> dict[str, int] | None:
+    """Normalize OpenAI-compatible token usage without estimating missing values."""
+    usage = record.get("usage") if isinstance(record, dict) else None
+    if not isinstance(usage, dict):
+        return None
+    aliases = {
+        "prompt_tokens": ("prompt_tokens", "input_tokens"),
+        "completion_tokens": ("completion_tokens", "output_tokens"),
+        "total_tokens": ("total_tokens",),
+    }
+    result: dict[str, int] = {}
+    for output_key, candidates in aliases.items():
+        value = next((usage.get(key) for key in candidates if usage.get(key) is not None), None)
+        try:
+            result[output_key] = int(value) if value is not None else 0
+        except (TypeError, ValueError):
+            result[output_key] = 0
+    if result["total_tokens"] == 0:
+        result["total_tokens"] = result["prompt_tokens"] + result["completion_tokens"]
+    return result if any(result.values()) else None
 
 
 def _serialize_response(response: Any) -> dict:

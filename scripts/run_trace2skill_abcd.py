@@ -958,6 +958,8 @@ def _run_skill_evolution(
 
 
 def run_pipeline(args) -> PipelineOutputs:
+    from scripts.llm_usage_utils import reset_usage, get_usage, write_usage
+    reset_usage()
     model = args.model
     _install_llm_wrappers(args.llm_qps, args.llm_max_retries, args.llm_retry_base_delay)
 
@@ -1387,6 +1389,8 @@ def run_pipeline(args) -> PipelineOutputs:
         "batch_history": batch_history,
         "changelog": changelog,
     }
+    summary["llm_usage"] = get_usage()
+    write_usage(out_dir / "llm_usage.json")
     (out_dir / "summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False),
         encoding="utf-8",

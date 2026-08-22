@@ -137,6 +137,7 @@ export HF_ENDPOINT="$HF_MIRROR"
 command -v "$PYTHON_BIN" >/dev/null 2>&1 || { echo "Python was not found." >&2; exit 1; }
 
 SPLITS_DIR="$ROOT_DIR/data/eval/abcd/splits"
+EXPECTED_FLOW_COUNT=10
 OUTPUT_DIR="$ROOT_DIR/outputs"
 mkdir -p "$OUTPUT_DIR"
 if [[ -n "$RESUME_RUN" ]]; then
@@ -167,6 +168,11 @@ PY
     )
 fi
 [[ ${#SUBFLOWS[@]} -gt 0 ]] || { echo "No subflows found under $SPLITS_DIR" >&2; exit 1; }
+if [[ -z "$ONE_SUBFLOW" && "${#SUBFLOWS[@]}" -ne "$EXPECTED_FLOW_COUNT" ]]; then
+    echo "Expected the current 10-flow ABCD split, but found ${#SUBFLOWS[@]} valid flows under $SPLITS_DIR." >&2
+    echo "Check $SPLITS_DIR/INDEX.json; the legacy 96-subflow split must not be used here." >&2
+    exit 1
+fi
 
 RUN_ID=""
 RUN_ROOT=""
@@ -268,6 +274,7 @@ echo "HF_ENDPOINT: $HF_ENDPOINT"
 echo "Run root:    $RUN_ROOT"
 echo "Load plan:   $PLAN_PATH"
 echo "Subflows:    ${#SUBFLOWS[@]}"
+echo "Split:       current 10-flow INDEX.json protocol"
 echo "Workers:     ${#WORKFLOW_IDS[@]}"
 echo "Compiler:    $BACKBONE_COMPILER"
 [[ "$METHOD" == "all" || "$METHOD" == "awm" ]] && echo "AWM mode:    $AWM_INDUCTION_MODE"
@@ -429,6 +436,7 @@ aggregate_method() {
     if "$PYTHON_BIN" scripts/aggregate_subflow_results.py \
         --runs "$RUN_ROOT/$method_name" --recursive --output "$output"; then
         AGGREGATES+=("$output")
+        echo "Usage summary: $output (llm_usage)"
     else
         AGGREGATE_FAILURE=1
         echo "Aggregation failed for method=$method_name; inspect summaries under $RUN_ROOT/$method_name." >&2
@@ -444,6 +452,7 @@ if [[ ${#AGGREGATE_DIRS[@]} -gt 0 ]]; then
     if "$PYTHON_BIN" scripts/aggregate_subflow_results.py \
         --runs "${AGGREGATE_DIRS[@]}" --recursive --output "$FINAL_SUMMARY"; then
         echo "Final summary: $FINAL_SUMMARY"
+        echo "Final LLM usage: $FINAL_SUMMARY (llm_usage)"
     else
         AGGREGATE_FAILURE=1
         echo "Final cross-method aggregation failed; inspect worker outputs under $RUN_ROOT." >&2

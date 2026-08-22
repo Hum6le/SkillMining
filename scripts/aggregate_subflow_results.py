@@ -25,6 +25,45 @@ TEXT_METRICS = (
 AST_METRICS = ("ast_joint", "ast_action_name", "ast_slot_value", "cds_overall")
 
 
+def _empty_usage() -> dict[str, Any]:
+    return {
+        "calls": 0,
+        "successful_calls": 0,
+        "failed_calls": 0,
+        "calls_with_usage": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "exact_calls": 0,
+        "estimated_calls": 0,
+        "usage_available": False,
+        "usage_source": "unavailable",
+    }
+
+
+def _add_usage(total: dict[str, Any], usage: dict[str, Any] | None) -> None:
+    if not isinstance(usage, dict):
+        return
+    # The workflow-aware server llm.py stores the aggregate under `total`,
+    # while older runners emitted the bucket directly. Accept both formats.
+    if isinstance(usage.get("total"), dict):
+        usage = usage["total"]
+    for key in (
+        "calls", "successful_calls", "failed_calls", "calls_with_usage",
+        "prompt_tokens", "completion_tokens", "total_tokens",
+        "exact_calls", "estimated_calls",
+    ):
+        total[key] += int(usage.get(key, 0) or 0)
+    total["usage_available"] = bool(
+        total["usage_available"] or usage.get("usage_available", False)
+    )
+    sources = {str(total.get("usage_source", "unavailable")), str(usage.get("usage_source", "unavailable"))}
+    sources.discard("unavailable")
+    total["usage_source"] = (
+        "mixed" if len(sources) > 1 else next(iter(sources), "unavailable")
+    )
+
+
 def _read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -62,6 +101,7 @@ def _record_from_eval(
             **{name: float(text[name]) for name in TEXT_METRICS if name in text},
             **{name: float(ast[name]) for name in AST_METRICS if name in ast},
         },
+        "llm_usage": payload.get("llm_usage"),
     }
 
 
@@ -92,6 +132,7 @@ def _records_from_summary(path: Path) -> list[dict[str, Any]]:
                     run_dir=run_dir, payload=row.get(phase), data=data,
                 )
                 if record:
+                    record["llm_usage"] = row.get("llm_usage")
                     records.append(record)
         return records
 
@@ -168,6 +209,10 @@ def main() -> None:
         "records": records,
         "aggregate": _weighted_average(records),
     }
+    usage_total = _empty_usage()
+    for record in records:
+        _add_usage(usage_total, record.get("llm_usage"))
+    result["llm_usage"] = usage_total
     output = Path(args.output) if args.output else None
     if output:
         output.parent.mkdir(parents=True, exist_ok=True)

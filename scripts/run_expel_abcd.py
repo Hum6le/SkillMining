@@ -56,6 +56,8 @@ def main():
     parser.add_argument("--eval-only", action="store_true")
     parser.add_argument("--eval-from", type=str, default=None)
     args = parser.parse_args()
+    from scripts.llm_usage_utils import reset_usage, get_usage, write_usage
+    reset_usage()
     if args.eval_only and not args.eval_from:
         parser.error("--eval-only requires --eval-from")
 
@@ -110,7 +112,9 @@ def main():
         "config": {"method": "expel", "subflow": args.subflow},
         "data": {"train_sessions": len(train), "test_sessions": len(test)},
         "final_test": result,
+        "llm_usage": get_usage(),
     }
+    write_usage(out / "llm_usage.json")
     (out / "summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False, default=str), encoding="utf-8"
     )

@@ -129,6 +129,8 @@ def main():
         help="Maximum retrieved exemplar characters injected into one inference prompt",
     )
     _args, _unknown = _parser.parse_known_args()
+    from scripts.llm_usage_utils import reset_usage, get_usage, write_usage
+    reset_usage()
 
     if _args.eval_only and not _args.eval_from:
         _parser.error("--eval-only requires --eval-from")
@@ -529,6 +531,13 @@ def main():
     agent.save_workflow(str(OUT_DIR / "awm_workflow.txt"))
     agent.save_memory(str(OUT_DIR / "awm_exemplars.json"))
     (OUT_DIR / "awm_reference.md").write_text(reference_text, encoding="utf-8")
+    skill_generation_usage = logger.usage_summary("skill_induction")
+    (OUT_DIR / "skill_generation_usage.json").write_text(
+        json.dumps(skill_generation_usage, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    llm_usage = get_usage()
+    write_usage(OUT_DIR / "llm_usage.json")
 
     summary = {
         "config": {
@@ -559,6 +568,8 @@ def main():
             "exemplar_lookup": "runtime_domain_overlap_top_k",
             "exemplar_lookup_is_react_tool": False,
         },
+        "skill_generation_usage": skill_generation_usage,
+        "llm_usage": llm_usage,
         "llm_calls_logged": logger.count,
     }
     with open(OUT_DIR / "summary.json", "w", encoding="utf-8") as f:

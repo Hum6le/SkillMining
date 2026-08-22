@@ -44,6 +44,20 @@ from eval_tod.abcd.data import load_abcd_data
 from eval_tod.abcd.split import extract_all_agent_turns
 from eval_tod.cli import evaluate_text_records
 
+
+def _llm_usage_functions():
+    """Load usage hooks from the server-side ``llm.py`` when available."""
+    import llm
+    return (
+        getattr(llm, "reset_usage_summary", lambda: None),
+        getattr(llm, "get_usage_summary", lambda: {
+            "schema_version": 0,
+            "usage_available": False,
+            "note": "llm.py has no shared usage tracker",
+        }),
+        getattr(llm, "write_usage_summary", None),
+    )
+
 SPLITS_DIR = Path("data/eval/abcd/splits")
 MODEL = "deepseek-chat"
 
@@ -338,6 +352,14 @@ def mine_subflow_skill_backbone(
             result["skill_md"] = unordered_skill
         else:
             result["unordered_skill_md"] = unordered_skill
+    if result.get("skill_md"):
+        from skill_mining.skill_writer import materialize_progressive_disclosure
+        compact, action_rules, slot_policies = materialize_progressive_disclosure(result["skill_md"])
+        result.update({
+            "skill_md": compact,
+            "action_rules_md": action_rules,
+            "slot_policies_md": slot_policies,
+        })
     return result
 
 
@@ -518,6 +540,7 @@ def main():
     parser.add_argument("--max-train", type=int, default=None)
     parser.add_argument("--max-test", type=int, default=None)
     args = parser.parse_args()
+    reset_usage, get_usage, write_usage = _llm_usage_functions()
 
     if args.backbone_ablation_only:
         if args.backbone_compiler == "compare":
@@ -558,6 +581,10 @@ def main():
     all_results = {}
 
     for subflow in subflows:
+        # Each independently mined subflow gets an independent usage budget.
+        # The full launcher starts one process per subflow; resetting here also
+        # keeps direct ``--all`` runs correctly attributable.
+        reset_usage()
         log.info(f"\n{'='*50}")
         log.info(f"Subflow: {subflow}")
         log.info(f"{'='*50}")
@@ -577,12 +604,20 @@ def main():
         if args.skip_mining:
             skill_text = ""
             reference_text = ""
+            action_rules_text = ""
+            slot_policies_text = ""
             if args.skill_path:
                 skill_path = Path(args.skill_path)
                 skill_text = skill_path.read_text(encoding="utf-8")
                 sibling_ref = skill_path.parent / "reference.md"
                 if sibling_ref.exists():
                     reference_text = sibling_ref.read_text(encoding="utf-8")
+                action_path = skill_path.parent / "action_rules.md"
+                slot_path = skill_path.parent / "slot_policies.md"
+                if action_path.exists():
+                    action_rules_text = action_path.read_text(encoding="utf-8")
+                if slot_path.exists():
+                    slot_policies_text = slot_path.read_text(encoding="utf-8")
             else:
                 sf_skill = sf_out / "skill.md"
                 if sf_skill.exists():
@@ -590,6 +625,12 @@ def main():
                 sf_ref = sf_out / "reference.md"
                 if sf_ref.exists():
                     reference_text = sf_ref.read_text(encoding="utf-8")
+                action_path = sf_out / "action_rules.md"
+                slot_path = sf_out / "slot_policies.md"
+                if action_path.exists():
+                    action_rules_text = action_path.read_text(encoding="utf-8")
+                if slot_path.exists():
+                    slot_policies_text = slot_path.read_text(encoding="utf-8")
             skill_info = {"selected_vertices": [], "coverage_pct": 0, "num_sessions": 0}
         else:
             if args.mining_method in {"backbone", "backbone_coverage"}:
@@ -618,6 +659,8 @@ def main():
             skill_info = mined["skill_info"]
             skill_text = mined.get("skill_md", "")
             reference_text = mined.get("reference_md", "")
+            action_rules_text = mined.get("action_rules_md", "")
+            slot_policies_text = mined.get("slot_policies_md", "")
 
             # Save skill.md + reference.md + subgraph
             (sf_out / "skill.md").write_text(skill_text, encoding="utf-8")
@@ -640,6 +683,12 @@ def main():
                 )
             (sf_out / "reference.md").write_text(
                 mined.get("reference_md", ""), encoding="utf-8")
+            if mined.get("action_rules_md"):
+                (sf_out / "action_rules.md").write_text(
+                    mined["action_rules_md"], encoding="utf-8")
+            if mined.get("slot_policies_md"):
+                (sf_out / "slot_policies.md").write_text(
+                    mined["slot_policies_md"], encoding="utf-8")
             (sf_out / "subgraph.json").write_text(
                 json.dumps(mined["subgraph"], indent=2, ensure_ascii=False),
                 encoding="utf-8")
@@ -679,6 +728,8 @@ def main():
             workflow=wf,
             memory=MemoryStore(),
             reference_text="" if args.disable_reference_lookup else reference_text,
+            action_rules_text=action_rules_text,
+            slot_policies_text=slot_policies_text,
             reference_top_k=args.reference_top_k,
             reference_max_chars=args.reference_max_chars,
             expose_scenario_labels=False,
@@ -705,6 +756,8 @@ def main():
                 workflow=unordered_wf,
                 memory=MemoryStore(),
                 reference_text="" if args.disable_reference_lookup else reference_text,
+                action_rules_text=action_rules_text,
+                slot_policies_text=slot_policies_text,
                 reference_top_k=args.reference_top_k,
                 reference_max_chars=args.reference_max_chars,
                 expose_scenario_labels=False,
@@ -740,7 +793,10 @@ def main():
             "mined": mined_result,
             "unordered": unordered_result,
             "delta": delta,
+            "llm_usage": get_usage(),
         }
+        if write_usage is not None:
+            write_usage(sf_out / "llm_usage.json")
         if unordered_result:
             all_results[subflow]["organization_delta"] = {
                 "organized_minus_unordered": {
@@ -822,6 +878,11 @@ def main():
     summary_payload["__global__"] = {
         "protocol": "independent_subflow_runs",
         "aggregate": global_metrics,
+        "llm_usage_note": (
+            "Per-subflow usage is stored in <subflow>/llm_usage.json. "
+            "This process-level snapshot excludes calls from other subflows "
+            "because usage is reset at each subflow boundary."
+        ),
     }
     (OUT_DIR / "summary.json").write_text(
         json.dumps(summary_payload, indent=2, ensure_ascii=False), encoding="utf-8")

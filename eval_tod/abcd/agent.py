@@ -91,6 +91,13 @@ unmatched query returns no reference; the tool must not inject arbitrary first
 sections as a fallback.
 </mcp_protocol>"""
 
+_POLICY_RESOURCE_PROMPT = """<progressive_disclosure_mcp>
+Two local read-only policy resources may be retrieved at runtime:
+- `retrieve_action_rule`: fetches an action-specific procedure card from `action_rules.md`.
+- `retrieve_slot_policy`: fetches the selected action's ordered value-source and reuse policy from `slot_policies.md`.
+Use returned policy cards as general constraints. Resolve actual values only from the current dialogue or compatible scenario facts.
+</progressive_disclosure_mcp>"""
+
 _RESOURCE_PRIORITY_PROMPT = """<resource_priority>
 1. Dialogue context is authoritative for the current request, conversation
    state, and per-instance slot values.
@@ -269,6 +276,18 @@ def _parse_reference_sections(reference_text: str) -> list[dict[str, Any]]:
     return sections
 
 
+def _parse_action_policy_sections(text: str) -> list[dict[str, str]]:
+    """Parse `#### `action`` sections from progressive-disclosure resources."""
+    sections: list[dict[str, str]] = []
+    matches = list(re.finditer(r"(?m)^####\s+`([^`]+)`\s*$", text or ""))
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        body = text[match.end():end].strip()
+        if body:
+            sections.append({"action": match.group(1).strip(), "body": body})
+    return sections
+
+
 def _canonical_reference_title(
     title: str, action_names: set[str] | None = None,
 ) -> str:
@@ -342,6 +361,8 @@ class ABCDAgent(AbstractTodAgent):
         reference_text: str | None = None,
         reference_top_k: int = 3,
         reference_max_chars: int = 1800,
+        action_rules_text: str | None = None,
+        slot_policies_text: str | None = None,
         workflow_max_chars: int = 8000,
         exemplar_max_chars: int = 3000,
         delay: float = 0.3,
@@ -359,6 +380,8 @@ class ABCDAgent(AbstractTodAgent):
         self.workflow = workflow if workflow is not None else WorkflowStore()
         self.reference_text = reference_text or ""
         self.reference_sections = _parse_reference_sections(self.reference_text)
+        self.action_rule_sections = _parse_action_policy_sections(action_rules_text or "")
+        self.slot_policy_sections = _parse_action_policy_sections(slot_policies_text or "")
         self.reference_top_k = max(0, reference_top_k)
         self.reference_max_chars = max(200, reference_max_chars)
         self.workflow_max_chars = max(1000, workflow_max_chars)
@@ -379,6 +402,32 @@ class ABCDAgent(AbstractTodAgent):
         """Replace prompt-time mined-reference material."""
         self.reference_text = reference_text or ""
         self.reference_sections = _parse_reference_sections(self.reference_text)
+
+    def _retrieve_policy_resource(
+        self, sections: list[dict[str, str]], context: str, resource_name: str,
+        max_chars: int = 1400,
+    ) -> str:
+        """Retrieve action-keyed policy cards without exposing the full resource."""
+        if not sections:
+            return ""
+        tokens = _tokenize_for_lookup(context)
+        ranked = sorted(
+            sections,
+            key=lambda row: (
+                -len(tokens & _tokenize_for_lookup(row["action"].replace("-", " "))),
+                row["action"],
+            ),
+        )
+        parts = [f"<retrieved_{resource_name} tool=\"retrieve_{resource_name}\">"]
+        used = len(parts[0])
+        for row in ranked[:2]:
+            block = f"\n#### `{row['action']}`\n{row['body']}"
+            if used + len(block) > max_chars:
+                break
+            parts.append(block)
+            used += len(block)
+        parts.append(f"</retrieved_{resource_name}>")
+        return "\n".join(parts) if len(parts) > 2 else ""
 
     # ── AbstractTodAgent interface ─────────────────────────
 
@@ -433,6 +482,9 @@ class ABCDAgent(AbstractTodAgent):
         system = self._build_system_prompt(scenario, context)
 
         reference_plan = self._plan_reference_lookup(context, scenario, verbose=False)
+        system = self._build_system_prompt(
+            scenario, context, reference_plan.get("query_text", ""),
+        )
         reference_lookup = self._lookup_reference(
             reference_plan.get("query_text", ""),
             context,
@@ -537,6 +589,9 @@ class ABCDAgent(AbstractTodAgent):
             system = self._build_system_prompt(scenario, context)
 
             reference_plan = self._plan_reference_lookup(context, scenario, verbose=verbose)
+            system = self._build_system_prompt(
+                scenario, context, reference_plan.get("query_text", ""),
+            )
             reference_lookup = self._lookup_reference(
                 reference_plan.get("query_text", ""),
                 context,
@@ -990,7 +1045,9 @@ class ABCDAgent(AbstractTodAgent):
 
         return all_results
 
-    def _build_system_prompt(self, scenario: dict[str, Any], context: str = "") -> str:
+    def _build_system_prompt(
+        self, scenario: dict[str, Any], context: str = "", policy_query: str = "",
+    ) -> str:
         """Build system prompt with scenario context + workflow + memory."""
         flow = scenario.get("flow", "unknown")
         subflow = scenario.get("subflow", "unknown")
@@ -1052,6 +1109,19 @@ class ABCDAgent(AbstractTodAgent):
         ]
         if self.reference_sections and self.reference_top_k > 0:
             extra_parts.append(_REFERENCE_TOOL_PROMPT)
+        if self.action_rule_sections or self.slot_policy_sections:
+            extra_parts.append(_POLICY_RESOURCE_PROMPT)
+
+        action_rules = self._retrieve_policy_resource(
+            self.action_rule_sections, context + "\n" + policy_query, "action_rule",
+        )
+        if action_rules:
+            extra_parts.append(action_rules)
+        slot_policies = self._retrieve_policy_resource(
+            self.slot_policy_sections, context + "\n" + policy_query, "slot_policy",
+        )
+        if slot_policies:
+            extra_parts.append(slot_policies)
 
         wf = self.workflow.format_prompt(
             query_text=self._recent_context_excerpt(context, max_lines=8),
@@ -1257,6 +1327,8 @@ class ABCDAgent(AbstractTodAgent):
                     api_key=self.api_key,
                     base_url=self.base_url,
                     temperature=0.0,
+                    response_logger=self._response_logger,
+                    call_tag="skill_induction",
                 ).strip()
                 if updated:
                     break

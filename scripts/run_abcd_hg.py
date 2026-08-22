@@ -287,6 +287,8 @@ def run_training(
     batch_size: int = BATCH_SIZE,
     max_batches: int | None = MAX_BATCHES,
 ):
+    from scripts.llm_usage_utils import reset_usage, get_usage, write_usage
+    reset_usage()
     """训练 + 评估。
 
     训练时用合并的 workflow（batch 内混合多种 subflow）。
@@ -402,6 +404,8 @@ def run_training(
     # ── Save ───────────────────────────────────────────────────
     agent.save_workflow(str(OUT_DIR / "awm_workflow.txt"))
     agent.save_memory(str(OUT_DIR / "awm_exemplars.json"))
+    llm_usage = get_usage()
+    write_usage(OUT_DIR / "llm_usage.json")
 
     return {
         "batch_metrics": batch_metrics,
@@ -410,6 +414,7 @@ def run_training(
         "final_workflow_lines": len(agent.workflow),
         "final_memory_exemplars": len(memory),
         "llm_calls_logged": logger.count,
+        "llm_usage": llm_usage,
     }
 
 

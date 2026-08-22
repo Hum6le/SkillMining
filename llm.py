@@ -71,6 +71,7 @@ def chat(
     api_key: str | None = None,
     base_url: str | None = None,
     response_logger=None,
+    call_tag: str = "chat",
     **kwargs,
 ) -> str:
     """Send messages to the LLM and return the response text.
@@ -134,7 +135,7 @@ def chat(
         # Log raw response if logger configured
         if response_logger is not None:
             try:
-                response_logger.log(messages=clean, response=resp, call_tag="chat")
+                response_logger.log(messages=clean, response=resp, call_tag=call_tag)
             except Exception as e:
                 log.warning(f"Response logger failed: {e}")
 
