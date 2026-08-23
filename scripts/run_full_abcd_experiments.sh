@@ -23,6 +23,7 @@ BACKBONE_COMPILER="organized"
 BACKBONE_ABLATION_ONLY=0
 SEMANTIC_MAX_SKILLS=4
 SEMANTIC_MIN_SESSIONS=20
+SUBFLOW_DISCOVERY=0
 SKIP_GRAPH_SEED=1
 EVOLUTION_BATCH_SIZE=25
 AWM_INDUCTION_MODE="online"
@@ -82,6 +83,7 @@ Options:
   --backbone-ablation-only   Only run unordered compiler ablation; skip organized original
   --semantic-max-skills N    Maximum latent skills per 10-flow scene (default: 4)
   --semantic-min-sessions N  Minimum training sessions per latent skill (default: 20)
+  --subflow-discovery        Discover latent session subflows before the selected graph miner
   --with-graph-seed          Also run the empty-workflow HG seed baseline
   --evolution-batch-size N   Trace2Skill outer batch size (default: 25)
   --awm-induction-mode NAME  AWM induction: online or offline (default: online)
@@ -111,6 +113,7 @@ while [[ $# -gt 0 ]]; do
         --backbone-ablation-only) BACKBONE_ABLATION_ONLY=1; shift ;;
         --semantic-max-skills) SEMANTIC_MAX_SKILLS="$2"; shift 2 ;;
         --semantic-min-sessions) SEMANTIC_MIN_SESSIONS="$2"; shift 2 ;;
+        --subflow-discovery) SUBFLOW_DISCOVERY=1; shift ;;
         --with-graph-seed) SKIP_GRAPH_SEED=0; shift ;;
         --evolution-batch-size) EVOLUTION_BATCH_SIZE="$2"; shift 2 ;;
         --awm-induction-mode) AWM_INDUCTION_MODE="$2"; shift 2 ;;
@@ -285,6 +288,7 @@ echo "Workers:     ${#WORKFLOW_IDS[@]}"
 echo "Compiler:    $BACKBONE_COMPILER"
 [[ "$METHOD" == "all" || "$METHOD" == "awm" ]] && echo "AWM mode:    $AWM_INDUCTION_MODE"
 [[ "$BACKBONE_ABLATION_ONLY" -eq 1 ]] && echo "Ablation:    unordered only (organized compiler skipped)"
+[[ "$SUBFLOW_DISCOVERY" -eq 1 ]] && echo "Discovery:   latent session subflows before graph mining"
 [[ -n "$RESUME_RUN" ]] && echo "Resume:      enabled (completed subflows will be skipped)"
 
 worker_subflows() {
@@ -412,6 +416,7 @@ run_worker() {
                 --backbone-compiler "$BACKBONE_COMPILER"
                 --semantic-max-skills "$SEMANTIC_MAX_SKILLS"
                 --semantic-min-sessions "$SEMANTIC_MIN_SESSIONS")
+            [[ "$SUBFLOW_DISCOVERY" -eq 1 ]] && graph_args+=(--subflow-discovery)
             [[ "$SKIP_GRAPH_SEED" -eq 1 ]] && graph_args+=(--skip-seed)
             run_or_resume_task "$worker_index" "$workflow_id" graph "$subflow" "${graph_args[@]}" || {
                 echo "graph:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
