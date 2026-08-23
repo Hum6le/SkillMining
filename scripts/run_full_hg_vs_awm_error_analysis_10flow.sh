@@ -170,7 +170,15 @@ for flow in "${FLOWS[@]}"; do
     [[ -f "$awm_preds" ]] || missing+=("awm_predictions")
     [[ -f "$awm_workflow" ]] || missing+=("awm_workflow")
     if [[ ${#missing[@]} -gt 0 ]]; then
-        echo "$flow: ${missing[*]}" | tee -a "$MISSING"
+        {
+            echo "$flow: ${missing[*]}"
+            echo "  HG directory:  $graph_dir"
+            echo "  HG preds:      $hg_preds"
+            echo "  HG skill:      $hg_skill"
+            echo "  AWM directory: $awm_dir"
+            echo "  AWM preds:     $awm_preds"
+            echo "  AWM workflow:  $awm_workflow"
+        } | tee -a "$MISSING"
         continue
     fi
 
@@ -185,6 +193,16 @@ for flow in "${FLOWS[@]}"; do
     "${command[@]}" || { echo "$flow" | tee -a "$FAILED"; continue; }
     processed=$((processed + 1))
 done
+
+# Do not silently turn an artifact-path mistake into a plausible-looking
+# all-zero summary.  A resumed run may legitimately process no new flow,
+# but it must already contain at least one completed per-flow analysis.
+existing_stats=$(find "$OUTPUT_DIR" -mindepth 2 -maxdepth 2 -name stats.json -type f | wc -l)
+if [[ "$existing_stats" -eq 0 ]]; then
+    echo "No flow was analyzed; comparison_summary.json will not be written." >&2
+    echo "Inspect expected artifact paths in: $MISSING" >&2
+    exit 1
+fi
 
 "$PYTHON_BIN" - "$OUTPUT_DIR" <<'PY'
 import json
