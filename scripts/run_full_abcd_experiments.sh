@@ -21,6 +21,8 @@ GRAPH_MINING_METHOD="backbone"
 BACKBONE_COVERAGE_LAMBDA="0.2"
 BACKBONE_COMPILER="organized"
 BACKBONE_ABLATION_ONLY=0
+SEMANTIC_MAX_SKILLS=4
+SEMANTIC_MIN_SESSIONS=20
 SKIP_GRAPH_SEED=1
 EVOLUTION_BATCH_SIZE=25
 AWM_INDUCTION_MODE="online"
@@ -74,10 +76,12 @@ Options:
   --resume-run DIR           Resume an existing outputs/full_abcd_* run. Reuses its load
                              plan and skips subflows with a complete final summary.
   --min-sessions N           Graph Mining minimum train sessions (default: 0)
-  --graph-mining-method NAME legacy, sequence, backbone, or backbone_coverage (default: backbone)
+  --graph-mining-method NAME legacy, sequence, backbone, backbone_coverage, or semantic_router (default: backbone)
   --backbone-coverage-lambda N  Session coverage weight for backbone_coverage (default: 0.2)
   --backbone-compiler NAME   organized, unordered, or compare (default: organized)
   --backbone-ablation-only   Only run unordered compiler ablation; skip organized original
+  --semantic-max-skills N    Maximum latent skills per 10-flow scene (default: 4)
+  --semantic-min-sessions N  Minimum training sessions per latent skill (default: 20)
   --with-graph-seed          Also run the empty-workflow HG seed baseline
   --evolution-batch-size N   Trace2Skill outer batch size (default: 25)
   --awm-induction-mode NAME  AWM induction: online or offline (default: online)
@@ -105,6 +109,8 @@ while [[ $# -gt 0 ]]; do
         --backbone-coverage-lambda) BACKBONE_COVERAGE_LAMBDA="$2"; shift 2 ;;
         --backbone-compiler) BACKBONE_COMPILER="$2"; shift 2 ;;
         --backbone-ablation-only) BACKBONE_ABLATION_ONLY=1; shift ;;
+        --semantic-max-skills) SEMANTIC_MAX_SKILLS="$2"; shift 2 ;;
+        --semantic-min-sessions) SEMANTIC_MIN_SESSIONS="$2"; shift 2 ;;
         --with-graph-seed) SKIP_GRAPH_SEED=0; shift ;;
         --evolution-batch-size) EVOLUTION_BATCH_SIZE="$2"; shift 2 ;;
         --awm-induction-mode) AWM_INDUCTION_MODE="$2"; shift 2 ;;
@@ -117,7 +123,7 @@ done
 
 case "$METHOD" in all|awm|expel|trace2skill|graph) ;; *) echo "Invalid --method: $METHOD" >&2; exit 2 ;; esac
 case "$AWM_INDUCTION_MODE" in online|offline) ;; *) echo "Invalid --awm-induction-mode: $AWM_INDUCTION_MODE" >&2; exit 2 ;; esac
-case "$GRAPH_MINING_METHOD" in legacy|sequence|backbone|backbone_coverage) ;; *) echo "Invalid --graph-mining-method: $GRAPH_MINING_METHOD" >&2; exit 2 ;; esac
+case "$GRAPH_MINING_METHOD" in legacy|sequence|backbone|backbone_coverage|semantic_router) ;; *) echo "Invalid --graph-mining-method: $GRAPH_MINING_METHOD" >&2; exit 2 ;; esac
 case "$BACKBONE_COMPILER" in organized|unordered|compare) ;; *) echo "Invalid --backbone-compiler: $BACKBONE_COMPILER" >&2; exit 2 ;; esac
 if [[ "$BACKBONE_ABLATION_ONLY" -eq 1 ]]; then
     [[ "$BACKBONE_COMPILER" != "compare" ]] || { echo "--backbone-ablation-only cannot be combined with --backbone-compiler compare" >&2; exit 2; }
@@ -403,7 +409,9 @@ run_worker() {
             fi
             graph_args=(scripts/run_subflow_eval.py --subflow "$subflow" --min-sessions "$MIN_SESSIONS"
                 --mining-method "$GRAPH_MINING_METHOD" --backbone-coverage-lambda "$BACKBONE_COVERAGE_LAMBDA"
-                --backbone-compiler "$BACKBONE_COMPILER")
+                --backbone-compiler "$BACKBONE_COMPILER"
+                --semantic-max-skills "$SEMANTIC_MAX_SKILLS"
+                --semantic-min-sessions "$SEMANTIC_MIN_SESSIONS")
             [[ "$SKIP_GRAPH_SEED" -eq 1 ]] && graph_args+=(--skip-seed)
             run_or_resume_task "$worker_index" "$workflow_id" graph "$subflow" "${graph_args[@]}" || {
                 echo "graph:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }

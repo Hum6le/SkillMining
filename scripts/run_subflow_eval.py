@@ -363,6 +363,59 @@ def mine_subflow_skill_backbone(
     return result
 
 
+def mine_subflow_semantic_router(
+    subflow: str, train_convs: list, artifact_dir: Path,
+    max_skills: int = 4, min_skill_sessions: int = 20,
+    model: str = MODEL,
+) -> dict:
+    """Discover session regions, ground them with LLM cards, compile each skill."""
+    from skill_mining.semantic_subflow import (
+        discover_semantic_subflows, ground_skill_cards,
+    )
+
+    discovery = discover_semantic_subflows(
+        subflow, train_convs, max_skills=max_skills,
+        min_sessions=min_skill_sessions,
+    )
+    discovery = ground_skill_cards(discovery, model=model)
+    skill_root = artifact_dir / "skills"
+    skill_root.mkdir(parents=True, exist_ok=True)
+    by_id = {str(c.get("convo_id", "?")): c for c in train_convs}
+    skills = {}
+    for card in discovery.get("skill_cards", []):
+        skill_id = card["skill_id"]
+        members = [
+            by_id[sid] for sid, assigned in discovery.get("session_assignments", {}).items()
+            if assigned == skill_id and sid in by_id
+        ]
+        if not members:
+            continue
+        log.info("  Compiling semantic %s from %d sessions", skill_id, len(members))
+        result = mine_subflow_skill_backbone(
+            f"{subflow}_{skill_id}", members,
+            max_outgoing_edges=3, min_branch_support=2,
+            transition_cases_per_edge=2, compiler="organized",
+            artifact_dir=skill_root / skill_id,
+        )
+        skill_dir = skill_root / skill_id / f"{subflow}_{skill_id}"
+        # The compiler receives the artifact directory as OUT_DIR/subflow.
+        # Locate the actual files defensively for standalone and full-run paths.
+        candidates = [skill_dir, skill_root / skill_id]
+        actual = next((p for p in candidates if (p / "skill.md").exists()), candidates[0])
+        skills[skill_id] = {
+            "skill": (actual / "skill.md").read_text(encoding="utf-8") if (actual / "skill.md").exists() else result.get("skill_md", ""),
+            "reference": (actual / "reference.md").read_text(encoding="utf-8") if (actual / "reference.md").exists() else result.get("reference_md", ""),
+            "card": card,
+        }
+    discovery["compiled_skills"] = list(skills)
+    discovery["skills_root"] = str(skill_root)
+    (artifact_dir / "semantic_subflows.json").write_text(
+        json.dumps(discovery, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    return {"discovery": discovery, "skills": skills,
+            "skill_info": {"num_selected": len(skills), "coverage_pct": 0}}
+
+
 def evaluate_agent_on_subflow(
     agent, test_convs: list, label: str, subflow: str = "",
     save_dir: Path | None = None,
@@ -514,9 +567,9 @@ def main():
                         help="Number of reference.md operator sections to retrieve per turn")
     parser.add_argument("--reference-max-chars", type=int, default=1800,
                         help="Max characters of retrieved reference snippets injected per turn")
-    parser.add_argument("--mining-method", choices=["backbone", "backbone_coverage", "sequence", "legacy"],
+    parser.add_argument("--mining-method", choices=["backbone", "backbone_coverage", "semantic_router", "sequence", "legacy"],
                         default="legacy",
-                        help="Skill mining method (default: legacy HG vertex cover; backbone retains all actions; backbone_coverage adds session-aware edge selection)")
+                        help="Skill mining method (default: legacy HG vertex cover; semantic_router discovers session-supported latent skills)")
     parser.add_argument("--backbone-max-outgoing-edges", type=int, default=3,
                         help="Max retained outgoing transitions per action for backbone mining")
     parser.add_argument("--backbone-min-branch-support", type=int, default=2,
@@ -528,6 +581,10 @@ def main():
     parser.add_argument("--backbone-compiler", choices=["organized", "unordered", "compare"],
                         default="organized",
                         help="Backbone graph-to-skill compiler: organized (default), flat unordered control, or evaluate both on one mined graph")
+    parser.add_argument("--semantic-max-skills", type=int, default=4,
+                        help="Maximum latent skills discovered inside one 10-flow scene")
+    parser.add_argument("--semantic-min-sessions", type=int, default=20,
+                        help="Minimum training sessions supporting a latent skill")
     parser.add_argument("--backbone-ablation-only", action="store_true",
                         help="Only compile/evaluate the unordered backbone ablation; skip the organized original")
     parser.add_argument("--sequence-min-edge-support", type=int, default=2,
@@ -600,6 +657,7 @@ def main():
         # ── 2. Mine skill ─────────────────────────────────────
         sf_out = OUT_DIR / subflow
         sf_out.mkdir(parents=True, exist_ok=True)
+        semantic_bundle = None
 
         if args.skip_mining:
             skill_text = ""
@@ -633,7 +691,26 @@ def main():
                     slot_policies_text = slot_path.read_text(encoding="utf-8")
             skill_info = {"selected_vertices": [], "coverage_pct": 0, "num_sessions": 0}
         else:
-            if args.mining_method in {"backbone", "backbone_coverage"}:
+            if args.mining_method == "semantic_router":
+                semantic_bundle = mine_subflow_semantic_router(
+                    subflow, train_convs, sf_out,
+                    max_skills=args.semantic_max_skills,
+                    min_skill_sessions=args.semantic_min_sessions,
+                    model=args.model,
+                )
+                discovery = semantic_bundle["discovery"]
+                skill_info = semantic_bundle["skill_info"]
+                skill_text = ""
+                reference_text = ""
+                action_rules_text = ""
+                slot_policies_text = ""
+                (sf_out / "skill_router_cards.md").write_text(
+                    "\n\n".join(
+                        f"## {card['skill_id']}: {card['name']}\n{card['summary']}"
+                        for card in discovery.get("skill_cards", [])
+                    ), encoding="utf-8")
+                log.info("  Discovered %d semantic skills", len(semantic_bundle["skills"]))
+            elif args.mining_method in {"backbone", "backbone_coverage"}:
                 mined = mine_subflow_skill_backbone(
                     subflow,
                     train_convs,
@@ -656,15 +733,21 @@ def main():
                 )
             else:
                 mined = mine_subflow_skill(subflow, train_convs, artifact_dir=sf_out)
-            skill_info = mined["skill_info"]
-            skill_text = mined.get("skill_md", "")
-            reference_text = mined.get("reference_md", "")
-            action_rules_text = mined.get("action_rules_md", "")
-            slot_policies_text = mined.get("slot_policies_md", "")
+            if args.mining_method == "semantic_router":
+                mined = None
+            else:
+                skill_info = mined["skill_info"]
+                skill_text = mined.get("skill_md", "")
+                reference_text = mined.get("reference_md", "")
+                action_rules_text = mined.get("action_rules_md", "")
+                slot_policies_text = mined.get("slot_policies_md", "")
 
             # Save skill.md + reference.md + subgraph
-            (sf_out / "skill.md").write_text(skill_text, encoding="utf-8")
-            if args.backbone_compiler == "compare" and mined.get("unordered_skill_md"):
+            if args.mining_method == "semantic_router":
+                pass
+            else:
+                (sf_out / "skill.md").write_text(skill_text, encoding="utf-8")
+            if args.mining_method != "semantic_router" and args.backbone_compiler == "compare" and mined.get("unordered_skill_md"):
                 (sf_out / "organized_skill.md").write_text(skill_text, encoding="utf-8")
                 (sf_out / "unordered_skill.md").write_text(
                     mined["unordered_skill_md"], encoding="utf-8")
@@ -681,21 +764,24 @@ def main():
                     }, indent=2, ensure_ascii=False),
                     encoding="utf-8",
                 )
-            (sf_out / "reference.md").write_text(
-                mined.get("reference_md", ""), encoding="utf-8")
-            if mined.get("action_rules_md"):
+            if args.mining_method != "semantic_router":
+                (sf_out / "reference.md").write_text(
+                    mined.get("reference_md", ""), encoding="utf-8")
+            if args.mining_method != "semantic_router" and mined.get("action_rules_md"):
                 (sf_out / "action_rules.md").write_text(
                     mined["action_rules_md"], encoding="utf-8")
-            if mined.get("slot_policies_md"):
+            if args.mining_method != "semantic_router" and mined.get("slot_policies_md"):
                 (sf_out / "slot_policies.md").write_text(
                     mined["slot_policies_md"], encoding="utf-8")
-            (sf_out / "subgraph.json").write_text(
-                json.dumps(mined["subgraph"], indent=2, ensure_ascii=False),
-                encoding="utf-8")
-            n_snippets = sum(1 for v in mined.get("reference_md", "").split("\n")
-                            if v.startswith("```text"))
-            log.info(f"  Saved: skill.md ({len(skill_text.splitlines())} lines), "
-                     f"reference.md ({n_snippets} snippets), subgraph.json")
+            if args.mining_method != "semantic_router":
+                (sf_out / "subgraph.json").write_text(
+                    json.dumps(mined["subgraph"], indent=2, ensure_ascii=False),
+                    encoding="utf-8")
+            if args.mining_method != "semantic_router":
+                n_snippets = sum(1 for v in mined.get("reference_md", "").split("\n")
+                                if v.startswith("```text"))
+                log.info(f"  Saved: skill.md ({len(skill_text.splitlines())} lines), "
+                         f"reference.md ({n_snippets} snippets), subgraph.json")
 
         # ── 3. Seed Baseline (optional) ───────────────────────
         from eval_tod.abcd.agent import ABCDAgent
@@ -720,22 +806,36 @@ def main():
 
         # ── 4. Mined Skill ────────────────────────────────────
         log.info("  Mined skill evaluation...")
-        wf = WorkflowStore()
-        if skill_text:
-            wf.update(skill_text)
-        mined_agent = ABCDAgent(
-            model=args.model,
-            workflow=wf,
-            memory=MemoryStore(),
-            reference_text="" if args.disable_reference_lookup else reference_text,
-            action_rules_text=action_rules_text,
-            slot_policies_text=slot_policies_text,
-            reference_top_k=args.reference_top_k,
-            reference_max_chars=args.reference_max_chars,
-            expose_scenario_labels=False,
-        )
+        if args.mining_method == "semantic_router":
+            from eval_tod.abcd.router_agent import SemanticSkillRouterAgent
+            from skill_mining.semantic_subflow import format_skill_cards
+            router_skills = semantic_bundle["skills"]
+            cards_prompt = format_skill_cards(semantic_bundle["discovery"])
+            mined_agent = SemanticSkillRouterAgent(
+                router_skills, cards_prompt, model=args.model,
+            )
+            (sf_out / "skill_router_cards_prompt.txt").write_text(cards_prompt, encoding="utf-8")
+        else:
+            wf = WorkflowStore()
+            if skill_text:
+                wf.update(skill_text)
+            mined_agent = ABCDAgent(
+                model=args.model,
+                workflow=wf,
+                memory=MemoryStore(),
+                reference_text="" if args.disable_reference_lookup else reference_text,
+                action_rules_text=action_rules_text,
+                slot_policies_text=slot_policies_text,
+                reference_top_k=args.reference_top_k,
+                reference_max_chars=args.reference_max_chars,
+                expose_scenario_labels=False,
+            )
         mined_result = evaluate_agent_on_subflow(
             mined_agent, test_convs, "mined", subflow, save_dir=sf_out)
+        if args.mining_method == "semantic_router" and hasattr(mined_agent, "selection_log"):
+            (sf_out / "skill_router_selections.json").write_text(
+                json.dumps(mined_agent.selection_log, indent=2, ensure_ascii=False),
+                encoding="utf-8")
         log.info(f"    BERT={mined_result['text']['bert_f1']:.4f}  "
                  f"BLEU-4={mined_result['text']['bleu_4']:.1f}  "
                  f"ROUGE-L={mined_result['text']['rouge_l']:.4f}  "
@@ -745,7 +845,7 @@ def main():
                  f"Slot={mined_result['ast_cds']['ast_slot_value']:.4f}")
 
         unordered_result = None
-        if args.backbone_compiler == "compare":
+        if args.mining_method != "semantic_router" and args.backbone_compiler == "compare":
             unordered_text = mined.get("unordered_skill_md", "")
             log.info("  Unordered node-edge control evaluation...")
             unordered_wf = WorkflowStore()
@@ -787,6 +887,7 @@ def main():
             "test_sessions": len(test_convs),
             "mining_method": args.mining_method,
             "backbone_compiler": args.backbone_compiler if args.mining_method in {"backbone", "backbone_coverage"} else None,
+            "semantic_skill_count": len(semantic_bundle["skills"]) if semantic_bundle else 0,
             "skill_vertices": skill_info.get("num_selected", 0),
             "coverage_pct": skill_info.get("coverage_pct", 0),
             "seed": seed_result,
