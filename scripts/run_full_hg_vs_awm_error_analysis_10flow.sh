@@ -43,9 +43,11 @@ Options:
   -h, --help              Show this help
 
 Expected artifacts for each indexed flow NAME:
-  <hg-root>/NAME/mined_predictions.json
-  <hg-root>/NAME/skill.md
-  <hg-root>/NAME/reference.md                         (optional)
+  <hg-root>/NAME/NAME/mined_predictions.json          (full runner output)
+  <hg-root>/NAME/NAME/skill.md
+  <hg-root>/NAME/NAME/reference.md                    (optional)
+  Or the corresponding single-level <hg-root>/NAME/... layout
+  from a standalone per-subflow run.
   <awm-root>/NAME/test_turn_predictions.json
   <awm-root>/NAME/awm_workflow.txt
 EOF
@@ -149,7 +151,12 @@ MISSING="$OUTPUT_DIR/missing_artifacts.txt"
 completed=0
 processed=0
 for flow in "${FLOWS[@]}"; do
-    graph_dir="$HG_ROOT/$flow"
+    graph_root_dir="$HG_ROOT/$flow"
+    # run_full_abcd_experiments.sh sets ABCD_OUTPUT_DIR to graph/<flow>, and
+    # run_subflow_eval.py then writes sf_out=OUT_DIR/<flow>.  Prefer that
+    # actual full-run layout, while retaining standalone single-level support.
+    graph_dir="$graph_root_dir/$flow"
+    [[ -d "$graph_dir" ]] || graph_dir="$graph_root_dir"
     awm_dir="$AWM_ROOT/$flow"
     flow_out="$OUTPUT_DIR/$flow"
     if [[ "$RESUME" -eq 1 && -f "$flow_out/stats.json" && -f "$flow_out/error_report.md" ]]; then
@@ -172,6 +179,7 @@ for flow in "${FLOWS[@]}"; do
     if [[ ${#missing[@]} -gt 0 ]]; then
         {
             echo "$flow: ${missing[*]}"
+            echo "  HG root entry:  $graph_root_dir"
             echo "  HG directory:  $graph_dir"
             echo "  HG preds:      $hg_preds"
             echo "  HG skill:      $hg_skill"
