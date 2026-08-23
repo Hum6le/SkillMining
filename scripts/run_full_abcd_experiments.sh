@@ -17,7 +17,7 @@ HF_MIRROR="https://hf-mirror.com"
 METHOD="all"
 ONE_SUBFLOW=""
 MIN_SESSIONS=0
-GRAPH_MINING_METHOD="legacy"
+GRAPH_MINING_METHOD="backbone"
 BACKBONE_COVERAGE_LAMBDA="0.2"
 BACKBONE_COMPILER="organized"
 BACKBONE_ABLATION_ONLY=0
@@ -74,7 +74,7 @@ Options:
   --resume-run DIR           Resume an existing outputs/full_abcd_* run. Reuses its load
                              plan and skips subflows with a complete final summary.
   --min-sessions N           Graph Mining minimum train sessions (default: 0)
-  --graph-mining-method NAME legacy, sequence, backbone, or backbone_coverage (default: legacy)
+  --graph-mining-method NAME legacy, sequence, backbone, or backbone_coverage (default: backbone)
   --backbone-coverage-lambda N  Session coverage weight for backbone_coverage (default: 0.2)
   --backbone-compiler NAME   organized, unordered, or compare (default: organized)
   --backbone-ablation-only   Only run unordered compiler ablation; skip organized original
