@@ -368,11 +368,18 @@ def _full_dialogue_text(conversation: dict[str, Any]) -> str:
     speaker_names = {"customer": "Customer", "agent": "Agent", "action": "System"}
     lines = []
     for turn in conversation.get("original") or conversation.get("delexed") or []:
-        if not isinstance(turn, dict):
+        if isinstance(turn, dict):
+            raw_speaker = turn.get("speaker", "")
+            raw_text = turn.get("text", "")
+        elif isinstance(turn, (list, tuple)) and len(turn) >= 2:
+            # ABCD's original dialogue format is [speaker, utterance].
+            raw_speaker, raw_text = turn[0], turn[1]
+        else:
             continue
-        text = str(turn.get("text", "")).strip()
+        text = str(raw_text).strip()
         if text:
-            speaker = speaker_names.get(str(turn.get("speaker", "")), str(turn.get("speaker", "Unknown")))
+            speaker_key = str(raw_speaker).strip().lower()
+            speaker = speaker_names.get(speaker_key, str(raw_speaker or "Unknown"))
             lines.append(f"[{speaker}] {text}")
     return "\n".join(lines) or "[No dialogue text available]"
 
@@ -427,10 +434,16 @@ def ground_skill_cards(
         "They are not ground-truth labels. Read ALL groups jointly and infer the user intent/sub-scenario represented by each group. "
         "Your cards must make boundaries between groups explicit: distinguish groups with similar actions using the customer goal, "
         "request wording, and outcome. Do not use dataset labels, hidden state, or private values. Do not describe a group only by "
-        "shared tool actions.\n\n"
-        "Return JSON only: {\"cards\":[{\"skill_id\":\"...\",\"name\":\"short intent name\","
-        "\"summary\":\"what request this skill handles\",\"positive_evidence\":[\"observable cue\"],"
-        "\"avoid_when\":[\"cue favoring another listed skill\"],\"boundary_uncertainty\":\"...\"}]}. "
+        "shared tool actions. Each card must be a useful routing specification, not a one-line summary: write a 2-4 sentence "
+        "description, list several observable customer cues, state what this skill covers and does not cover, and explicitly compare "
+        "it with the other supplied groups.\n\n"
+        "Return JSON only with exactly one card per supplied skill_id: {\"cards\":[{\"skill_id\":\"...\","
+        "\"name\":\"short intent name\",\"summary\":\"2-4 sentence routing description\","
+        "\"customer_goals\":[\"underlying user goal\"],\"positive_evidence\":[\"observable cue\"],"
+        "\"negative_evidence\":[\"observable cue that rules this skill out\"],"
+        "\"distinguish_from\":[{\"skill_id\":\"other skill id\",\"rule\":\"how to choose between them\"}],"
+        "\"typical_outcome\":\"what the user expects to achieve\","
+        "\"boundary_uncertainty\":\"remaining ambiguity, if any\"}]}. "
         "Return exactly one card for every supplied skill_id, preserving its skill_id.\n\n"
         "<discovered_groups>\n" + json.dumps(groups, ensure_ascii=False, indent=2) + "\n</discovered_groups>"
     )
@@ -441,7 +454,7 @@ def ground_skill_cards(
     try:
         from llm import chat
         raw = chat([
-            {"role": "system", "content": "Return concise, evidence-grounded JSON only."},
+            {"role": "system", "content": "Return detailed, evidence-grounded JSON only. The cards will be shown directly to another model for skill routing."},
             {"role": "user", "content": prompt},
         ], model=model, temperature=0.0)
         parsed_by_id = {str(card.get("skill_id")): card for card in _extract_card_list(raw)}
@@ -454,8 +467,12 @@ def ground_skill_cards(
         cards.append({"skill_id": skill["skill_id"],
                       "name": parsed.get("name", skill["skill_id"]),
                       "summary": parsed.get("summary", f"Workflow centered on {skill['seed_transition']}"),
+                      "customer_goals": parsed.get("customer_goals", []),
                       "positive_evidence": parsed.get("positive_evidence", [skill["seed_transition"]]),
+                      "negative_evidence": parsed.get("negative_evidence", []),
                       "avoid_when": parsed.get("avoid_when", []),
+                      "distinguish_from": parsed.get("distinguish_from", []),
+                      "typical_outcome": parsed.get("typical_outcome", "unknown"),
                       "boundary_uncertainty": parsed.get("boundary_uncertainty", "unknown"),
                       "support_sessions": skill["support_sessions"],
                       "distinctive_edges": skill["edges"][:8]})
@@ -466,10 +483,19 @@ def ground_skill_cards(
 def format_skill_cards(discovery: dict[str, Any]) -> str:
     lines = ["<available_skills>", "Choose only from these evidence-grounded cards."]
     for card in discovery.get("skill_cards", []):
+        distinctions = card.get("distinguish_from", [])
+        distinction_text = "; ".join(
+            f"{item.get('skill_id', 'other')}: {item.get('rule', '')}"
+            for item in distinctions if isinstance(item, dict)
+        ) or "not specified"
         lines.extend([f"\n[{card['skill_id']}] {card['name']}",
-                      f"Summary: {card['summary']}",
-                      "Positive evidence: " + ", ".join(map(str, card.get("positive_evidence", []))),
-                      "Avoid when: " + (", ".join(map(str, card.get("avoid_when", []))) or "not specified"),
-                      "Distinctive transitions: " + ", ".join(e["transition"] for e in card.get("distinctive_edges", []))])
+                      f"Routing description: {card['summary']}",
+                      "Customer goals: " + ("; ".join(map(str, card.get("customer_goals", []))) or "not specified"),
+                      "Positive evidence: " + ("; ".join(map(str, card.get("positive_evidence", []))) or "not specified"),
+                      "Negative evidence: " + ("; ".join(map(str, card.get("negative_evidence", []))) or "not specified"),
+                      "Do not use this skill when: " + ("; ".join(map(str, card.get("avoid_when", []))) or "not specified"),
+                      "Distinguish from other skills: " + distinction_text,
+                      "Typical outcome: " + str(card.get("typical_outcome", "unknown")),
+                      "Graph evidence: " + ", ".join(e["transition"] for e in card.get("distinctive_edges", []))])
     lines.append("</available_skills>")
     return "\n".join(lines)

@@ -46,7 +46,9 @@ class SemanticSkillRouterAgent:
         prompt = (
             "Select the best workflow skill for this dialogue.\n"
             "Do not use dataset labels or hidden state. Shared actions alone are not enough; "
-            "use user language and distinctive transition evidence. Return JSON only with "
+            "compare every available card, use the customer's underlying goal, positive and "
+            "negative evidence, and the explicit distinction rules. Do not choose a skill "
+            "merely because its action sequence is common. Return JSON only with "
             "selected_skill, confidence, evidence.\n\n" + self.cards_prompt +
             "\n\n<dialogue_context>\n" + self._context(conversation)[:10000] +
             "\n</dialogue_context>"

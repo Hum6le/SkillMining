@@ -803,7 +803,13 @@ def main():
                 slot_policies_text = ""
                 (sf_out / "skill_router_cards.md").write_text(
                     "\n\n".join(
-                        f"## {card['skill_id']}: {card['name']}\n{card['summary']}"
+                        "## " + str(card["skill_id"]) + ": " + str(card["name"]) + "\n"
+                        + "Routing description: " + str(card.get("summary", "")) + "\n"
+                        + "Customer goals: " + "; ".join(map(str, card.get("customer_goals", []))) + "\n"
+                        + "Positive evidence: " + "; ".join(map(str, card.get("positive_evidence", []))) + "\n"
+                        + "Negative evidence: " + "; ".join(map(str, card.get("negative_evidence", []))) + "\n"
+                        + "Distinguish from other skills: " + json.dumps(card.get("distinguish_from", []), ensure_ascii=False) + "\n"
+                        + "Typical outcome: " + str(card.get("typical_outcome", "unknown"))
                         for card in discovery.get("skill_cards", [])
                     ), encoding="utf-8")
                 log.info("  Discovered %d semantic skills", len(semantic_bundle["skills"]))
