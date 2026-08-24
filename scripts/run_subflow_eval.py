@@ -95,6 +95,24 @@ def load_subflow_data(subflow: str) -> tuple[list, list]:
     return train, test
 
 
+def _evaluate_test_shard_worker(agent, shard: list, label: str, subflow: str,
+                                workflow_id: str, result_queue) -> None:
+    """Evaluate one test shard in an isolated process/workflow environment."""
+    try:
+        os.environ["SKILLMINING_WORKFLOW_ID"] = workflow_id
+        rows = []
+        for index, conversation in enumerate(shard, start=1):
+            cid = conversation.get("convo_id", "?")
+            print(f"  [{label}] worker_workflow={workflow_id} [{index}/{len(shard)}] "
+                  f"convo={cid} {subflow}", flush=True)
+            rows.extend(agent.predict_all_turns(
+                conversation, predict_actions=True, verbose=False))
+        selection_log = list(getattr(agent, "selection_log", []))
+        result_queue.put({"ok": True, "rows": rows, "selection_log": selection_log})
+    except Exception as exc:
+        result_queue.put({"ok": False, "error": repr(exc)})
+
+
 def mine_subflow_skill(
     subflow: str,
     train_convs: list,
@@ -443,29 +461,59 @@ def evaluate_agent_on_subflow(
     all_turn_results: list[dict] = []
     workflow_ids = [str(value) for value in (eval_workflow_ids or []) if str(value)]
     if workflow_ids:
+        import multiprocessing as mp
+        if "fork" not in mp.get_all_start_methods():
+            raise RuntimeError(
+                "--eval-workflow-ids requires a fork-capable platform so each "
+                "evaluation worker can inherit the compiled agent safely."
+            )
+        context = mp.get_context("fork")
         shards = [test_convs[index::len(workflow_ids)] for index in range(len(workflow_ids))]
+        result_queue = context.Queue()
+        workers = []
+        for shard, workflow_id in zip(shards, workflow_ids):
+            if not shard:
+                continue
+            worker = context.Process(
+                target=_evaluate_test_shard_worker,
+                args=(agent, shard, label, subflow, workflow_id, result_queue),
+                daemon=False,
+            )
+            worker.start()
+            workers.append(worker)
+        worker_results = []
+        remaining = set(workers)
+        while remaining:
+            try:
+                worker_results.append(result_queue.get(timeout=5.0))
+                # A result is emitted exactly once by every live worker. The
+                # process status check below catches crashes without output.
+                remaining = {worker for worker in remaining if worker.is_alive()}
+            except Exception:
+                dead = [worker for worker in remaining if not worker.is_alive()]
+                if dead:
+                    raise RuntimeError(
+                        "An evaluation worker exited without returning results: "
+                        + ", ".join(str(worker.exitcode) for worker in dead)
+                    )
+        for worker in workers:
+            worker.join()
+        failures = [result["error"] for result in worker_results if not result.get("ok")]
+        if failures:
+            raise RuntimeError(f"Evaluation shard failed: {failures[0]}")
+        for result in worker_results:
+            all_turn_results.extend(result["rows"])
+            if hasattr(agent, "selection_log"):
+                agent.selection_log.extend(result.get("selection_log", []))
+        print(f"  [{label}] Done: {total} convs across {len(workers)} evaluation workers "
+              f"({len(all_turn_results)} turns)")
     else:
-        shards = [test_convs]
-    processed = 0
-    original_workflow_id = os.environ.get("SKILLMINING_WORKFLOW_ID")
-    try:
-        for shard_index, shard in enumerate(shards):
-            if workflow_ids:
-                os.environ["SKILLMINING_WORKFLOW_ID"] = workflow_ids[shard_index]
-                print(f"  [{label}] shard={shard_index} workflow={workflow_ids[shard_index]} "
-                      f"sessions={len(shard)}", flush=True)
-            for conv in shard:
-                cid = conv.get("convo_id", "?")
-                processed += 1
-                print(f"  [{label}] [{processed}/{total}] convo={cid}  {subflow}", end="\r")
-                results = agent.predict_all_turns(conv, predict_actions=True, verbose=False)
-                all_turn_results.extend(results)
-    finally:
-        if original_workflow_id is None:
-            os.environ.pop("SKILLMINING_WORKFLOW_ID", None)
-        else:
-            os.environ["SKILLMINING_WORKFLOW_ID"] = original_workflow_id
-    print(f"  [{label}] Done: {total} convs, {len(all_turn_results)} turns")
+        for index, conv in enumerate(test_convs, start=1):
+            cid = conv.get("convo_id", "?")
+            print(f"  [{label}] [{index}/{total}] convo={cid}  {subflow}", end="\r")
+            all_turn_results.extend(agent.predict_all_turns(
+                conv, predict_actions=True, verbose=False))
+        print(f"  [{label}] Done: {total} convs, {len(all_turn_results)} turns")
 
     # Save predictions for error analysis
     if save_dir:
@@ -638,7 +686,7 @@ def main():
     parser.add_argument(
         "--eval-workflow-ids", default="",
         help="Comma-separated workflow IDs used only to shard test evaluation for one --subflow. "
-             "Mining still runs once before sharded evaluation.",
+             "Mining still runs once; each ID gets an independent evaluation subprocess.",
     )
     args = parser.parse_args()
     reset_usage, get_usage, write_usage = _llm_usage_functions()
