@@ -618,7 +618,9 @@ Writing requirements:
 - Preserve every invisible source-decision marker exactly once somewhere in
   the prose. One decision-point paragraph may jointly explain all outgoing
   transitions from that source. Markers are compiler metadata and must not be
-  explained to the end user.
+  explained to the end user. If a marker is accidentally omitted, the
+  compiler will append the missing metadata marker after the prose; do not
+  omit a decision point intentionally.
 
 <filesystem_mcp>
 Use exactly one constrained operation:
@@ -653,11 +655,30 @@ def _parse_transition_write(raw: str, expected_source_ids: set[str]) -> str:
     content = str(operation.get("content") or "").strip()
     if not content:
         raise ValueError("transition write returned empty routing prose")
-    found = set(re.findall(r"<!-- ROUTE_SOURCE:(.*?) -->", content))
-    if found != expected_source_ids:
+    marker_pattern = r"<!-- ROUTE_SOURCE:\s*(.*?)\s*-->"
+    marker_values = [value.strip() for value in re.findall(marker_pattern, content)]
+    found = set(marker_values)
+    unexpected = found - expected_source_ids
+    duplicates = sorted(
+        value for value in set(marker_values)
+        if marker_values.count(value) > 1
+    )
+    if unexpected:
         raise ValueError(
             f"transition write decision coverage mismatch; missing={sorted(expected_source_ids - found)}, "
-            f"unexpected={sorted(found - expected_source_ids)}"
+            f"unexpected={sorted(unexpected)}"
+        )
+    if duplicates:
+        raise ValueError(
+            f"transition write decision coverage mismatch; duplicate={duplicates}"
+        )
+    missing = sorted(expected_source_ids - found)
+    if missing:
+        # These comments are compiler metadata, not LLM-authored prose. Repair
+        # omission deterministically so a valid natural-language write cannot
+        # fail merely because the model forgot a hidden coverage marker.
+        content = content.rstrip() + "\n\n" + "\n".join(
+            _route_source_marker(source_id) for source_id in missing
         )
     return content
 

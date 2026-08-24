@@ -377,7 +377,10 @@ def mine_subflow_semantic_router(
         subflow, train_convs, max_skills=max_skills,
         min_sessions=min_skill_sessions,
     )
-    discovery = ground_skill_cards(discovery, model=model)
+    discovery = ground_skill_cards(
+        discovery, train_convs, model=model,
+        prompt_path=artifact_dir / "skill_router_card_induction_prompt.txt",
+    )
     skill_root = artifact_dir / "skills"
     skill_root.mkdir(parents=True, exist_ok=True)
     by_id = {str(c.get("convo_id", "?")): c for c in train_convs}
@@ -386,7 +389,10 @@ def mine_subflow_semantic_router(
         skill_id = card["skill_id"]
         members = [
             by_id[sid] for sid, assigned in discovery.get("session_assignments", {}).items()
-            if assigned == skill_id and sid in by_id
+            if (
+                (assigned.get("skill_id") if isinstance(assigned, dict) else assigned) == skill_id
+                and sid in by_id
+            )
         ]
         if not members:
             continue
@@ -725,6 +731,23 @@ def main():
                         for card in discovery.get("skill_cards", [])
                     ), encoding="utf-8")
                 log.info("  Discovered %d semantic skills", len(semantic_bundle["skills"]))
+                log.info(
+                    "  Discovery objective=%.6f support=%.4f cohesion=%.4f overlap=%.4f; "
+                    "removed=%s",
+                    discovery.get("final_metrics", {}).get("objective", 0.0),
+                    discovery.get("final_metrics", {}).get("mean_support", 0.0),
+                    discovery.get("final_metrics", {}).get("mean_cohesion", 0.0),
+                    discovery.get("final_metrics", {}).get("mean_overlap", 0.0),
+                    discovery.get("removed_partition_nodes", []),
+                )
+                for item in discovery.get("objective_history", []):
+                    log.info(
+                        "    discovery iter=%s remove=%s node_support=%s objective=%.6f "
+                        "previous=%.6f accepted=%s",
+                        item.get("iteration"), item.get("removed_node"),
+                        item.get("node_session_support"), item.get("objective", 0.0),
+                        item.get("previous_objective", 0.0), item.get("accepted"),
+                    )
             elif args.mining_method in {"backbone", "backbone_coverage"}:
                 mined = mine_subflow_skill_backbone(
                     subflow,
