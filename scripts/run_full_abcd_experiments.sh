@@ -31,6 +31,7 @@ CONTINUE_ON_ERROR=1
 PYTHON_BIN="python"
 REBUILD_SPLITS=1
 WORKFLOW_IDS_RAW=""
+EVAL_WORKFLOW_IDS_RAW=""
 RESUME_RUN=""
 PIDS=()
 
@@ -84,6 +85,7 @@ Options:
   --semantic-max-skills N    Maximum latent skills per 10-flow scene (default: 4)
   --semantic-min-sessions N  Minimum training sessions per latent skill (default: 20)
   --subflow-discovery        Discover latent session subflows before the selected graph miner
+  --eval-workflow-ids IDS    Comma-separated workflow IDs used to shard test evaluation for one --subflow
   --with-graph-seed          Also run the empty-workflow HG seed baseline
   --evolution-batch-size N   Trace2Skill outer batch size (default: 25)
   --awm-induction-mode NAME  AWM induction: online or offline (default: online)
@@ -114,6 +116,7 @@ while [[ $# -gt 0 ]]; do
         --semantic-max-skills) SEMANTIC_MAX_SKILLS="$2"; shift 2 ;;
         --semantic-min-sessions) SEMANTIC_MIN_SESSIONS="$2"; shift 2 ;;
         --subflow-discovery) SUBFLOW_DISCOVERY=1; shift ;;
+        --eval-workflow-ids) EVAL_WORKFLOW_IDS_RAW="$2"; shift 2 ;;
         --with-graph-seed) SKIP_GRAPH_SEED=0; shift ;;
         --evolution-batch-size) EVOLUTION_BATCH_SIZE="$2"; shift 2 ;;
         --awm-induction-mode) AWM_INDUCTION_MODE="$2"; shift 2 ;;
@@ -123,6 +126,11 @@ while [[ $# -gt 0 ]]; do
         *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
     esac
 done
+
+if [[ -n "${EVAL_WORKFLOW_IDS_RAW:-}" && -z "$ONE_SUBFLOW" ]]; then
+    echo "--eval-workflow-ids requires --subflow and is evaluation-only for one flow." >&2
+    exit 2
+fi
 
 case "$METHOD" in all|awm|expel|trace2skill|graph) ;; *) echo "Invalid --method: $METHOD" >&2; exit 2 ;; esac
 case "$AWM_INDUCTION_MODE" in online|offline) ;; *) echo "Invalid --awm-induction-mode: $AWM_INDUCTION_MODE" >&2; exit 2 ;; esac
@@ -416,6 +424,7 @@ run_worker() {
                 --backbone-compiler "$BACKBONE_COMPILER"
                 --semantic-max-skills "$SEMANTIC_MAX_SKILLS"
                 --semantic-min-sessions "$SEMANTIC_MIN_SESSIONS")
+            [[ -n "$EVAL_WORKFLOW_IDS_RAW" ]] && graph_args+=(--eval-workflow-ids "$EVAL_WORKFLOW_IDS_RAW")
             [[ "$SUBFLOW_DISCOVERY" -eq 1 ]] && graph_args+=(--subflow-discovery)
             [[ "$SKIP_GRAPH_SEED" -eq 1 ]] && graph_args+=(--skip-seed)
             run_or_resume_task "$worker_index" "$workflow_id" graph "$subflow" "${graph_args[@]}" || {

@@ -436,16 +436,35 @@ def mine_subflow_semantic_router(
 
 def evaluate_agent_on_subflow(
     agent, test_convs: list, label: str, subflow: str = "",
-    save_dir: Path | None = None,
+    save_dir: Path | None = None, eval_workflow_ids: list[str] | None = None,
 ) -> dict:
     """Run turn-level predictions + evaluation (with progress). Saves preds."""
     total = len(test_convs)
     all_turn_results: list[dict] = []
-    for i, conv in enumerate(test_convs):
-        cid = conv.get("convo_id", "?")
-        print(f"  [{label}] [{i+1}/{total}] convo={cid}  {subflow}", end="\r")
-        results = agent.predict_all_turns(conv, predict_actions=True, verbose=False)
-        all_turn_results.extend(results)
+    workflow_ids = [str(value) for value in (eval_workflow_ids or []) if str(value)]
+    if workflow_ids:
+        shards = [test_convs[index::len(workflow_ids)] for index in range(len(workflow_ids))]
+    else:
+        shards = [test_convs]
+    processed = 0
+    original_workflow_id = os.environ.get("SKILLMINING_WORKFLOW_ID")
+    try:
+        for shard_index, shard in enumerate(shards):
+            if workflow_ids:
+                os.environ["SKILLMINING_WORKFLOW_ID"] = workflow_ids[shard_index]
+                print(f"  [{label}] shard={shard_index} workflow={workflow_ids[shard_index]} "
+                      f"sessions={len(shard)}", flush=True)
+            for conv in shard:
+                cid = conv.get("convo_id", "?")
+                processed += 1
+                print(f"  [{label}] [{processed}/{total}] convo={cid}  {subflow}", end="\r")
+                results = agent.predict_all_turns(conv, predict_actions=True, verbose=False)
+                all_turn_results.extend(results)
+    finally:
+        if original_workflow_id is None:
+            os.environ.pop("SKILLMINING_WORKFLOW_ID", None)
+        else:
+            os.environ["SKILLMINING_WORKFLOW_ID"] = original_workflow_id
     print(f"  [{label}] Done: {total} convs, {len(all_turn_results)} turns")
 
     # Save predictions for error analysis
@@ -616,6 +635,11 @@ def main():
     parser.add_argument("--model", default=MODEL)
     parser.add_argument("--max-train", type=int, default=None)
     parser.add_argument("--max-test", type=int, default=None)
+    parser.add_argument(
+        "--eval-workflow-ids", default="",
+        help="Comma-separated workflow IDs used only to shard test evaluation for one --subflow. "
+             "Mining still runs once before sharded evaluation.",
+    )
     args = parser.parse_args()
     reset_usage, get_usage, write_usage = _llm_usage_functions()
 
@@ -654,6 +678,10 @@ def main():
     else:
         log.error("Need --subflow or --all")
         sys.exit(1)
+
+    eval_workflow_ids = [value.strip() for value in args.eval_workflow_ids.split(",") if value.strip()]
+    if eval_workflow_ids and (args.all or len(subflows) != 1):
+        parser.error("--eval-workflow-ids is only supported when evaluating one --subflow")
 
     all_results = {}
 
@@ -833,7 +861,8 @@ def main():
                 expose_scenario_labels=False,
             )
             seed_result = evaluate_agent_on_subflow(
-                seed_agent, test_convs, "seed", subflow, save_dir=sf_out)
+                seed_agent, test_convs, "seed", subflow, save_dir=sf_out,
+                eval_workflow_ids=eval_workflow_ids)
             log.info(f"    BERT={seed_result['text']['bert_f1']:.4f}  "
                      f"BLEU-4={seed_result['text']['bleu_4']:.1f}  "
                      f"ROUGE-L={seed_result['text']['rouge_l']:.4f}  "
@@ -869,7 +898,8 @@ def main():
                 expose_scenario_labels=False,
             )
         mined_result = evaluate_agent_on_subflow(
-            mined_agent, test_convs, "mined", subflow, save_dir=sf_out)
+            mined_agent, test_convs, "mined", subflow, save_dir=sf_out,
+            eval_workflow_ids=eval_workflow_ids)
         if (args.subflow_discovery or args.mining_method == "semantic_router") and hasattr(mined_agent, "selection_log"):
             (sf_out / "skill_router_selections.json").write_text(
                 json.dumps(mined_agent.selection_log, indent=2, ensure_ascii=False),
@@ -901,7 +931,8 @@ def main():
                 expose_scenario_labels=False,
             )
             unordered_result = evaluate_agent_on_subflow(
-                unordered_agent, test_convs, "unordered", subflow, save_dir=sf_out)
+                unordered_agent, test_convs, "unordered", subflow, save_dir=sf_out,
+                eval_workflow_ids=eval_workflow_ids)
             log.info(f"    BERT={unordered_result['text']['bert_f1']:.4f}  "
                      f"BLEU-4={unordered_result['text']['bleu_4']:.1f}  "
                      f"ROUGE-L={unordered_result['text']['rouge_l']:.4f}  "
@@ -925,6 +956,7 @@ def main():
             "test_sessions": len(test_convs),
             "mining_method": args.mining_method,
             "subflow_discovery": args.subflow_discovery,
+            "eval_workflow_ids": eval_workflow_ids,
             "backbone_compiler": args.backbone_compiler if args.mining_method in {"backbone", "backbone_coverage"} else None,
             "semantic_skill_count": len(semantic_bundle["skills"]) if semantic_bundle else 0,
             "skill_vertices": skill_info.get("num_selected", 0),
