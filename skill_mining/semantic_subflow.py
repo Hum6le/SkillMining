@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -335,6 +336,178 @@ def discover_semantic_subflows(
         "objective_history": history,
         "final_metrics": best["metrics"],
         "similarity_threshold": similarity_threshold, "min_sessions": min_sessions,
+    }
+
+
+def discover_motif_prototypes(
+    subflow: str, conversations: list[dict[str, Any]], max_skills: int = 8,
+    min_sessions: int = 20, min_feature_ratio: float = 0.2,
+) -> dict[str, Any]:
+    """Discover latent groups from weighted node/edge motifs.
+
+    Unlike ``discover_semantic_subflows``, this version never removes shared
+    nodes. It downweights ubiquitous context, upweights transitions, creates
+    candidates from frequent motifs, and assigns complete sessions to the
+    most similar prototype.
+    """
+    records = [{"conversation": c, "signature": _signature(c)} for c in conversations]
+    records = [r for r in records if r["signature"]]
+    total = len(records)
+    feature_sessions: dict[str, set[int]] = defaultdict(set)
+    for index, row in enumerate(records):
+        for feature in row["signature"]:
+            feature_sessions[feature].add(index)
+
+    def feature_weight(feature: str) -> float:
+        document_frequency = len(feature_sessions[feature])
+        idf = math.log((total + 1) / (document_frequency + 1)) + 1.0
+        return idf * (1.5 if "=>" in feature else 1.0)
+
+    def weighted_jaccard(left: set[str], right: set[str]) -> float:
+        union = left | right
+        if not union:
+            return 0.0
+        intersection = left & right
+        return sum(feature_weight(f) for f in intersection) / sum(feature_weight(f) for f in union)
+
+    candidates = []
+    for seed, members in sorted(
+        feature_sessions.items(),
+        key=lambda item: (-feature_weight(item[0]) * len(item[1]), item[0]),
+    ):
+        if len(members) < min_sessions:
+            continue
+        # Pick a real session medoid so every prototype remains grounded in a
+        # complete observed workflow rather than an arbitrary feature union.
+        medoid_index = max(
+            members,
+            key=lambda index: sum(
+                weighted_jaccard(records[index]["signature"], other["signature"])
+                for other in (records[item] for item in members)
+            ),
+        )
+        # Keep the prototype local to the seed motif. A whole medoid
+        # signature can still contain a shared prefix and blur two adjacent
+        # subflows; the complete medoid is retained separately as evidence.
+        prototype_features = {seed}
+        source, target = _edge_nodes(seed)
+        prototype_features.update({f"node:{source}", f"node:{target}"})
+        if any(weighted_jaccard(prototype_features, item["features"]) >= 0.9 for item in candidates):
+            continue
+        candidates.append({
+            "seed": seed,
+            "seed_support": len(members),
+            "seed_score": feature_weight(seed) * math.sqrt(len(members) / max(total, 1)),
+            "features": prototype_features,
+            "members": sorted(members),
+            "medoid_index": medoid_index,
+        })
+
+    if not candidates:
+        return {
+            "protocol": "weighted_motif_prototypes_v1", "subflow": subflow,
+            "num_sessions": total, "skills": [], "session_assignments": {},
+            "selected_k": 0, "objective_history": [],
+        }
+
+    # Select a diverse set of motif candidates. A candidate must add both
+    # supported sessions and a distinct graph pattern.
+    transition_candidates = [item for item in candidates if "=>" in item["seed"]]
+    # Prefer transition motifs whenever the data provides enough of them;
+    # isolated nodes are useful fallback anchors but tend to be shared context.
+    candidate_pool = transition_candidates if len(transition_candidates) >= 2 else list(candidates)
+    # Rank supported motifs by discriminativeness. The later objective-based
+    # K selection decides how many of these candidates to retain.
+    selected = sorted(candidate_pool, key=lambda item: -item["seed_score"])[:max_skills]
+
+    def assign(groups: list[dict[str, Any]]) -> tuple[dict[str, dict[str, Any]], float]:
+        assignments = {}
+        assignment_scores = []
+        for index, row in enumerate(records):
+            scores = [
+                weighted_jaccard(row["signature"], group["features"])
+                + (1.0 if group["seed"] in row["signature"] else 0.0)
+                for group in groups
+            ]
+            order = sorted(range(len(scores)), key=lambda item: (-scores[item], item))
+            best = order[0]
+            assignment_scores.append(scores[best])
+            assignments[str(row["conversation"].get("convo_id", "?"))] = {
+                "group_index": best,
+                "coverage": round(scores[best], 6),
+                "margin": round(scores[best] - (scores[order[1]] if len(order) > 1 else 0.0), 6),
+            }
+        group_members = [[] for _ in groups]
+        for index, row in enumerate(records):
+            sid = str(row["conversation"].get("convo_id", "?"))
+            group_members[assignments[sid]["group_index"]].append(index)
+        support = sum(len(members) for members in group_members if len(members) >= min_sessions) / max(total, 1)
+        separation = 0.0
+        pairs = 0
+        for i, left in enumerate(groups):
+            for right in groups[i + 1:]:
+                separation += 1.0 - weighted_jaccard(left["features"], right["features"])
+                pairs += 1
+        objective = (
+            support
+            * (sum(assignment_scores) / max(len(assignment_scores), 1))
+            * (separation / max(pairs, 1))
+        )
+        return assignments, objective
+
+    # Choose K by the first plateau/decrease in the unsupervised objective.
+    best_k = 1
+    best_assignments, best_objective = assign(selected[:1])
+    history = [{"k": 1, "objective": best_objective, "accepted": True}]
+    for k in range(2, len(selected) + 1):
+        assignments, objective = assign(selected[:k])
+        accepted = objective > best_objective + 1e-6
+        history.append({"k": k, "objective": objective, "accepted": accepted})
+        if accepted:
+            best_k, best_assignments, best_objective = k, assignments, objective
+        else:
+            break
+
+    groups = selected[:best_k]
+    skills = []
+    session_assignments = {}
+    for index, group in enumerate(groups):
+        members = [
+            records[item] for item, assignment in enumerate(best_assignments.values())
+            if assignment["group_index"] == index
+        ]
+        if not members:
+            continue
+        node_counts = Counter(a for row in members for a in _actions(row["conversation"]))
+        edge_counts = Counter(
+            feature for row in members for feature in row["signature"] if "=>" in feature
+        )
+        skill_id = f"skill_{index:02d}"
+        skills.append({
+            "skill_id": skill_id,
+            "seed_transition": group["seed"],
+            "support_sessions": len(members),
+            "support_ratio": round(len(members) / max(total, 1), 6),
+            "prototype_features": sorted(group["features"]),
+            "prototype_session_id": str(records[group["medoid_index"]]["conversation"].get("convo_id", "?")),
+            "nodes": [{"label": action, "support": count} for action, count in node_counts.most_common()],
+            "edges": [{"transition": edge, "support": count} for edge, count in edge_counts.most_common()],
+        })
+        for sid, assignment in best_assignments.items():
+            if assignment["group_index"] == index:
+                session_assignments[sid] = {"skill_id": skill_id, **assignment}
+
+    return {
+        "protocol": "weighted_motif_prototypes_v1", "subflow": subflow,
+        "num_sessions": total, "skills": skills,
+        "session_assignments": session_assignments,
+        "selected_k": best_k, "objective_history": history,
+        "candidate_motifs": [
+            {"seed": item["seed"], "support_sessions": item["seed_support"],
+             "score": round(item["seed_score"], 6)}
+            for item in selected
+        ],
+        "final_objective": best_objective,
     }
 
 
