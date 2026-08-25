@@ -19,6 +19,8 @@ ONE_SUBFLOW=""
 MIN_SESSIONS=0
 GRAPH_MINING_METHOD="backbone"
 BACKBONE_COVERAGE_LAMBDA="0.2"
+BACKBONE_DISCRIMINATIVE_LAMBDA="1.0"
+BACKBONE_DISCRIMINATIVE_CLIP="3.0"
 BACKBONE_COMPILER="organized"
 BACKBONE_ABLATION_ONLY=0
 SEMANTIC_MAX_SKILLS=4
@@ -78,8 +80,11 @@ Options:
   --resume-run DIR           Resume an existing outputs/full_abcd_* run. Reuses its load
                              plan and skips subflows with a complete final summary.
   --min-sessions N           Graph Mining minimum train sessions (default: 0)
-  --graph-mining-method NAME legacy, sequence, backbone, backbone_coverage, or semantic_router (default: backbone)
-  --backbone-coverage-lambda N  Session coverage weight for backbone_coverage (default: 0.2)
+  --graph-mining-method NAME legacy, sequence, backbone, backbone_coverage, or semantic_router (default: backbone).
+                             backbone and the legacy backbone_coverage alias both use the discriminative session-aware backbone.
+  --backbone-coverage-lambda N  Deprecated compatibility option; ignored (default: 0.2)
+  --backbone-discriminative-lambda N  Cohort log-odds weight for the graph backbone (default: 1.0)
+  --backbone-discriminative-clip N    Upper clip for cohort log-odds (default: 3.0)
   --backbone-compiler NAME   organized, unordered, or compare (default: organized)
   --backbone-ablation-only   Only run unordered compiler ablation; skip organized original
   --semantic-max-skills N    Maximum latent skills per 10-flow scene (default: 4)
@@ -111,6 +116,8 @@ while [[ $# -gt 0 ]]; do
         --min-sessions) MIN_SESSIONS="$2"; shift 2 ;;
         --graph-mining-method) GRAPH_MINING_METHOD="$2"; shift 2 ;;
         --backbone-coverage-lambda) BACKBONE_COVERAGE_LAMBDA="$2"; shift 2 ;;
+        --backbone-discriminative-lambda) BACKBONE_DISCRIMINATIVE_LAMBDA="$2"; shift 2 ;;
+        --backbone-discriminative-clip) BACKBONE_DISCRIMINATIVE_CLIP="$2"; shift 2 ;;
         --backbone-compiler) BACKBONE_COMPILER="$2"; shift 2 ;;
         --backbone-ablation-only) BACKBONE_ABLATION_ONLY=1; shift ;;
         --semantic-max-skills) SEMANTIC_MAX_SKILLS="$2"; shift 2 ;;
@@ -421,6 +428,8 @@ run_worker() {
             fi
             graph_args=(scripts/run_subflow_eval.py --subflow "$subflow" --min-sessions "$MIN_SESSIONS"
                 --mining-method "$GRAPH_MINING_METHOD" --backbone-coverage-lambda "$BACKBONE_COVERAGE_LAMBDA"
+                --backbone-discriminative-lambda "$BACKBONE_DISCRIMINATIVE_LAMBDA"
+                --backbone-discriminative-clip "$BACKBONE_DISCRIMINATIVE_CLIP"
                 --backbone-compiler "$BACKBONE_COMPILER"
                 --semantic-max-skills "$SEMANTIC_MAX_SKILLS"
                 --semantic-min-sessions "$SEMANTIC_MIN_SESSIONS")

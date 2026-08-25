@@ -264,13 +264,14 @@ def mine_subflow_skill_backbone(
     transition_cases_per_edge: int = 2,
     coverage_aware: bool = False,
     coverage_lambda: float = 0.2,
+    discriminative_lambda: float = 1.0,
+    discriminative_clip: float = 3.0,
     compiler: str = "organized",
     artifact_dir: Path | None = None,
 ) -> dict:
     """Mine an all-action arborescence plus compact local transitions."""
     from skill_mining.backbone_workflow_mining import (
-        mine_backbone_workflow, mine_backbone_workflow_session_coverage,
-        sample_transition_cases,
+        mine_backbone_workflow, sample_transition_cases,
     )
     from skill_mining.skill_writer import (
         _find_operator_snippets, build_reference_md,
@@ -279,27 +280,22 @@ def mine_subflow_skill_backbone(
         induce_transition_rules,
     )
 
-    miner = mine_backbone_workflow_session_coverage if coverage_aware else mine_backbone_workflow
+    # ``backbone`` and the historical ``backbone_coverage`` alias both use
+    # the same discriminative session-aware arborescence.
+    miner = mine_backbone_workflow
     miner_kwargs = {
         "max_outgoing_edges": max_outgoing_edges,
         "min_branch_support": min_branch_support,
+        "discriminative_lambda": discriminative_lambda,
+        "discriminative_clip": discriminative_clip,
     }
-    if coverage_aware:
-        miner_kwargs["coverage_lambda"] = coverage_lambda
     mined = miner(subflow, train_convs, **miner_kwargs)
-    coverage_objective = mined["subgraph"].get("coverage_objective")
-    if coverage_objective:
-        log.info(
-            "  Coverage objective: turn_edge_score=%.4f, "
-            "session_mean_coverage=%.4f, route_coverage@80%%=%.4f, "
-            "lambda=%.4f, combined=%.4f, retained_coverage=%.1f%%",
-            coverage_objective.get("turn_edge_score", 0.0),
-            coverage_objective.get("session_mean_coverage", 0.0),
-            coverage_objective.get("session_route_coverage_at_80pct", 0.0),
-            coverage_objective.get("lambda", coverage_lambda),
-            coverage_objective.get("combined_objective", 0.0),
-            mined["subgraph"].get("coverage_pct", 0.0),
-        )
+    cohort_info = mined["subgraph"].get("cohort_reweighting", {})
+    log.info(
+        "  Discriminative backbone: cohorts=%d lambda=%.3f clip=%.3f retained_coverage=%.1f%%",
+        cohort_info.get("selected_k", 0), cohort_info.get("lambda", 0.0),
+        cohort_info.get("clip", 0.0), mined["subgraph"].get("coverage_pct", 0.0),
+    )
     operators = mined["skill_info"]["selected_vertices"]
     op_snippets = _find_operator_snippets(train_convs, subflow, operators)
     edge_cases = sample_transition_cases(
@@ -654,7 +650,7 @@ def main():
                         help="Max characters of retrieved reference snippets injected per turn")
     parser.add_argument("--mining-method", choices=["backbone", "backbone_coverage", "semantic_router", "sequence", "legacy"],
                         default="legacy",
-                        help="Skill mining method (default: legacy HG vertex cover; semantic_router discovers session-supported latent skills)")
+                        help="Skill mining method; backbone and legacy backbone_coverage both use discriminative session-aware arborescence")
     parser.add_argument("--backbone-max-outgoing-edges", type=int, default=3,
                         help="Max retained outgoing transitions per action for backbone mining")
     parser.add_argument("--backbone-min-branch-support", type=int, default=2,
@@ -662,7 +658,11 @@ def main():
     parser.add_argument("--backbone-transition-cases", type=int, default=6,
                         help="Training cases sampled for each outgoing edge during joint continuation-mode induction")
     parser.add_argument("--backbone-coverage-lambda", type=float, default=0.2,
-                        help="Weight of session coverage in backbone_coverage edge selection")
+                        help="Deprecated compatibility option; ignored because backbone_coverage now aliases backbone")
+    parser.add_argument("--backbone-discriminative-lambda", type=float, default=1.0,
+                        help="Weight of cohort-specific log-odds in the discriminative backbone (default: 1.0)")
+    parser.add_argument("--backbone-discriminative-clip", type=float, default=3.0,
+                        help="Upper clip for cohort-specific log-odds bonus (default: 3.0)")
     parser.add_argument("--backbone-compiler", choices=["organized", "unordered", "compare"],
                         default="organized",
                         help="Backbone graph-to-skill compiler: organized (default), flat unordered control, or evaluate both on one mined graph")
@@ -839,6 +839,8 @@ def main():
                     transition_cases_per_edge=args.backbone_transition_cases,
                     coverage_aware=args.mining_method == "backbone_coverage",
                     coverage_lambda=args.backbone_coverage_lambda,
+                    discriminative_lambda=args.backbone_discriminative_lambda,
+                    discriminative_clip=args.backbone_discriminative_clip,
                     compiler=args.backbone_compiler,
                     artifact_dir=sf_out,
                 )

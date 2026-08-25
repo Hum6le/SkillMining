@@ -216,7 +216,7 @@ def _break_cycles(parent: dict[str, str], candidates: dict[str, list[dict[str, A
             parent[child] = source
 
 
-def mine_backbone_workflow(
+def _mine_backbone_workflow_support_lift(
     subflow: str,
     conversations: list[dict[str, Any]],
     max_outgoing_edges: int = 3,
@@ -478,6 +478,228 @@ def mine_backbone_workflow(
     }
 
 
+def _session_edge_sets(subflow: str, conversations: list[dict[str, Any]]) -> dict[str, set[tuple[str, str]]]:
+    """Return the complete observed edge set of each session."""
+    schema = load_action_schema()
+    result: dict[str, set[tuple[str, str]]] = {}
+    for conversation in conversations:
+        actions = []
+        for turn in conversation.get("delexed") or []:
+            targets = turn.get("targets") or []
+            if len(targets) >= 3 and targets[1] == "take_action" and targets[2]:
+                action, _ = canonical_action_name(targets[2], schema.get("actions"))
+                if action:
+                    actions.append(_node_id(subflow, action))
+        result[str(conversation.get("convo_id") or "?")] = set(zip(actions, actions[1:]))
+    return result
+
+
+def _rebuild_backbone_from_scores(
+    graph: dict[str, Any], conversations: list[dict[str, Any]], subflow: str,
+    max_outgoing_edges: int, min_branch_support: int,
+) -> None:
+    """Recompute arborescence and retained residuals after edge reweighting."""
+    nodes = [str(node["id"]) for node in graph.get("nodes", [])]
+    frequencies = {str(node["id"]): int(node.get("frequency", 0)) for node in graph.get("nodes", [])}
+    schema = load_action_schema()
+    starts: Counter[str] = Counter()
+    for conversation in conversations:
+        for turn in conversation.get("delexed") or []:
+            targets = turn.get("targets") or []
+            if len(targets) >= 3 and targets[1] == "take_action" and targets[2]:
+                action, _ = canonical_action_name(targets[2], schema.get("actions"))
+                if action:
+                    starts[_node_id(subflow, action)] += 1
+                    break
+
+    candidates: dict[str, list[dict[str, Any]]] = {node: [] for node in nodes}
+    for edge in graph.get("edges", []):
+        source, target = str(edge["source"]), str(edge["target"])
+        if source != target and target in candidates:
+            candidates[target].append({**edge, "score": float(edge["score"])})
+    for node in nodes:
+        candidates[node].append({
+            "source": ROOT, "target": node, "support": int(starts[node]),
+            "num_sessions": int(starts[node]), "probability": 0.0, "lift": 0.0,
+            "base_weight": round(math.log1p(starts[node]) - 0.25, 4),
+            "score": math.log1p(starts[node]) - 0.25,
+            "final_backbone_weight": round(math.log1p(starts[node]) - 0.25, 4),
+            "condition": {"kind": "session_entry"}, "evidence_session_ids": [],
+        })
+        candidates[node].sort(key=lambda edge: (-float(edge["score"]), -int(edge.get("support", 0)), str(edge["source"])))
+
+    if nx is not None:
+        tree_graph = nx.DiGraph()
+        tree_graph.add_node(ROOT)
+        for target, edges in candidates.items():
+            for edge in edges:
+                tree_graph.add_edge(edge["source"], target, weight=float(edge["score"]), payload=edge)
+        tree = nx.maximum_spanning_arborescence(tree_graph, attr="weight", preserve_attrs=True)
+        backbone_edges = [{**data["payload"], "kind": "backbone"} for _, _, data in tree.edges(data=True)]
+        parent = {str(edge["target"]): str(edge["source"]) for edge in backbone_edges}
+    else:  # pragma: no cover - normal environments include networkx
+        parent = {node: str(candidates[node][0]["source"]) for node in nodes}
+        parent = _break_cycles(parent, candidates)
+        backbone_edges = [
+            {**next(edge for edge in candidates[node] if edge["source"] == parent[node]), "kind": "backbone"}
+            for node in sorted(nodes)
+        ]
+
+    children: dict[str, list[str]] = defaultdict(list)
+    for edge in backbone_edges:
+        children[str(edge["source"])].append(str(edge["target"]))
+    for source in children:
+        children[source].sort(key=lambda node: (-frequencies.get(node, 0), node))
+    order: list[str] = []
+    queue = list(children[ROOT])
+    while queue:
+        node = queue.pop(0)
+        order.append(node)
+        queue.extend(children.get(node, []))
+
+    backbone_pairs = {(str(edge["source"]), str(edge["target"])) for edge in backbone_edges}
+    local, residual = {}, []
+    for source in nodes:
+        outgoing = [edge for edge in graph.get("edges", []) if str(edge["source"]) == source]
+        outgoing.sort(key=lambda edge: (
+            (str(edge["source"]), str(edge["target"])) not in backbone_pairs,
+            -float(edge["score"]), -int(edge.get("support", 0)), str(edge["target"]),
+        ))
+        selected = []
+        for edge in outgoing:
+            pair = (str(edge["source"]), str(edge["target"]))
+            is_backbone = pair in backbone_pairs
+            if not is_backbone and int(edge.get("support", 0)) < min_branch_support:
+                continue
+            if len(selected) >= max_outgoing_edges and not is_backbone:
+                continue
+            kind = "backbone" if is_backbone else (
+                "retry" if _has_path(parent, source, str(edge["target"])) else "branch"
+            )
+            selected.append({**edge, "kind": kind})
+            if kind != "backbone":
+                residual.append(selected[-1])
+        for priority, edge in enumerate(selected, 1):
+            edge["priority"] = priority
+        local[source] = selected
+
+    graph["backbone"] = {
+        "root": ROOT,
+        "edges": sorted(backbone_edges, key=lambda edge: (edge["source"], edge["target"])),
+        "compilation_order": order,
+        "main_path": _best_backbone_path(children, graph.get("nodes", [])),
+    }
+    graph["local_transitions"] = local
+    graph["residual_edges"] = residual
+    retained = {(str(edge["source"]), str(edge["target"])) for edges in local.values() for edge in edges}
+    session_edges = _session_edge_sets(subflow, conversations)
+    graph["coverage_pct"] = round(
+        100 * sum(len(edges & retained) for edges in session_edges.values())
+        / max(sum(len(edges) for edges in session_edges.values()), 1), 1,
+    )
+
+
+def mine_backbone_workflow_discriminative(
+    subflow: str, conversations: list[dict[str, Any]], max_outgoing_edges: int = 3,
+    min_branch_support: int = 2, discriminative_lambda: float = 1.0,
+    discriminative_clip: float = 3.0, cohort_max_skills: int = 8,
+    cohort_min_sessions: int = 20,
+) -> dict[str, Any]:
+    """Mine one backbone using temporary session cohorts to reweight edges.
+
+    Cohorts are a training-only contrast set. They never create separate
+    runtime skills or route a test dialogue; they only reward transitions that
+    are stable inside one recurring trajectory pattern but uncommon outside it.
+    """
+    base = _mine_backbone_workflow_support_lift(
+        subflow, conversations, max_outgoing_edges=max_outgoing_edges,
+        min_branch_support=min_branch_support,
+    )
+    graph = base["subgraph"]
+    try:
+        from skill_mining.semantic_subflow import discover_motif_prototypes
+        min_sessions = min(max(2, cohort_min_sessions), max(len(conversations) // 2, 2))
+        cohort_result = discover_motif_prototypes(
+            subflow, conversations, max_skills=cohort_max_skills,
+            min_sessions=min_sessions,
+        )
+    except Exception as exc:  # a backbone must remain available for every split
+        cohort_result = {
+            "protocol": "weighted_motif_prototypes_v1", "skills": [],
+            "session_assignments": {}, "selected_k": 0,
+            "error": repr(exc),
+        }
+
+    assignment = cohort_result.get("session_assignments", {})
+    members: dict[str, set[str]] = defaultdict(set)
+    for sid, row in assignment.items():
+        skill_id = str(row.get("skill_id", "")) if isinstance(row, dict) else ""
+        if skill_id:
+            members[skill_id].add(str(sid))
+    session_edges = _session_edge_sets(subflow, conversations)
+    all_sessions = set(session_edges)
+    summaries = []
+    for skill_id, ids in sorted(members.items()):
+        if len(ids) < 2:
+            continue
+        summaries.append({"cohort_id": skill_id, "num_sessions": len(ids)})
+
+    for edge in graph.get("edges", []):
+        pair = (str(edge["source"]), str(edge["target"]))
+        base_weight = float(edge["score"])
+        best_score, best_id, best_inside, best_outside = 0.0, "", 0, 0
+        for skill_id, ids in members.items():
+            if len(ids) < 2 or len(all_sessions - ids) < 1:
+                continue
+            inside = sum(pair in session_edges.get(sid, set()) for sid in ids)
+            outside_ids = all_sessions - ids
+            outside = sum(pair in session_edges.get(sid, set()) for sid in outside_ids)
+            epsilon = 1.0
+            inside_rate = (inside + epsilon) / (len(ids) + 2 * epsilon)
+            outside_rate = (outside + epsilon) / (len(outside_ids) + 2 * epsilon)
+            value = math.log(inside_rate / outside_rate)
+            if value > best_score:
+                best_score, best_id, best_inside, best_outside = value, skill_id, inside, outside
+        bonus = discriminative_lambda * min(max(best_score, 0.0), discriminative_clip)
+        edge["base_weight"] = round(base_weight, 4)
+        edge["best_cohort_id"] = best_id or None
+        edge["support_in_cohort"] = int(best_inside)
+        edge["support_outside_cohort"] = int(best_outside)
+        edge["discriminative_log_odds"] = round(max(best_score, 0.0), 4)
+        edge["score"] = round(base_weight + bonus, 4)
+        edge["final_backbone_weight"] = edge["score"]
+
+    _rebuild_backbone_from_scores(
+        graph, conversations, subflow, max_outgoing_edges, min_branch_support,
+    )
+    graph["mining_method"] = "discriminative_backbone"
+    graph["cohort_reweighting"] = {
+        "protocol": cohort_result.get("protocol", "weighted_motif_prototypes_v1"),
+        "selected_cohorts": summaries,
+        "selected_k": int(cohort_result.get("selected_k", 0) or 0),
+        "lambda": discriminative_lambda,
+        "clip": discriminative_clip,
+        "cohort_min_sessions": min_sessions,
+    }
+    base["skill_info"]["mining_method"] = "discriminative_backbone"
+    base["skill_info"]["coverage_pct"] = graph["coverage_pct"]
+    return base
+
+
+def mine_backbone_workflow(
+    subflow: str, conversations: list[dict[str, Any]], max_outgoing_edges: int = 3,
+    min_branch_support: int = 2, discriminative_lambda: float = 1.0,
+    discriminative_clip: float = 3.0,
+) -> dict[str, Any]:
+    """Default backbone miner: discriminative session-aware arborescence."""
+    return mine_backbone_workflow_discriminative(
+        subflow, conversations, max_outgoing_edges=max_outgoing_edges,
+        min_branch_support=min_branch_support,
+        discriminative_lambda=discriminative_lambda,
+        discriminative_clip=discriminative_clip,
+    )
+
+
 def mine_backbone_workflow_session_coverage(
     subflow: str,
     conversations: list[dict[str, Any]],
@@ -485,13 +707,25 @@ def mine_backbone_workflow_session_coverage(
     min_branch_support: int = 2,
     coverage_lambda: float = 0.2,
     max_swap_rounds: int = 3,
+    discriminative_lambda: float = 1.0,
+    discriminative_clip: float = 3.0,
 ) -> dict[str, Any]:
-    """Variant of backbone mining with a session-coverage edge-swap objective.
+    """Compatibility alias for the discriminative backbone.
 
-    The original turn-level edge scores remain unchanged.  Coverage only
-    participates when choosing among valid parent-edge replacements, keeping
-    this method directly comparable to ``mine_backbone_workflow``.
+    ``backbone_coverage`` remains accepted by historical commands, but no
+    longer performs a separate edge-swap optimization. This prevents a silent
+    divergence between the two names after discriminative reweighting became
+    the canonical backbone objective.
     """
+    return mine_backbone_workflow_discriminative(
+        subflow, conversations, max_outgoing_edges=max_outgoing_edges,
+        min_branch_support=min_branch_support,
+        discriminative_lambda=discriminative_lambda,
+        discriminative_clip=discriminative_clip,
+    )
+
+    # Historical implementation retained below for artifact compatibility;
+    # unreachable by design after the method unification above.
     base = mine_backbone_workflow(
         subflow,
         conversations,
