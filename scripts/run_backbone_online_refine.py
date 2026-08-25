@@ -89,8 +89,17 @@ def main() -> None:
                         help="Existing offline backbone artifact directory; skip offline re-mining")
     parser.add_argument("--resume", action="store_true", help="Resume completed online batches from skill_dag_state.json")
     parser.add_argument("--model", default=MODEL)
-    parser.add_argument("--batch-size", type=int, default=20)
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=8,
+        help="Representative rollout sessions per online update batch (default: 8).",
+    )
     parser.add_argument("--per-transition-cap", type=int, default=3)
+    parser.add_argument(
+        "--target-selection-rate", type=float, default=0.30,
+        help="Target fraction of train sessions selected for online refinement (default: 0.30).",
+    )
     parser.add_argument("--max-batches", type=int, default=None)
     parser.add_argument("--max-train", type=int, default=None)
     parser.add_argument("--max-test", type=int, default=None)
@@ -184,7 +193,9 @@ def main() -> None:
     else:
         batches = schedule_contrastive_batches(
             train, state, batch_size=args.batch_size,
-            per_transition_cap=args.per_transition_cap, max_batches=args.max_batches,
+            per_transition_cap=args.per_transition_cap,
+            target_selection_rate=args.target_selection_rate,
+            max_batches=args.max_batches,
         )
         _write(schedule_path, json.dumps({
             "subflow": args.subflow,
@@ -193,6 +204,7 @@ def main() -> None:
             "selection_rate": round(sum(len(batch) for batch in batches) / max(len(train), 1), 6),
             "batch_size": args.batch_size,
             "per_transition_cap": args.per_transition_cap,
+            "target_selection_rate": args.target_selection_rate,
             "max_batches": args.max_batches,
             "batches": [
                 {"batch_index": index, "conversation_ids": [str(item.get("convo_id", "?")) for item in batch]}
@@ -201,9 +213,9 @@ def main() -> None:
         }, indent=2, ensure_ascii=False))
     selected_sessions = sum(len(batch) for batch in batches)
     log.info(
-        "Contrastive rollout schedule: selected=%d/%d sessions (%.1f%%), batches=%d, per_transition_cap=%d",
+        "Contrastive rollout schedule: selected=%d/%d sessions (%.1f%%; target=%.1f%%), batches=%d, per_transition_cap=%d",
         selected_sessions, len(train), 100 * selected_sessions / max(len(train), 1),
-        len(batches), args.per_transition_cap,
+        100 * args.target_selection_rate, len(batches), args.per_transition_cap,
     )
     policy = RefinementPolicy(
         min_gold_support=args.min_gold_support,

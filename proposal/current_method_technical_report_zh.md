@@ -344,7 +344,7 @@ bounded dialogue and ReAct evidence
 
 不是随机将相邻 session 打成 batch。对每个 source action，调度器先收集其不同 target 的训练 session；来自不同 target 的代表 session 被放入同一 batch，以暴露 sibling transition 的混淆边界。每种 `source -> target` motif 只保留有限个 node+edge signature 不同的代表，避免大量几乎相同的轨迹耗尽 rollout 预算。低 reliability 的 edge 优先被调度。
 
-这是**预算式采样**，而不是全训练集覆盖：未选 session 不会再被补齐进 rollout。若某个粗 flow 没有 source-local alternative，调度器只保留至多 `min(batch_size, per_transition_cap)` 条结构代表作为 bounded probe set。`rollout_schedule.json` 记录 `num_train_sessions`、`num_selected_sessions` 与 `selection_rate`，日志也会打印实际采样率。该调度不读取 `original_subflow`。
+这是**预算式采样**，而不是全训练集覆盖：未选 session 不会再被补齐进 rollout。默认目标采样率为训练 session 的 `30%`，由 `--target-selection-rate` 控制。在线过程仍然按 batch 执行 rollout、局部归因、guard 推断和资源更新，但一个 batch 是同一 source 的 sibling transition 比较单元，而不是普通的随机 mini-batch。调度器每一轮从该 source 的每个 target 选一条代表轨迹放入同一 batch；默认 `batch_size=8`，足以容纳通常的 2--3 个竞争分支及少量补充证据，同时让 skill 在更短反馈周期内更新。`per_transition_cap=3` 是每条转移的最低代表数，不再是全局采样上限；当 3 条不足以达到 30% 预算时，调度器会自适应增加每条转移可选的结构代表数，并在不同 source 的分支组之间轮转，防止预算被某一个局部冲突耗尽。若某个粗 flow 没有 source-local alternative，调度器只保留约 30% 的结构代表作为 bounded probe set。`rollout_schedule.json` 记录目标与实际采样率，日志也会打印两者。该调度不读取 `original_subflow`。
 
 ### 9.3 Gold feedback localization
 

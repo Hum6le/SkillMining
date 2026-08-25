@@ -60,6 +60,46 @@ class OnlineRefinementTest(unittest.TestCase):
         self.assertEqual(len(selected), 2)
         self.assertLess(len(selected), len(conversations))
 
+    @patch("skill_mining.online_refinement._actions")
+    def test_scheduler_keeps_three_sibling_targets_in_each_round(self, actions):
+        actions.side_effect = lambda conv: conv["actions"]
+        subgraph = _subgraph()
+        subgraph["nodes"].append({"id": "d", "label": "verify-identity"})
+        subgraph["edges"].append({"source": "a", "target": "d", "support": 4, "num_sessions": 3})
+        state = initialize_skill_dag(subgraph, "account_access")
+        conversations = [
+            {"convo_id": "b1", "actions": ["enter-details", "send-link", "send-link-context-1"]},
+            {"convo_id": "b2", "actions": ["enter-details", "send-link", "send-link-context-2"]},
+            {"convo_id": "c1", "actions": ["enter-details", "make-password", "password-context-1"]},
+            {"convo_id": "c2", "actions": ["enter-details", "make-password", "password-context-2"]},
+            {"convo_id": "d1", "actions": ["enter-details", "verify-identity", "identity-context-1"]},
+            {"convo_id": "d2", "actions": ["enter-details", "verify-identity", "identity-context-2"]},
+        ]
+        batches = schedule_contrastive_batches(conversations, state, batch_size=8, per_transition_cap=2)
+        self.assertEqual(len(batches), 1)
+        for batch in batches:
+            targets = {item["actions"][1] for item in batch}
+            self.assertEqual(targets, {"send-link", "make-password", "verify-identity"})
+
+    @patch("skill_mining.online_refinement._actions")
+    def test_scheduler_targets_thirty_percent_of_training_sessions(self, actions):
+        actions.side_effect = lambda conv: conv["actions"]
+        state = initialize_skill_dag(_subgraph(), "account_access")
+        conversations = []
+        for target in ("send-link", "make-password"):
+            for index in range(10):
+                conversations.append({
+                    "convo_id": f"{target}-{index}",
+                    "actions": ["enter-details", target, f"context-{target}-{index}"],
+                })
+        batches = schedule_contrastive_batches(
+            conversations, state, batch_size=8, per_transition_cap=1,
+            target_selection_rate=0.30,
+        )
+        selected = {item["convo_id"] for batch in batches for item in batch}
+        self.assertGreaterEqual(len(selected), 6)
+        self.assertLessEqual(len(selected), 7)
+
     def test_promotion_requires_resolved_guard_and_deferred_resource_is_rendered(self):
         state = initialize_skill_dag(_subgraph(), "account_access")
         edge = state["edges"]["a=>c"]

@@ -188,8 +188,9 @@ def _representatives(conversations: list[dict[str, Any]], limit: int) -> list[di
 
 
 def schedule_contrastive_batches(
-    conversations: list[dict[str, Any]], state: dict[str, Any], batch_size: int = 20,
-    per_transition_cap: int = 3, max_batches: int | None = None,
+    conversations: list[dict[str, Any]], state: dict[str, Any], batch_size: int = 8,
+    per_transition_cap: int = 3, target_selection_rate: float = 0.30,
+    max_batches: int | None = None,
 ) -> list[list[dict[str, Any]]]:
     """Create graph-structured rollout batches without using class labels.
 
@@ -202,6 +203,8 @@ def schedule_contrastive_batches(
     """
     if batch_size < 2:
         raise ValueError("batch_size must be at least 2")
+    if not 0.0 < target_selection_rate <= 1.0:
+        raise ValueError("target_selection_rate must be in (0, 1]")
     edge_index = _source_target_session_index(conversations)
     action_to_node = {node["label"]: node["id"] for node in state.get("nodes", [])}
     by_source: dict[str, list[tuple[str, list[dict[str, Any]]]]] = defaultdict(list)
@@ -215,31 +218,70 @@ def schedule_contrastive_batches(
         # for online guard refinement.
         by_source[source_action].append((target_action, members, confidence))
 
-    contrast_sets: list[list[dict[str, Any]]] = []
+    # The fixed cap is a floor for sparse transitions, not the complete
+    # rollout budget. Expand it when necessary to approach the requested
+    # whole-flow sampling rate.
+    target_sessions = math.ceil(len(conversations) * target_selection_rate)
+    eligible_transitions = sum(len(options) for options in by_source.values() if len(options) >= 2)
+    representative_cap = max(per_transition_cap, math.ceil(target_sessions / max(eligible_transitions, 1)))
+    rounds_by_source: list[list[list[dict[str, Any]]]] = []
     for source, options in sorted(by_source.items()):
         if len(options) < 2:
             continue
-        selected = []
+        representatives_by_target = []
         for _, members, _ in sorted(options, key=lambda item: (item[2], -len(item[1]), item[0])):
-            selected.extend(_representatives(members, per_transition_cap))
-        if len(selected) >= 2:
-            contrast_sets.append(selected)
+            representatives_by_target.append(_representatives(members, representative_cap))
+        if sum(bool(items) for items in representatives_by_target) >= 2:
+            source_rounds = []
+            for round_index in range(max(len(items) for items in representatives_by_target)):
+                source_round = [items[round_index] for items in representatives_by_target if round_index < len(items)]
+                if len(source_round) >= 2:
+                    source_rounds.append(source_round)
+            if source_rounds:
+                rounds_by_source.append(source_rounds)
 
-    selected: list[dict[str, Any]] = []
+    batches: list[list[dict[str, Any]]] = []
     used: set[str] = set()
-    for group in contrast_sets:
-        for conversation in group:
-            sid = str(conversation.get("convo_id", "?"))
-            if sid not in used:
-                selected.append(conversation)
-                used.add(sid)
+    # Interleave source-local rounds so the budget covers several ambiguity
+    # sites rather than exhausting one source before visiting another.
+    for round_index in range(max((len(rounds) for rounds in rounds_by_source), default=0)):
+        for source_rounds in rounds_by_source:
+            if len(used) >= target_sessions:
+                break
+            if round_index >= len(source_rounds):
+                continue
+            contrast_batch = [
+                conversation for conversation in source_rounds[round_index]
+                if str(conversation.get("convo_id", "?")) not in used
+            ]
+            # A batch without at least two alternatives cannot teach a local
+            # sibling-edge distinction; omit it rather than padding it with
+            # unrelated sessions.
+            if len(contrast_batch) >= 2:
+                # Keep the global sampling budget hard up to one unavoidable
+                # two-way comparison. A source can have many outgoing edges;
+                # taking its complete sibling set could otherwise consume far
+                # more than the requested 30% in a single round.
+                remaining = target_sessions - len(used)
+                # Preserve a small complete sibling set (for example, three
+                # alternatives against a remaining budget of two), but trim a
+                # high-degree source that would materially overshoot it.
+                if len(contrast_batch) > remaining + 1:
+                    contrast_batch = contrast_batch[:max(2, remaining)]
+                used.update(str(conversation.get("convo_id", "?")) for conversation in contrast_batch)
+                for index in range(0, len(contrast_batch), batch_size):
+                    chunk = contrast_batch[index:index + batch_size]
+                    if len(chunk) >= 2:
+                        batches.append(chunk)
+        if len(used) >= target_sessions:
+            break
 
     # A flow with no source-local alternative still needs a bounded probe set.
     # Select diverse representatives, not every session.
-    if not selected and conversations:
-        selected = _representatives(conversations, min(batch_size, per_transition_cap))
-
-    batches = [selected[index:index + batch_size] for index in range(0, len(selected), batch_size)]
+    if not batches and conversations:
+        probe = _representatives(conversations, min(batch_size, target_sessions))
+        if probe:
+            batches = [probe]
     return batches[:max_batches] if max_batches else batches
 
 
