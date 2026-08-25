@@ -195,8 +195,10 @@ def schedule_contrastive_batches(
 
     A batch preferentially pairs distinct targets leaving the same source
     action. Within any one transition motif it keeps only a few structurally
-    non-redundant representative sessions. Remaining capacity is filled by
-    diverse sessions, so batches contain both contrast and coverage.
+    non-redundant representative sessions. This is intentionally a budgeted
+    sampler: unselected sessions are not appended merely for full coverage.
+    Full training-set rollout would erase the efficiency benefit of selecting
+    contrastive representatives in the first place.
     """
     if batch_size < 2:
         raise ValueError("batch_size must be at least 2")
@@ -223,34 +225,21 @@ def schedule_contrastive_batches(
         if len(selected) >= 2:
             contrast_sets.append(selected)
 
-    batches: list[list[dict[str, Any]]] = []
+    selected: list[dict[str, Any]] = []
     used: set[str] = set()
     for group in contrast_sets:
-        batch = []
         for conversation in group:
             sid = str(conversation.get("convo_id", "?"))
-            if sid not in used and len(batch) < batch_size:
-                batch.append(conversation)
+            if sid not in used:
+                selected.append(conversation)
                 used.add(sid)
-        if batch:
-            batches.append(batch)
 
-    # Ensure every remaining session is eventually observed. Sessions are
-    # ordered by novelty against the active batch, reducing duplicate traces.
-    remaining = [conversation for conversation in conversations if str(conversation.get("convo_id", "?")) not in used]
-    for batch in batches:
-        while len(batch) < batch_size and remaining:
-            batch_signatures = [session_signature(item) for item in batch]
-            choice = max(
-                remaining,
-                key=lambda item: min(1.0 - _weighted_jaccard(session_signature(item), other) for other in batch_signatures),
-            )
-            batch.append(choice)
-            remaining.remove(choice)
-    while remaining:
-        batch = remaining[:batch_size]
-        remaining = remaining[batch_size:]
-        batches.append(batch)
+    # A flow with no source-local alternative still needs a bounded probe set.
+    # Select diverse representatives, not every session.
+    if not selected and conversations:
+        selected = _representatives(conversations, min(batch_size, per_transition_cap))
+
+    batches = [selected[index:index + batch_size] for index in range(0, len(selected), batch_size)]
     return batches[:max_batches] if max_batches else batches
 
 
@@ -315,8 +304,14 @@ def localize_rollout_batch(
                 "guard": "", "guard_status": "pending", "evidence": [],
             })
             edge["gold_support"] += 1
-            action_ok = bool(previous["action_correct"] and current["action_correct"])
-            slot_ok = bool(previous["slot_correct"] and current["slot_correct"])
+            # This record evaluates the decision ``previous.gold_action ->
+            # current.gold_action``. The source action is provided by the
+            # gold trajectory during teacher-forced rollout context, so
+            # requiring it to be predicted correctly again turns edge
+            # reliability into the product of two independent action scores.
+            # Attribute success to the target decision only.
+            action_ok = bool(current["action_correct"])
+            slot_ok = bool(current["slot_correct"])
             if action_ok:
                 edge["rollout_success"] += 1
             else:
@@ -579,3 +574,58 @@ def apply_refinement_patches(state: dict[str, Any], patches: list[dict[str, Any]
         elif patch["operation"] == "induce_guard":
             edge["guard_status"] = "pending"
     state.setdefault("patches", []).append({"batch": state.get("batches_processed", 0), "patches": patches})
+
+
+def summarize_refinement_state(
+    state: dict[str, Any], policy: RefinementPolicy,
+) -> dict[str, Any]:
+    """Explain promotion eligibility and blocking reasons for every branch."""
+    order = {node: index for index, node in enumerate(state.get("backbone_order", []))}
+    rows = []
+    counts: Counter[str] = Counter()
+    for edge_id, edge in sorted(state.get("edges", {}).items()):
+        if edge.get("kind") not in {"candidate_branch", "promoted_branch"}:
+            continue
+        confidence = edge_confidence(edge)
+        support = int(edge.get("gold_support", 0) or 0)
+        conflict = sum(int(value) for value in edge.get("competing_targets", {}).values())
+        forward = order.get(edge.get("target"), math.inf) >= order.get(edge.get("source"), -1)
+        blockers = []
+        if not forward:
+            blockers.append("revisit_or_unknown_backbone_order")
+        if support < policy.min_gold_support:
+            blockers.append("insufficient_gold_support")
+        if confidence < policy.min_confidence:
+            blockers.append("low_target_action_reliability")
+        if edge.get("guard_status") != "resolved":
+            blockers.append("guard_unresolved")
+        if edge.get("visibility") != "skill" and blockers:
+            for blocker in blockers:
+                counts[blocker] += 1
+        rows.append({
+            "edge_id": edge_id,
+            "source_action": edge.get("source_action"),
+            "target_action": edge.get("target_action"),
+            "visibility": edge.get("visibility"),
+            "kind": edge.get("kind"),
+            "gold_support": support,
+            "rollout_success": int(edge.get("rollout_success", 0) or 0),
+            "rollout_failure": int(edge.get("rollout_failure", 0) or 0),
+            "slot_failures": int(edge.get("slot_failures", 0) or 0),
+            "confidence": round(confidence, 6),
+            "conflict_count": conflict,
+            "guard_status": edge.get("guard_status"),
+            "blockers": blockers,
+        })
+    return {
+        "batches_processed": int(state.get("batches_processed", 0)),
+        "policy": {
+            "min_gold_support": policy.min_gold_support,
+            "min_confidence": policy.min_confidence,
+            "min_conflict_count": policy.min_conflict_count,
+            "max_skill_branches_per_source": policy.max_skill_branches_per_source,
+        },
+        "num_candidate_branches": len(rows),
+        "blocker_counts": dict(sorted(counts.items())),
+        "branches": rows,
+    }

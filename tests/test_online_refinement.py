@@ -7,9 +7,11 @@ from skill_mining.online_refinement import (
     build_guard_induction_context,
     edge_confidence,
     initialize_skill_dag,
+    localize_rollout_batch,
     propose_refinement_patches,
     render_online_resources,
     schedule_contrastive_batches,
+    summarize_refinement_state,
 )
 
 
@@ -41,7 +43,7 @@ class OnlineRefinementTest(unittest.TestCase):
         self.assertEqual(state["edges"]["b=>b"]["kind"], "retry")
 
     @patch("skill_mining.online_refinement._actions")
-    def test_scheduler_pairs_competing_targets_and_limits_duplicates(self, actions):
+    def test_scheduler_pairs_competing_targets_without_full_dataset_backfill(self, actions):
         actions.side_effect = lambda conv: conv["actions"]
         state = initialize_skill_dag(_subgraph(), "account_access")
         conversations = [
@@ -54,7 +56,9 @@ class OnlineRefinementTest(unittest.TestCase):
         first = {item["convo_id"] for item in batches[0]}
         self.assertTrue(first & {"1", "2"})
         self.assertTrue(first & {"3", "4"})
-        self.assertEqual({item["convo_id"] for batch in batches for item in batch}, {"1", "2", "3", "4"})
+        selected = {item["convo_id"] for batch in batches for item in batch}
+        self.assertEqual(len(selected), 2)
+        self.assertLess(len(selected), len(conversations))
 
     def test_promotion_requires_resolved_guard_and_deferred_resource_is_rendered(self):
         state = initialize_skill_dag(_subgraph(), "account_access")
@@ -85,6 +89,31 @@ class OnlineRefinementTest(unittest.TestCase):
         self.assertEqual(context["target_edge"]["edge_id"], "a=>c")
         self.assertEqual(context["sibling_edges"][0]["edge_id"], "a=>b")
         self.assertEqual(context["target_edge"]["negative_cases"][0]["conversation_id"], "case-1")
+
+    def test_localization_scores_the_target_decision_not_both_endpoints(self):
+        state = initialize_skill_dag(_subgraph(), "account_access")
+        conversation = {
+            "convo_id": "case-1",
+            "delexed": [
+                {"targets": ["", "take_action", "enter-details", []]},
+                {"targets": ["", "take_action", "send-link", []]},
+            ],
+        }
+        rows = [
+            {"convo_id": "case-1", "turn_index": 0, "predicted_action": "make-password", "predicted_slots": [], "context": "", "react_trace": []},
+            {"convo_id": "case-1", "turn_index": 1, "predicted_action": "send-link", "predicted_slots": [], "context": "", "react_trace": []},
+        ]
+        localize_rollout_batch([conversation], rows, state)
+        edge = state["edges"]["a=>b"]
+        self.assertEqual(edge["rollout_success"], 1)
+        self.assertEqual(edge["rollout_failure"], 0)
+
+    def test_summary_names_branch_blockers(self):
+        state = initialize_skill_dag(_subgraph(), "account_access")
+        summary = summarize_refinement_state(state, RefinementPolicy())
+        branch = next(row for row in summary["branches"] if row["edge_id"] == "a=>c")
+        self.assertIn("insufficient_gold_support", branch["blockers"])
+        self.assertIn("guard_unresolved", branch["blockers"])
 
 
 if __name__ == "__main__":

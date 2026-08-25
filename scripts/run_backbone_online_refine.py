@@ -31,6 +31,7 @@ from skill_mining.online_refinement import (
     render_online_resources,
     save_skill_dag,
     schedule_contrastive_batches,
+    summarize_refinement_state,
 )
 from scripts.run_subflow_eval import (
     MODEL,
@@ -63,13 +64,21 @@ def _build_agent(args, base_skill: str, base_reference: str, action_rules: str,
     )
 
 
-def _checkpoint(out_dir: Path, state: dict, base_skill: str, base_reference: str) -> None:
+def _checkpoint(
+    out_dir: Path, state: dict, base_skill: str, base_reference: str,
+    policy: RefinementPolicy | None = None,
+) -> None:
     online_skill, online_reference = render_online_resources(state)
     save_skill_dag(state, out_dir / "skill_dag_state.json")
     _write(out_dir / "online_transition_guards.md", online_skill)
     _write(out_dir / "online_reference.md", online_reference)
     _write(out_dir / "skill.md", base_skill.rstrip() + "\n\n" + online_skill)
     _write(out_dir / "reference.md", base_reference.rstrip() + "\n\n" + online_reference)
+    if policy is not None:
+        _write(
+            out_dir / "refinement_summary.json",
+            json.dumps(summarize_refinement_state(state, policy), indent=2, ensure_ascii=False),
+        )
 
 
 def main() -> None:
@@ -179,6 +188,9 @@ def main() -> None:
         )
         _write(schedule_path, json.dumps({
             "subflow": args.subflow,
+            "num_train_sessions": len(train),
+            "num_selected_sessions": sum(len(batch) for batch in batches),
+            "selection_rate": round(sum(len(batch) for batch in batches) / max(len(train), 1), 6),
             "batch_size": args.batch_size,
             "per_transition_cap": args.per_transition_cap,
             "max_batches": args.max_batches,
@@ -187,6 +199,12 @@ def main() -> None:
                 for index, batch in enumerate(batches, start=1)
             ],
         }, indent=2, ensure_ascii=False))
+    selected_sessions = sum(len(batch) for batch in batches)
+    log.info(
+        "Contrastive rollout schedule: selected=%d/%d sessions (%.1f%%), batches=%d, per_transition_cap=%d",
+        selected_sessions, len(train), 100 * selected_sessions / max(len(train), 1),
+        len(batches), args.per_transition_cap,
+    )
     policy = RefinementPolicy(
         min_gold_support=args.min_gold_support,
         min_confidence=args.min_confidence,
@@ -216,7 +234,7 @@ def main() -> None:
                    json.dumps(guard_results, indent=2, ensure_ascii=False))
             # A resolved guard can now promote an already supported branch.
             apply_refinement_patches(state, propose_refinement_patches(state, policy))
-        _checkpoint(out_dir, state, base_skill, base_reference)
+        _checkpoint(out_dir, state, base_skill, base_reference, policy)
         _write(out_dir / "batch_diagnostics" / f"batch_{batch_index:04d}.json", json.dumps({
             "batch_index": batch_index,
             "conversation_ids": [str(item.get("convo_id", "?")) for item in batch],
@@ -224,12 +242,18 @@ def main() -> None:
             "patches": patches,
             "guard_results": guard_results,
         }, indent=2, ensure_ascii=False))
-        log.info("  localized=%d patches=%d guards=%d", localized["num_events"], len(patches), len(guard_results))
+        summary = summarize_refinement_state(state, policy)
+        log.info(
+            "  localized=%d patches=%d guards=%d candidate_branches=%d blockers=%s",
+            localized["num_events"], len(patches), len(guard_results),
+            summary["num_candidate_branches"], summary["blocker_counts"],
+        )
 
     log.info("Frozen test evaluation on %d held-out sessions", len(test))
     final_agent = _build_agent(args, base_skill, base_reference, action_rules, slot_policies, state)
     result = evaluate_agent_on_subflow(final_agent, test, "online_refined", args.subflow, save_dir=out_dir)
     _write(out_dir / "online_refine_result.json", json.dumps(result, indent=2, ensure_ascii=False))
+    _checkpoint(out_dir, state, base_skill, base_reference, policy)
     log.info("Final AST=%.4f action=%.4f slot=%.4f", result["ast_cds"]["ast_joint"], result["ast_cds"]["ast_action_name"], result["ast_cds"]["ast_slot_value"])
 
 
