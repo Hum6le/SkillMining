@@ -7,9 +7,12 @@ from skill_mining.online_refinement import (
     build_guard_induction_context,
     edge_confidence,
     initialize_skill_dag,
+    induce_joint_refinement_patches,
+    autonomous_resource_reflection,
     localize_rollout_batch,
     propose_refinement_patches,
     render_online_resources,
+    render_online_slot_policies,
     schedule_contrastive_batches,
     summarize_refinement_state,
 )
@@ -147,6 +150,69 @@ class OnlineRefinementTest(unittest.TestCase):
         edge = state["edges"]["a=>b"]
         self.assertEqual(edge["rollout_success"], 1)
         self.assertEqual(edge["rollout_failure"], 0)
+
+    def test_slot_failures_are_action_conditioned_and_request_policy_patch(self):
+        state = initialize_skill_dag(_subgraph(), "account_access")
+        conversation = {
+            "convo_id": "case-1",
+            "delexed": [
+                {"targets": ["", "take_action", "enter-details", []]},
+                {"targets": ["", "take_action", "send-link", ["gold"]]},
+            ],
+        }
+        rows = [
+            {"convo_id": "case-1", "turn_index": 0, "predicted_action": "enter-details", "predicted_slots": [], "context": "", "react_trace": []},
+            {"convo_id": "case-1", "turn_index": 1, "predicted_action": "send-link", "predicted_slots": ["wrong"], "context": "customer supplied a value", "react_trace": []},
+        ]
+        for _ in range(3):
+            localize_rollout_batch([conversation], rows, state)
+        patches = propose_refinement_patches(state, RefinementPolicy(min_slot_support=3))
+        self.assertTrue(any(patch["operation"] == "induce_slot_policy" for patch in patches))
+        state["slot_policies"]["send-link"].update({"policy": "Use the current customer-provided value after confirmation.", "status": "resolved"})
+        self.assertIn("#### `send-link`", render_online_slot_policies(state))
+
+    @patch("llm.resolve_config", return_value={"model": "test", "api_key": "", "base_url": ""})
+    @patch("llm.chat")
+    def test_joint_reflection_updates_guard_and_slot_policy_together(self, chat, _config):
+        state = initialize_skill_dag(_subgraph(), "account_access")
+        state["edges"]["a=>c"]["evidence"] = [{
+            "conversation_id": "case", "action_success": False, "slot_success": False,
+            "context": "Customer forgot their password", "react_trace": [],
+        }]
+        state["slot_policies"]["make-password"] = {
+            "action": "make-password", "slot_total": 3, "slot_success": 1,
+            "slot_failures": 2, "evidence": [], "policy": "", "status": "pending",
+        }
+        chat.return_value = '''{
+          "guards":[{"edge_id":"a=>c","guard":"The customer is creating a password.","status":"resolved","rationale":"distinct goal"}],
+          "slot_policies":[{"action":"make-password","policy":"Use only the newly confirmed customer value.","status":"resolved"}]
+        }'''
+        result = induce_joint_refinement_patches(state, [
+            {"operation": "induce_guard", "edge_id": "a=>c"},
+            {"operation": "induce_slot_policy", "action": "make-password"},
+        ], "# skill", "# slots", "test")
+        self.assertEqual(chat.call_count, 1)
+        self.assertIn("gold_action", chat.call_args.args[0][0]["content"])
+        self.assertEqual(state["edges"]["a=>c"]["guard_status"], "resolved")
+        self.assertEqual(state["slot_policies"]["make-password"]["status"], "resolved")
+        self.assertEqual(len(result["guards"]), 1)
+        self.assertEqual(len(result["slot_policies"]), 1)
+
+    @patch("llm.resolve_config", return_value={"model": "test", "api_key": "", "base_url": ""})
+    @patch("llm.chat")
+    def test_autonomous_reflection_selects_valid_resources_itself(self, chat, _config):
+        state = initialize_skill_dag(_subgraph(), "account_access")
+        chat.return_value = '''{"updates":[
+          {"resource":"transition_guard","edge_id":"a=>c","content":"The customer is creating a password.","status":"resolved","rationale":"gold mismatch"},
+          {"resource":"slot_policy","action":"make-password","content":"Use the newly confirmed value only.","status":"resolved","rationale":"slot mismatch"},
+          {"resource":"reference","content":"Keep rare recovery evidence in reference.","status":"uncertain","rationale":"limited support"}
+        ]}'''
+        result = autonomous_resource_reflection(state, [{"gold_action": "make-password", "predicted_action": "send-link"}], "skill", "reference", "rules", "slots", "test")
+        self.assertEqual(chat.call_count, 1)
+        self.assertEqual(len(result["accepted"]), 3)
+        self.assertEqual(state["edges"]["a=>c"]["guard_status"], "resolved")
+        self.assertEqual(state["slot_policies"]["make-password"]["status"], "resolved")
+        self.assertEqual(len(state["reference_notes"]), 1)
 
     def test_summary_names_branch_blockers(self):
         state = initialize_skill_dag(_subgraph(), "account_access")

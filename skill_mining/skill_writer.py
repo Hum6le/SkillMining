@@ -312,17 +312,33 @@ def materialize_progressive_disclosure(skill_md: str) -> tuple[str, str, str]:
     action_rules = "# Action Rules\n\n" + (action_body or "No action rules were compiled.") + "\n"
     slot_policies = "# Slot Policies\n\n" + (slot_body or "No slot policies were compiled.") + "\n"
 
+    def compact_cards(body: str, limit: int = 3) -> str:
+        """Keep a few complete high-level cards in skill.md as a safe default."""
+        matches = list(re.finditer(r"(?m)^####\s+`[^`]+`\s*$", body))
+        cards = []
+        for index, match in enumerate(matches[:limit]):
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(body)
+            card = body[match.start():end].strip()
+            if card:
+                cards.append(card)
+        return "\n\n".join(cards)
+
+    action_preview = compact_cards(action_body)
+    slot_preview = compact_cards(slot_body)
+
     compact = re.sub(
         r"(?ms)^### Action Rules\s*$.*?(?=^## Slot Discipline\s*$)",
         "### Action Rules\n"
-        "- Use `retrieve_action_rule` when the applicable action procedure is uncertain. "
+        + (action_preview + "\n\n" if action_preview else "")
+        + "- Use `retrieve_action_rule` when the applicable action procedure is uncertain. "
         "The full per-action rules are stored in `action_rules.md`.\n\n",
         skill_md,
     )
     compact = re.sub(
         r"(?ms)^## Slot Policies\s*$.*?(?=^## Reference\s*$|\Z)",
         "## Slot Policies\n"
-        "- Use `retrieve_slot_policy` after selecting an action when ordered value "
+        + (slot_preview + "\n\n" if slot_preview else "")
+        + "- Use `retrieve_slot_policy` after selecting an action when ordered value "
         "sources, reuse, or missing-value behavior are uncertain. The full policies "
         "are stored in `slot_policies.md`.\n\n",
         compact,

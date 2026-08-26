@@ -23,13 +23,13 @@ EXTRA_ARGS=()
 usage() {
     cat <<'EOF'
 Usage:
-  bash scripts/run_backbone_online_refine.sh --subflow NAME --offline-dir DIR [options]
+  bash scripts/run_backbone_online_refine.sh --subflow NAME [--offline-dir DIR] [options]
   bash scripts/run_backbone_online_refine.sh --subflow NAME --resume-run DIR [options]
 
 Required:
   --subflow NAME             ABCD coarse-flow split directory
-  --offline-dir DIR          Existing offline artifact dir with subgraph.json and skill.md
-                              Required for a new online run.
+  --offline-dir DIR          Existing offline artifact dir with subgraph.json and skill.md.
+                              Omit to mine the current discriminative-MST backbone first.
   --resume-run DIR           Existing online run directory. Mutually exclusive with --offline-dir.
 
 Options:
@@ -76,11 +76,6 @@ if [[ -n "$OFFLINE_DIR" && -n "$RESUME_RUN" ]]; then
     echo "--offline-dir and --resume-run cannot be used together." >&2
     exit 2
 fi
-if [[ -z "$OFFLINE_DIR" && -z "$RESUME_RUN" ]]; then
-    echo "Provide --offline-dir for a new run, or --resume-run to continue one." >&2
-    exit 2
-fi
-
 if [[ -n "$RESUME_RUN" ]]; then
     RUN_DIR="$(cd "$RESUME_RUN" 2>/dev/null && pwd)" || {
         echo "--resume-run does not exist: $RESUME_RUN" >&2; exit 2;
@@ -89,10 +84,12 @@ if [[ -n "$RESUME_RUN" ]]; then
         echo "--output-dir must be omitted or match --resume-run." >&2; exit 2;
     }
 else
-    [[ -d "$OFFLINE_DIR" ]] || { echo "--offline-dir does not exist: $OFFLINE_DIR" >&2; exit 2; }
-    [[ -f "$OFFLINE_DIR/subgraph.json" && -f "$OFFLINE_DIR/skill.md" ]] || {
-        echo "--offline-dir must contain subgraph.json and skill.md: $OFFLINE_DIR" >&2; exit 2;
-    }
+    if [[ -n "$OFFLINE_DIR" ]]; then
+        [[ -d "$OFFLINE_DIR" ]] || { echo "--offline-dir does not exist: $OFFLINE_DIR" >&2; exit 2; }
+        [[ -f "$OFFLINE_DIR/subgraph.json" && -f "$OFFLINE_DIR/skill.md" ]] || {
+            echo "--offline-dir must contain subgraph.json and skill.md: $OFFLINE_DIR" >&2; exit 2;
+        }
+    fi
     RUN_DIR="${OUTPUT_DIR:-$ROOT_DIR/outputs/online_refine_${SUBFLOW}_$(date +%Y-%m-%d_%H-%M-%S)}"
 fi
 mkdir -p "$RUN_DIR"
@@ -113,7 +110,7 @@ export HF_ENDPOINT="$HF_ENDPOINT_VALUE"
 COMMAND=("$PYTHON_BIN" scripts/run_backbone_online_refine.py --subflow "$SUBFLOW" --output-dir "$RUN_DIR")
 if [[ -n "$RESUME_RUN" ]]; then
     COMMAND+=(--resume)
-else
+elif [[ -n "$OFFLINE_DIR" ]]; then
     COMMAND+=(--offline-dir "$OFFLINE_DIR")
 fi
 COMMAND+=("${EXTRA_ARGS[@]}")

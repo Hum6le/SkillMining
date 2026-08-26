@@ -50,6 +50,92 @@ Return only JSON:
 }}
 """
 
+_SLOT_POLICY_INDUCTION_PROMPT = """You are refining the slot policy of a
+customer-service skill. The action names and gold trajectories are fixed.
+
+For each requested action, infer a concise GENERAL policy for ordered slot
+values from the supplied successful and failed rollouts. Explain value source,
+availability timing, reuse constraints, and missing-value handling. Do not
+copy literal customer values, names, emails, ids, or invent slot names/hidden
+state. Do not alter the workflow topology or action choice.
+
+<existing_slot_resource>
+{existing_slot_resource}
+</existing_slot_resource>
+
+<slot_error_evidence>
+{evidence}
+</slot_error_evidence>
+
+Return valid JSON only:
+{{"policies":[{{"action":"canonical action name","policy":"concise natural-language policy"}}]}}
+Return one item for every requested action. If the evidence cannot support a
+safe generalization, use an empty policy string for that action.
+"""
+
+_JOINT_REFINEMENT_PROMPT = """You are updating one mined customer-service
+skill from a batch of rollout feedback. Treat action choice and ordered slot
+construction as one joint policy: first decide the correct transition using
+observable dialogue evidence, then specify how the selected action obtains
+its ordered values.
+
+The supplied `gold_action` and `gold_slots` fields are supervision: compare
+them directly against `predicted_action` and `predicted_slots` to diagnose the
+failure. Learn a reusable rule from the contrast, not a transcript-specific
+answer.
+
+Do not invent actions, edges, hidden state, slot names, or literal customer
+values. A routing guard must distinguish its target from every sibling target.
+A slot policy must state general value source, availability timing, reuse, and
+missing-value behavior. Return an empty string when evidence is insufficient.
+
+<current_skill>
+{skill_context}
+</current_skill>
+<existing_slot_resource>
+{slot_resource}
+</existing_slot_resource>
+<transition_evidence>
+{transition_evidence}
+</transition_evidence>
+<slot_evidence>
+{slot_evidence}
+</slot_evidence>
+
+Return valid JSON only:
+{{
+  "guards": [{{"edge_id":"source=>target", "guard":"...", "status":"resolved|uncertain", "rationale":"..."}}],
+  "slot_policies": [{{"action":"canonical action", "policy":"...", "status":"resolved|uncertain"}}]
+}}
+"""
+
+_AUTONOMOUS_RESOURCE_REFLECTION_PROMPT = """You maintain a graph-compiled
+customer-service skill and its progressive-disclosure resources. Inspect the
+complete rollout-versus-ground-truth trajectories below, then decide yourself
+whether any resource needs an update. Do not assume that every batch requires
+a change.
+
+Use `transition_guard` only for a listed graph edge and only when it separates
+sibling destinations. Use `action_rule` for an action-level procedure error,
+`slot_policy` for ordered-value source/timing/reuse errors after the action is
+correct, and `reference` for useful but uncertain or exception-only evidence.
+Never invent action names, edges, hidden state, slot names, or literal private
+values. Learn general rules from the gold/prediction contrast.
+
+<skill>{skill}</skill>
+<reference>{reference}</reference>
+<action_rules>{action_rules}</action_rules>
+<slot_policies>{slot_policies}</slot_policies>
+<graph_edges>{graph_edges}</graph_edges>
+<rollout_supervision>{rollout_supervision}</rollout_supervision>
+
+Return valid JSON only:
+{{"updates":[{{"resource":"transition_guard|action_rule|slot_policy|reference",
+"edge_id":"required only for transition_guard", "action":"required only for action_rule/slot_policy",
+"content":"concise natural-language replacement or addition", "status":"resolved|uncertain",
+"rationale":"grounded in specific rollout-vs-gold evidence"}}]}}
+"""
+
 
 def _edge_id(source: str, target: str) -> str:
     return f"{source}=>{target}"
@@ -125,6 +211,8 @@ def initialize_skill_dag(subgraph: dict[str, Any], subflow: str) -> dict[str, An
             "gold_support": 0,
             "rollout_success": 0,
             "rollout_failure": 0,
+            "slot_total": 0,
+            "slot_success": 0,
             "slot_failures": 0,
             "competing_targets": Counter(),
             "guard": "",
@@ -138,6 +226,9 @@ def initialize_skill_dag(subgraph: dict[str, Any], subflow: str) -> dict[str, An
         "nodes": [{"id": node, "label": label, "topological_order": order_index.get(node)} for node, label in nodes.items()],
         "backbone_order": order,
         "edges": state_edges,
+        "slot_policies": {},
+        "action_rules": {},
+        "reference_notes": [],
         "batches_processed": 0,
         "patches": [],
     }
@@ -276,6 +367,26 @@ def schedule_contrastive_batches(
         if len(used) >= target_sessions:
             break
 
+    # Contrastive coverage is the high-value part of the schedule, but it may
+    # cover only a small fraction of a flow whose graph has many singleton
+    # transitions. Fill the remaining budget with diverse unused sessions so
+    # target_selection_rate is an actual whole-flow budget rather than merely
+    # an upper bound for eligible sibling groups. These supplemental sessions
+    # are placed in separate bounded batches and are never used to fabricate a
+    # sibling comparison.
+    remaining = target_sessions - len(used)
+    if remaining > 0:
+        unused = [
+            conversation for conversation in conversations
+            if str(conversation.get("convo_id", "?")) not in used
+        ]
+        supplemental = _representatives(unused, remaining)
+        for index in range(0, len(supplemental), batch_size):
+            chunk = supplemental[index:index + batch_size]
+            if chunk:
+                batches.append(chunk)
+                used.update(str(conversation.get("convo_id", "?")) for conversation in chunk)
+
     # A flow with no source-local alternative still needs a bounded probe set.
     # Select diverse representatives, not every session.
     if not batches and conversations:
@@ -314,6 +425,10 @@ def _gold_action_rows(conversation: dict[str, Any], turn_results: list[dict[str,
             "predicted_action": predicted,
             "action_correct": gold == predicted,
             "slot_correct": gold_slots == predicted_slots,
+            "gold_slot_count": len(gold_slots),
+            "predicted_slot_count": len(predicted_slots),
+            "gold_slots": gold_slots,
+            "predicted_slots": predicted_slots,
             "context": str(raw.get("context", ""))[-1600:],
             "react_trace": raw.get("react_trace", []),
         })
@@ -358,7 +473,15 @@ def localize_rollout_batch(
                 edge["rollout_success"] += 1
             else:
                 edge["rollout_failure"] += 1
-            if not slot_ok:
+            # Slot quality is meaningful only when the selected action is
+            # correct. Otherwise the values belong to another schema and must
+            # not be blamed on this action's slot policy.
+            slot_evaluable = action_ok
+            if slot_evaluable:
+                edge["slot_total"] += 1
+                if slot_ok:
+                    edge["slot_success"] += 1
+            if slot_evaluable and not slot_ok:
                 edge["slot_failures"] += 1
             predicted_target = str(current.get("predicted_action") or "")
             if predicted_target and predicted_target != current["gold_action"]:
@@ -370,6 +493,13 @@ def localize_rollout_batch(
                 "target_turn": current["turn_index"],
                 "action_success": action_ok,
                 "slot_success": slot_ok,
+                "slot_evaluable": slot_evaluable,
+                "gold_action": current["gold_action"],
+                "predicted_action": current["predicted_action"],
+                "gold_slots": current["gold_slots"],
+                "predicted_slots": current["predicted_slots"],
+                "gold_slot_count": current["gold_slot_count"],
+                "predicted_slot_count": current["predicted_slot_count"],
                 "predicted_target": predicted_target,
                 "context": current["context"],
                 "react_trace": current["react_trace"],
@@ -377,6 +507,18 @@ def localize_rollout_batch(
             if len(edge["evidence"]) < max_evidence_per_edge:
                 edge["evidence"].append(evidence)
             events.append({"edge_id": key, **evidence})
+            if slot_evaluable:
+                policy = state.setdefault("slot_policies", {}).setdefault(current["gold_action"], {
+                    "action": current["gold_action"], "slot_total": 0, "slot_success": 0,
+                    "slot_failures": 0, "evidence": [], "policy": "", "status": "pending",
+                })
+                policy["slot_total"] += 1
+                if slot_ok:
+                    policy["slot_success"] += 1
+                else:
+                    policy["slot_failures"] += 1
+                if len(policy["evidence"]) < max_evidence_per_edge:
+                    policy["evidence"].append(evidence)
     state["batches_processed"] = int(state.get("batches_processed", 0)) + 1
     return {"events": events, "num_events": len(events)}
 
@@ -387,6 +529,8 @@ class RefinementPolicy:
     min_confidence: float = 0.60
     min_conflict_count: int = 2
     max_skill_branches_per_source: int = 3
+    min_slot_support: int = 3
+    min_slot_confidence: float = 0.70
 
 
 def propose_refinement_patches(state: dict[str, Any], policy: RefinementPolicy = RefinementPolicy()) -> list[dict[str, Any]]:
@@ -452,6 +596,21 @@ def propose_refinement_patches(state: dict[str, Any], policy: RefinementPolicy =
                 "confidence": round(confidence, 6),
                 "conflict_count": conflict_count,
                 "evidence_ids": [item["conversation_id"] for item in edge.get("evidence", [])],
+                })
+    for action, slot_policy in sorted(state.get("slot_policies", {}).items()):
+        total = int(slot_policy.get("slot_total", 0) or 0)
+        failures = int(slot_policy.get("slot_failures", 0) or 0)
+        confidence = (int(slot_policy.get("slot_success", 0) or 0) + 1) / (total + 2)
+        if total >= policy.min_slot_support and failures and (
+            confidence < policy.min_slot_confidence or not str(slot_policy.get("policy", "")).strip()
+        ):
+            patches.append({
+                "operation": "induce_slot_policy",
+                "action": action,
+                "reason": "action is correct but ordered slots are unreliable; refine value-source and reuse policy",
+                "slot_confidence": round(confidence, 6),
+                "slot_total": total,
+                "slot_failures": failures,
             })
     return patches
 
@@ -573,6 +732,223 @@ def induce_guard_patches(
     return results
 
 
+def induce_slot_policy_patches(
+    state: dict[str, Any], patches: list[dict[str, Any]], existing_slot_resource: str,
+    model: str, max_retries: int = 3,
+) -> list[dict[str, Any]]:
+    """Induce all newly diagnosed action-level slot policies in one LLM call.
+
+    Unlike edge guards, slot policies are action-centric: a single policy can
+    repair the same action after several incoming transitions. Batching them
+    mirrors AWM's trajectory reflection while keeping online call cost bounded.
+    """
+    requested = sorted({str(patch["action"]) for patch in patches if patch.get("operation") == "induce_slot_policy"})
+    if not requested:
+        return []
+    evidence = []
+    for action in requested:
+        record = state.get("slot_policies", {}).get(action, {})
+        evidence.append({
+            "action": action,
+            "slot_total": record.get("slot_total", 0),
+            "slot_success": record.get("slot_success", 0),
+            "slot_failures": record.get("slot_failures", 0),
+            "cases": record.get("evidence", [])[-6:],
+        })
+    prompt = _SLOT_POLICY_INDUCTION_PROMPT.format(
+        existing_slot_resource=existing_slot_resource[-10000:] or "[No existing slot resource]",
+        evidence=json.dumps(evidence, ensure_ascii=False, indent=2),
+    )
+    from llm import chat, resolve_config
+
+    cfg = resolve_config(model=model)
+    raw = ""
+    parsed: dict[str, Any] = {}
+    for attempt in range(1, max(1, max_retries) + 1):
+        try:
+            raw = chat(
+                [{"role": "user", "content": prompt}], model=cfg["model"],
+                api_key=cfg["api_key"], base_url=cfg["base_url"], temperature=0.0,
+            ).strip()
+            payload = raw.strip()
+            if payload.startswith("```"):
+                payload = "\n".join(payload.splitlines()[1:-1])
+            start, end = payload.find("{"), payload.rfind("}")
+            parsed = json.loads(payload[start:end + 1]) if start >= 0 and end > start else {}
+            if isinstance(parsed.get("policies"), list):
+                break
+        except (ValueError, TypeError, json.JSONDecodeError):
+            parsed = {}
+        if attempt < max(1, max_retries):
+            time.sleep(float(attempt))
+
+    returned = {
+        str(item.get("action", "")).strip(): str(item.get("policy", "")).strip()
+        for item in parsed.get("policies", []) if isinstance(item, dict)
+    }
+    results = []
+    for action in requested:
+        policy_text = returned.get(action, "")
+        record = state["slot_policies"][action]
+        if policy_text:
+            record["policy"] = policy_text
+            record["status"] = "resolved"
+        else:
+            record["status"] = "uncertain"
+        results.append({"action": action, "policy": policy_text, "status": record["status"], "prompt": prompt, "raw_response": raw})
+    return results
+
+
+def induce_joint_refinement_patches(
+    state: dict[str, Any], patches: list[dict[str, Any]], skill_context: str,
+    existing_slot_resource: str, model: str, max_retries: int = 3,
+) -> dict[str, list[dict[str, Any]]]:
+    """Jointly refine transition guards and slot policies in one batch call."""
+    edge_ids = sorted({str(patch["edge_id"]) for patch in patches if patch.get("operation") == "induce_guard"})
+    actions = sorted({str(patch["action"]) for patch in patches if patch.get("operation") == "induce_slot_policy"})
+    if not edge_ids and not actions:
+        return {"guards": [], "slot_policies": []}
+    transition_evidence = [build_guard_induction_context(state, edge_id, max_cases=3) for edge_id in edge_ids]
+    slot_evidence = [{
+        "action": action,
+        "slot_total": state["slot_policies"][action].get("slot_total", 0),
+        "slot_success": state["slot_policies"][action].get("slot_success", 0),
+        "slot_failures": state["slot_policies"][action].get("slot_failures", 0),
+        "cases": state["slot_policies"][action].get("evidence", [])[-6:],
+    } for action in actions]
+    prompt = _JOINT_REFINEMENT_PROMPT.format(
+        skill_context=skill_context[-12000:] or "[No existing skill text]",
+        slot_resource=existing_slot_resource[-10000:] or "[No existing slot resource]",
+        transition_evidence=json.dumps(transition_evidence, ensure_ascii=False, indent=2),
+        slot_evidence=json.dumps(slot_evidence, ensure_ascii=False, indent=2),
+    )
+    from llm import chat, resolve_config
+    cfg = resolve_config(model=model)
+    raw, payload = "", {}
+    for attempt in range(1, max(1, max_retries) + 1):
+        try:
+            raw = chat([{"role": "user", "content": prompt}], model=cfg["model"], api_key=cfg["api_key"],
+                       base_url=cfg["base_url"], temperature=0.0).strip()
+            text = raw
+            if text.startswith("```"):
+                text = "\n".join(text.splitlines()[1:-1])
+            start, end = text.find("{"), text.rfind("}")
+            payload = json.loads(text[start:end + 1]) if start >= 0 and end > start else {}
+            if isinstance(payload.get("guards"), list) and isinstance(payload.get("slot_policies"), list):
+                break
+        except (TypeError, ValueError, json.JSONDecodeError):
+            payload = {}
+        if attempt < max(1, max_retries):
+            time.sleep(float(attempt))
+
+    guards, slot_results = [], []
+    guard_by_id = {str(item.get("edge_id", "")): item for item in payload.get("guards", []) if isinstance(item, dict)}
+    for edge_id in edge_ids:
+        item = guard_by_id.get(edge_id, {})
+        parsed = _parse_guard_response(json.dumps(item)) if item else {"guard": "", "status": "uncertain", "rationale": "No joint guard returned."}
+        edge = state["edges"][edge_id]
+        edge["guard"], edge["guard_status"] = parsed["guard"], parsed["status"]
+        guards.append({"edge_id": edge_id, **parsed, "prompt": prompt, "raw_response": raw})
+    policy_by_action = {str(item.get("action", "")): item for item in payload.get("slot_policies", []) if isinstance(item, dict)}
+    for action in actions:
+        item = policy_by_action.get(action, {})
+        policy_text = str(item.get("policy", "")).strip()
+        status = "resolved" if policy_text and str(item.get("status", "")).lower() == "resolved" else "uncertain"
+        record = state["slot_policies"][action]
+        if status == "resolved":
+            record["policy"] = policy_text
+        record["status"] = status
+        slot_results.append({"action": action, "policy": policy_text, "status": status, "prompt": prompt, "raw_response": raw})
+    return {"guards": guards, "slot_policies": slot_results}
+
+
+def autonomous_resource_reflection(
+    state: dict[str, Any], rollout_supervision: list[dict[str, Any]], skill: str,
+    reference: str, action_rules: str, slot_policies: str, model: str,
+    max_retries: int = 3,
+) -> dict[str, Any]:
+    """Let the LLM select and apply bounded resource updates for one batch."""
+    graph_edges = [{
+        "edge_id": edge_id, "source_action": edge["source_action"],
+        "target_action": edge["target_action"], "kind": edge["kind"],
+    } for edge_id, edge in state.get("edges", {}).items()]
+    prompt = _AUTONOMOUS_RESOURCE_REFLECTION_PROMPT.format(
+        skill=skill[-14000:] or "[empty]", reference=reference[-10000:] or "[empty]",
+        action_rules=action_rules[-10000:] or "[empty]", slot_policies=slot_policies[-10000:] or "[empty]",
+        graph_edges=json.dumps(graph_edges, ensure_ascii=False),
+        rollout_supervision=json.dumps(rollout_supervision[-120:], ensure_ascii=False, indent=2),
+    )
+    from llm import chat, resolve_config
+    cfg = resolve_config(model=model)
+    raw, payload = "", {}
+    for attempt in range(1, max(1, max_retries) + 1):
+        try:
+            raw = chat([{"role": "user", "content": prompt}], model=cfg["model"], api_key=cfg["api_key"],
+                       base_url=cfg["base_url"], temperature=0.0).strip()
+            text = "\n".join(raw.splitlines()[1:-1]) if raw.startswith("```") else raw
+            start, end = text.find("{"), text.rfind("}")
+            payload = json.loads(text[start:end + 1]) if start >= 0 and end > start else {}
+            if isinstance(payload.get("updates"), list):
+                break
+        except (TypeError, ValueError, json.JSONDecodeError):
+            payload = {}
+        if attempt < max(1, max_retries):
+            time.sleep(float(attempt))
+
+    valid_actions = {str(node["label"]) for node in state.get("nodes", [])}
+    accepted, rejected = [], []
+    for update in payload.get("updates", []):
+        if not isinstance(update, dict):
+            continue
+        resource, content = str(update.get("resource", "")), str(update.get("content", "")).strip()
+        status = str(update.get("status", "uncertain")).lower()
+        if resource not in {"transition_guard", "action_rule", "slot_policy", "reference"} or not content:
+            rejected.append({"update": update, "reason": "unsupported_resource_or_empty_content"})
+            continue
+        if resource == "transition_guard":
+            edge_id = str(update.get("edge_id", ""))
+            if edge_id not in state.get("edges", {}):
+                rejected.append({"update": update, "reason": "unknown_edge"})
+                continue
+            edge = state["edges"][edge_id]
+            edge["guard"] = content
+            edge["guard_status"] = "resolved" if status == "resolved" else "uncertain"
+        elif resource in {"action_rule", "slot_policy"}:
+            action = str(update.get("action", ""))
+            if action not in valid_actions:
+                rejected.append({"update": update, "reason": "unknown_action"})
+                continue
+            bucket = "action_rules" if resource == "action_rule" else "slot_policies"
+            record = state.setdefault(bucket, {}).setdefault(action, {"action": action})
+            record["policy" if resource == "slot_policy" else "rule"] = content
+            record["status"] = "resolved" if status == "resolved" else "uncertain"
+        else:
+            state.setdefault("reference_notes", []).append({"content": content, "status": status, "rationale": update.get("rationale", "")})
+        accepted.append(update)
+    return {"prompt": prompt, "raw_response": raw, "accepted": accepted, "rejected": rejected}
+
+
+def render_online_action_rules(state: dict[str, Any]) -> str:
+    lines = ["# Online Action Rule Refinements", ""]
+    for action, record in sorted(state.get("action_rules", {}).items()):
+        rule = str(record.get("rule", "")).strip()
+        if rule and record.get("status") == "resolved":
+            lines.extend([f"#### `{action}`", rule, ""])
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_online_slot_policies(state: dict[str, Any]) -> str:
+    """Render resolved online refinements in the agent's policy-resource format."""
+    lines = ["# Online Slot Policy Refinements", ""]
+    for action, record in sorted(state.get("slot_policies", {}).items()):
+        policy = str(record.get("policy", "")).strip()
+        if policy and record.get("status") == "resolved":
+            lines.extend([f"#### `{action}`", policy, ""])
+    if len(lines) == 2:
+        lines.append("No online slot policy refinements have been validated yet.")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def render_online_resources(state: dict[str, Any]) -> tuple[str, str]:
     """Render promoted guards and deferred branches as separate resources."""
     skill_lines = ["## Online-refined transition guards", ""]
@@ -597,6 +973,9 @@ def render_online_resources(state: dict[str, Any]) -> tuple[str, str]:
                 *([f"- Guard candidate: {guard}"] if guard else []),
                 "",
             ])
+    for note in state.get("reference_notes", []):
+        if str(note.get("content", "")).strip():
+            reference_lines.extend(["## Online-maintained note", f"- {note['content']}", ""])
     if len(skill_lines) == 2:
         skill_lines.append("- No non-backbone transition has met the online promotion criteria yet.")
     return "\n".join(skill_lines).rstrip() + "\n", "\n".join(reference_lines).rstrip() + "\n"
