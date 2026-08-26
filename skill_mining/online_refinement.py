@@ -130,6 +130,13 @@ correct, and `reference` for useful but uncertain or exception-only evidence.
 Never invent action names, edges, hidden state, slot names, or literal private
 values. Learn general rules from the gold/prediction contrast.
 
+If any supplied supervised record has a gold/prediction mismatch, do not emit
+an empty update list merely because the evidence is incomplete: either make a
+safe resource update or add an `uncertain` `reference` note describing the
+unresolved exception and what evidence would distinguish it. Use no update
+only when every supervised record is correct or an existing visible rule
+already fully explains the mismatch.
+
 The runtime provides an MCP-style local resource lookup. First choose which
 small parts of the auxiliary resources are relevant to this batch; retrieved
 observations are supplied below. The complete current skill is always visible
@@ -147,7 +154,8 @@ action/slots are supplied separately in that same record.
 </rollout_supervision>
 
 Return valid JSON only:
-{{"updates":[{{"resource":"transition_guard|action_rule|slot_policy|reference",
+{{"decision":"update|no_update","no_update_reason":"required only for no_update",
+"updates":[{{"resource":"transition_guard|action_rule|slot_policy|reference",
 "edge_id":"required only for transition_guard", "action":"required only for action_rule/slot_policy",
 "content":"concise natural-language replacement or addition", "status":"resolved|uncertain",
 "rationale":"grounded in specific rollout-vs-gold evidence"}}]}}
@@ -282,6 +290,21 @@ def load_skill_dag(path: Path) -> dict[str, Any]:
     state = json.loads(path.read_text(encoding="utf-8"))
     for edge in state.get("edges", {}).values():
         edge["competing_targets"] = Counter(edge.get("competing_targets", {}))
+        for key, default in {
+            "gold_support": 0, "rollout_success": 0, "rollout_failure": 0,
+            "slot_total": 0, "slot_success": 0, "slot_failures": 0,
+            "evidence": [], "guard": "", "guard_status": "pending",
+        }.items():
+            edge.setdefault(key, default)
+    for action, record in state.setdefault("slot_policies", {}).items():
+        record.setdefault("action", action)
+        for key, default in {
+            "slot_total": 0, "slot_success": 0, "slot_failures": 0,
+            "evidence": [], "policy": "", "status": "pending",
+        }.items():
+            record.setdefault(key, default)
+    state.setdefault("action_rules", {})
+    state.setdefault("reference_notes", [])
     return state
 
 
@@ -492,9 +515,12 @@ def localize_rollout_batch(
                 "source_action": previous["gold_action"], "target_action": current["gold_action"],
                 "kind": "candidate_branch", "visibility": "reference", "offline_support": 0,
                 "offline_sessions": 0, "gold_support": 0, "rollout_success": 0,
-                "rollout_failure": 0, "slot_failures": 0, "competing_targets": Counter(),
+                "rollout_failure": 0, "slot_total": 0, "slot_success": 0,
+                "slot_failures": 0, "competing_targets": Counter(),
                 "guard": "", "guard_status": "pending", "evidence": [],
             })
+            edge.setdefault("slot_total", 0)
+            edge.setdefault("slot_success", 0)
             edge["gold_support"] += 1
             # This record evaluates the decision ``previous.gold_action ->
             # current.gold_action``. The source action is provided by the
@@ -547,6 +573,14 @@ def localize_rollout_batch(
                     "action": current["gold_action"], "slot_total": 0, "slot_success": 0,
                     "slot_failures": 0, "evidence": [], "policy": "", "status": "pending",
                 })
+                # A prior autonomous patch may have created this action's
+                # record with only policy/status fields. Hydrate it before
+                # accumulating new rollout statistics.
+                for field, default in {
+                    "slot_total": 0, "slot_success": 0, "slot_failures": 0,
+                    "evidence": [], "policy": "", "status": "pending",
+                }.items():
+                    policy.setdefault(field, default)
                 policy["slot_total"] += 1
                 if slot_ok:
                     policy["slot_success"] += 1
@@ -919,7 +953,7 @@ def _resource_lookup_sections(resource: str, text: str, query: str, top_k: int =
 def _plan_resource_lookups(
     compact_supervision: list[dict[str, Any]], graph_edges: list[dict[str, Any]],
     skill: str, model: str, max_retries: int,
-) -> tuple[list[dict[str, Any]], str, str]:
+) -> tuple[list[dict[str, Any]], str, str, str]:
     """Ask the optimizer which resources it wants before exposing contents."""
     prompt = _RESOURCE_LOOKUP_PLANNER_PROMPT.format(
         skill=skill or "[empty]",
@@ -950,7 +984,7 @@ def _plan_resource_lookups(
         if resource in allowed and query and per_resource[resource] < 2 and len(planned) < 4:
             planned.append({"resource": resource, "query": query[:300], "top_k": max(1, min(2, int(item.get("top_k", 1) or 1)))})
             per_resource[resource] += 1
-    return planned, prompt, last_error
+    return planned, prompt, raw, last_error
 
 
 def autonomous_resource_reflection(
@@ -986,7 +1020,7 @@ def autonomous_resource_reflection(
         "target_action": edge["target_action"], "kind": edge["kind"],
     } for edge_id, edge in state.get("edges", {}).items()]
     resources = {"reference": reference, "action_rules": action_rules, "slot_policies": slot_policies}
-    lookups, planner_prompt, planner_error = _plan_resource_lookups(
+    lookups, planner_prompt, planner_raw, planner_error = _plan_resource_lookups(
         compact_supervision, graph_edges, skill, model, max_retries,
     )
     retrieved = []
@@ -1050,9 +1084,12 @@ def autonomous_resource_reflection(
         accepted.append(update)
     return {
         "planner_prompt": planner_prompt, "planner_prompt_chars": len(planner_prompt),
-        "lookups": lookups, "retrieved_resources": retrieved, "planner_error": planner_error,
+        "planner_raw_response": planner_raw, "lookups": lookups,
+        "retrieved_resources": retrieved, "planner_error": planner_error,
         "prompt": prompt, "prompt_chars": len(prompt), "raw_response": raw,
         "accepted": accepted, "rejected": rejected,
+        "model_decision": str(payload.get("decision", "")),
+        "model_no_update_reason": str(payload.get("no_update_reason", "")),
         "error": last_error if not payload else "",
     }
 

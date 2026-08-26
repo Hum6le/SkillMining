@@ -1,4 +1,7 @@
 import unittest
+import json
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 from skill_mining.online_refinement import (
@@ -7,6 +10,7 @@ from skill_mining.online_refinement import (
     build_guard_induction_context,
     edge_confidence,
     initialize_skill_dag,
+    load_skill_dag,
     induce_joint_refinement_patches,
     autonomous_resource_reflection,
     localize_rollout_batch,
@@ -171,6 +175,18 @@ class OnlineRefinementTest(unittest.TestCase):
         state["slot_policies"]["send-link"].update({"policy": "Use the current customer-provided value after confirmation.", "status": "resolved"})
         self.assertIn("#### `send-link`", render_online_slot_policies(state))
 
+    def test_load_legacy_slot_policy_record_hydrates_rollout_counters(self):
+        state = initialize_skill_dag(_subgraph(), "account_access")
+        state["slot_policies"]["send-link"] = {"action": "send-link", "policy": "old", "status": "resolved"}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "skill_dag_state.json"
+            path.write_text(json.dumps(state), encoding="utf-8")
+            restored = load_skill_dag(path)
+        policy = restored["slot_policies"]["send-link"]
+        self.assertEqual(policy["slot_total"], 0)
+        self.assertEqual(policy["slot_success"], 0)
+        self.assertEqual(policy["slot_failures"], 0)
+
     @patch("llm.resolve_config", return_value={"model": "test", "api_key": "", "base_url": ""})
     @patch("llm.chat")
     def test_joint_reflection_updates_guard_and_slot_policy_together(self, chat, _config):
@@ -204,7 +220,7 @@ class OnlineRefinementTest(unittest.TestCase):
         state = initialize_skill_dag(_subgraph(), "account_access")
         chat.side_effect = [
             '''{"lookups":[{"resource":"slot_policies","query":"make-password","top_k":1}]}''',
-            '''{"updates":[
+            '''{"decision":"update","updates":[
           {"resource":"transition_guard","edge_id":"a=>c","content":"The customer is creating a password.","status":"resolved","rationale":"gold mismatch"},
           {"resource":"slot_policy","action":"make-password","content":"Use the newly confirmed value only.","status":"resolved","rationale":"slot mismatch"},
           {"resource":"reference","content":"Keep rare recovery evidence in reference.","status":"uncertain","rationale":"limited support"}
@@ -216,6 +232,7 @@ class OnlineRefinementTest(unittest.TestCase):
         self.assertNotIn('"react_trace"', result["prompt"])
         self.assertEqual(result["lookups"][0]["resource"], "slot_policies")
         self.assertIn("<current_skill>skill</current_skill>", result["prompt"])
+        self.assertEqual(result["model_decision"], "update")
         self.assertEqual(len(result["accepted"]), 3)
         self.assertEqual(state["edges"]["a=>c"]["guard_status"], "resolved")
         self.assertEqual(state["slot_policies"]["make-password"]["status"], "resolved")

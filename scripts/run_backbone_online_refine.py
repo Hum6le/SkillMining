@@ -286,7 +286,14 @@ def main() -> None:
                     reflection.get("prompt_chars", "?"), reflection["error"],
                 )
             else:
-                log.info("  autonomous reflection prompt_chars=%d", reflection.get("prompt_chars", 0))
+                log.info(
+                    "  autonomous reflection planner_lookups=%d retrieved_sections=%d "
+                    "accepted=%d rejected=%d decision=%s reason=%s prompt_chars=%d",
+                    len(reflection.get("lookups", [])), len(reflection.get("retrieved_resources", [])),
+                    len(reflection.get("accepted", [])), len(reflection.get("rejected", [])),
+                    reflection.get("model_decision", "missing"),
+                    reflection.get("model_no_update_reason", "")[:180], reflection.get("prompt_chars", 0),
+                )
             apply_refinement_patches(state, propose_refinement_patches(state, policy))
         _checkpoint(out_dir, state, base_skill, base_reference, policy, slot_policies, action_rules)
         _write(out_dir / "batch_diagnostics" / f"batch_{batch_index:04d}.json", json.dumps({
