@@ -202,13 +202,20 @@ class OnlineRefinementTest(unittest.TestCase):
     @patch("llm.chat")
     def test_autonomous_reflection_selects_valid_resources_itself(self, chat, _config):
         state = initialize_skill_dag(_subgraph(), "account_access")
-        chat.return_value = '''{"updates":[
+        chat.side_effect = [
+            '''{"lookups":[{"resource":"slot_policies","query":"make-password","top_k":1}]}''',
+            '''{"updates":[
           {"resource":"transition_guard","edge_id":"a=>c","content":"The customer is creating a password.","status":"resolved","rationale":"gold mismatch"},
           {"resource":"slot_policy","action":"make-password","content":"Use the newly confirmed value only.","status":"resolved","rationale":"slot mismatch"},
           {"resource":"reference","content":"Keep rare recovery evidence in reference.","status":"uncertain","rationale":"limited support"}
         ]}'''
+        ]
         result = autonomous_resource_reflection(state, [{"gold_action": "make-password", "predicted_action": "send-link"}], "skill", "reference", "rules", "slots", "test")
-        self.assertEqual(chat.call_count, 1)
+        self.assertEqual(chat.call_count, 2)
+        self.assertEqual(result["prompt_chars"], len(result["prompt"]))
+        self.assertNotIn('"react_trace"', result["prompt"])
+        self.assertEqual(result["lookups"][0]["resource"], "slot_policies")
+        self.assertIn("<current_skill>skill</current_skill>", result["prompt"])
         self.assertEqual(len(result["accepted"]), 3)
         self.assertEqual(state["edges"]["a=>c"]["guard_status"], "resolved")
         self.assertEqual(state["slot_policies"]["make-password"]["status"], "resolved")

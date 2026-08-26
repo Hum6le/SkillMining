@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import time
 from collections import Counter, defaultdict
 from copy import deepcopy
@@ -21,6 +22,13 @@ from eval_tod.abcd.action_schema import canonical_action_name, load_action_schem
 
 
 ROOT = "<START>"
+
+
+def _tokenize_for_lookup(text: str) -> set[str]:
+    return {
+        token.lower() for token in re.findall(r"[a-zA-Z0-9_'-]+", text)
+        if len(token) >= 3
+    }
 
 
 _GUARD_INDUCTION_PROMPT = """You are refining one local decision in a mined
@@ -122,18 +130,45 @@ correct, and `reference` for useful but uncertain or exception-only evidence.
 Never invent action names, edges, hidden state, slot names, or literal private
 values. Learn general rules from the gold/prediction contrast.
 
-<skill>{skill}</skill>
-<reference>{reference}</reference>
-<action_rules>{action_rules}</action_rules>
-<slot_policies>{slot_policies}</slot_policies>
+The runtime provides an MCP-style local resource lookup. First choose which
+small parts of the auxiliary resources are relevant to this batch; retrieved
+observations are supplied below. The complete current skill is always visible
+because it is the executable control contract. Do not assume an un-retrieved
+auxiliary resource says anything in particular.
+
+<current_skill>{skill}</current_skill>
+<retrieved_resources>{retrieved_resources}</retrieved_resources>
 <graph_edges>{graph_edges}</graph_edges>
-<rollout_supervision>{rollout_supervision}</rollout_supervision>
+<rollout_supervision>
+Each record contains the model's final prediction and, when retrieval was
+used, only its generated `reference_query`; the dialogue context and gold
+action/slots are supplied separately in that same record.
+{rollout_supervision}
+</rollout_supervision>
 
 Return valid JSON only:
 {{"updates":[{{"resource":"transition_guard|action_rule|slot_policy|reference",
 "edge_id":"required only for transition_guard", "action":"required only for action_rule/slot_policy",
 "content":"concise natural-language replacement or addition", "status":"resolved|uncertain",
 "rationale":"grounded in specific rollout-vs-gold evidence"}}]}}
+"""
+
+_RESOURCE_LOOKUP_PLANNER_PROMPT = """You are planning local MCP-style
+lookups before refining a customer-service skill from rollout-vs-ground-truth
+evidence. You may query only these resources:
+- `reference`: deferred transition evidence and exception cases.
+- `action_rules`: action-level procedure rules.
+- `slot_policies`: ordered value-source, timing, and reuse policies.
+
+Choose only the resources needed to diagnose the supplied errors. Queries must
+be concise action names, edge names, or dialogue-goal terms. At most 4 lookups
+total and at most 2 per resource. The complete current skill is already shown
+below, so never request it. Return valid JSON only:
+{{"lookups":[{{"resource":"reference|action_rules|slot_policies","query":"concise query","top_k":1}}]}}
+
+<current_skill>{skill}</current_skill>
+<rollout_supervision>{rollout_supervision}</rollout_supervision>
+<graph_edges>{graph_edges}</graph_edges>
 """
 
 
@@ -824,7 +859,7 @@ def induce_joint_refinement_patches(
     )
     from llm import chat, resolve_config
     cfg = resolve_config(model=model)
-    raw, payload = "", {}
+    raw, payload, last_error = "", {}, ""
     for attempt in range(1, max(1, max_retries) + 1):
         try:
             raw = chat([{"role": "user", "content": prompt}], model=cfg["model"], api_key=cfg["api_key"],
@@ -862,25 +897,112 @@ def induce_joint_refinement_patches(
     return {"guards": guards, "slot_policies": slot_results}
 
 
+def _resource_lookup_sections(resource: str, text: str, query: str, top_k: int = 1) -> list[dict[str, str]]:
+    """Small local MCP lookup over Markdown sections for optimizer reflection."""
+    tokens = _tokenize_for_lookup(query)
+    matches = list(re.finditer(r"(?m)^(?:#{1,4})\s+.*$", text))
+    sections = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        body = text[match.start():end].strip()
+        if body:
+            score = len(tokens & _tokenize_for_lookup(body))
+            sections.append((score, match.group(0).lstrip("# ").strip(), body[:1800]))
+    if not sections and text.strip():
+        sections = [(0, resource, text[:1800])]
+    return [
+        {"resource": resource, "title": title, "content": body}
+        for _, title, body in sorted(sections, key=lambda item: (-item[0], item[1]))[:max(1, top_k)]
+    ]
+
+
+def _plan_resource_lookups(
+    compact_supervision: list[dict[str, Any]], graph_edges: list[dict[str, Any]],
+    skill: str, model: str, max_retries: int,
+) -> tuple[list[dict[str, Any]], str, str]:
+    """Ask the optimizer which resources it wants before exposing contents."""
+    prompt = _RESOURCE_LOOKUP_PLANNER_PROMPT.format(
+        skill=skill or "[empty]",
+        rollout_supervision=json.dumps(compact_supervision, ensure_ascii=False, indent=2),
+        graph_edges=json.dumps(graph_edges, ensure_ascii=False),
+    )
+    from llm import chat, resolve_config
+    cfg = resolve_config(model=model)
+    raw, payload, last_error = "", {}, ""
+    for attempt in range(1, max(1, max_retries) + 1):
+        try:
+            raw = chat([{"role": "user", "content": prompt}], model=cfg["model"], api_key=cfg["api_key"],
+                       base_url=cfg["base_url"], temperature=0.0).strip()
+            start, end = raw.find("{"), raw.rfind("}")
+            payload = json.loads(raw[start:end + 1]) if start >= 0 and end > start else {}
+            if isinstance(payload.get("lookups"), list):
+                break
+        except Exception as exc:
+            last_error = repr(exc)
+        if attempt < max(1, max_retries):
+            time.sleep(float(2 ** (attempt - 1)))
+    allowed, planned = {"reference", "action_rules", "slot_policies"}, []
+    per_resource: Counter[str] = Counter()
+    for item in payload.get("lookups", []):
+        if not isinstance(item, dict):
+            continue
+        resource, query = str(item.get("resource", "")), str(item.get("query", "")).strip()
+        if resource in allowed and query and per_resource[resource] < 2 and len(planned) < 4:
+            planned.append({"resource": resource, "query": query[:300], "top_k": max(1, min(2, int(item.get("top_k", 1) or 1)))})
+            per_resource[resource] += 1
+    return planned, prompt, last_error
+
+
 def autonomous_resource_reflection(
     state: dict[str, Any], rollout_supervision: list[dict[str, Any]], skill: str,
     reference: str, action_rules: str, slot_policies: str, model: str,
     max_retries: int = 3,
 ) -> dict[str, Any]:
     """Let the LLM select and apply bounded resource updates for one batch."""
+    def reference_query_from_trace(trace: Any) -> str:
+        """Keep only the model-produced retrieval query, never ReAct inputs."""
+        for step in trace if isinstance(trace, list) else []:
+            if not isinstance(step, dict):
+                continue
+            if step.get("action") != "retrieve_reference":
+                continue
+            action_input = step.get("action_input", {})
+            if isinstance(action_input, dict):
+                return str(action_input.get("query", ""))[:300]
+            return str(action_input)[:300]
+        return ""
+
+    supervised_rows = [row for row in rollout_supervision if row.get("gold") is not None]
+    compact_supervision = [{
+        "conversation_id": row.get("conversation_id"), "turn_index": row.get("turn_index"),
+        "target_type": row.get("target_type"), "context": str(row.get("context", ""))[-700:],
+        "prediction": str(row.get("prediction", ""))[:500],
+        "predicted_action": row.get("predicted_action", ""),
+        "predicted_slots": row.get("predicted_slots", []), "gold": row.get("gold"),
+        "reference_query": reference_query_from_trace(row.get("react_trace")),
+    } for row in supervised_rows[-32:]]
     graph_edges = [{
         "edge_id": edge_id, "source_action": edge["source_action"],
         "target_action": edge["target_action"], "kind": edge["kind"],
     } for edge_id, edge in state.get("edges", {}).items()]
+    resources = {"reference": reference, "action_rules": action_rules, "slot_policies": slot_policies}
+    lookups, planner_prompt, planner_error = _plan_resource_lookups(
+        compact_supervision, graph_edges, skill, model, max_retries,
+    )
+    retrieved = []
+    for lookup in lookups:
+        retrieved.extend(_resource_lookup_sections(
+            lookup["resource"], resources[lookup["resource"]], lookup["query"], lookup["top_k"],
+        ))
     prompt = _AUTONOMOUS_RESOURCE_REFLECTION_PROMPT.format(
-        skill=skill[-14000:] or "[empty]", reference=reference[-10000:] or "[empty]",
-        action_rules=action_rules[-10000:] or "[empty]", slot_policies=slot_policies[-10000:] or "[empty]",
+        skill=skill or "[empty]",
+        retrieved_resources=json.dumps(retrieved, ensure_ascii=False, indent=2) or "[]",
         graph_edges=json.dumps(graph_edges, ensure_ascii=False),
-        rollout_supervision=json.dumps(rollout_supervision[-120:], ensure_ascii=False, indent=2),
+        rollout_supervision=json.dumps(compact_supervision, ensure_ascii=False, indent=2),
     )
     from llm import chat, resolve_config
     cfg = resolve_config(model=model)
-    raw, payload = "", {}
+    raw, payload, last_error = "", {}, ""
     for attempt in range(1, max(1, max_retries) + 1):
         try:
             raw = chat([{"role": "user", "content": prompt}], model=cfg["model"], api_key=cfg["api_key"],
@@ -890,10 +1012,11 @@ def autonomous_resource_reflection(
             payload = json.loads(text[start:end + 1]) if start >= 0 and end > start else {}
             if isinstance(payload.get("updates"), list):
                 break
-        except (TypeError, ValueError, json.JSONDecodeError):
+        except Exception as exc:
             payload = {}
+            last_error = repr(exc)
         if attempt < max(1, max_retries):
-            time.sleep(float(attempt))
+            time.sleep(float(2 ** (attempt - 1)))
 
     valid_actions = {str(node["label"]) for node in state.get("nodes", [])}
     accepted, rejected = [], []
@@ -925,7 +1048,13 @@ def autonomous_resource_reflection(
         else:
             state.setdefault("reference_notes", []).append({"content": content, "status": status, "rationale": update.get("rationale", "")})
         accepted.append(update)
-    return {"prompt": prompt, "raw_response": raw, "accepted": accepted, "rejected": rejected}
+    return {
+        "planner_prompt": planner_prompt, "planner_prompt_chars": len(planner_prompt),
+        "lookups": lookups, "retrieved_resources": retrieved, "planner_error": planner_error,
+        "prompt": prompt, "prompt_chars": len(prompt), "raw_response": raw,
+        "accepted": accepted, "rejected": rejected,
+        "error": last_error if not payload else "",
+    }
 
 
 def render_online_action_rules(state: dict[str, Any]) -> str:

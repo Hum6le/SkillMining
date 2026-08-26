@@ -280,6 +280,13 @@ def main() -> None:
             )
             _write(out_dir / "autonomous_reflection" / f"batch_{batch_index:04d}.json",
                    json.dumps(reflection, indent=2, ensure_ascii=False))
+            if reflection.get("error"):
+                log.warning(
+                    "  autonomous reflection failed after retries (prompt_chars=%s): %s",
+                    reflection.get("prompt_chars", "?"), reflection["error"],
+                )
+            else:
+                log.info("  autonomous reflection prompt_chars=%d", reflection.get("prompt_chars", 0))
             apply_refinement_patches(state, propose_refinement_patches(state, policy))
         _checkpoint(out_dir, state, base_skill, base_reference, policy, slot_policies, action_rules)
         _write(out_dir / "batch_diagnostics" / f"batch_{batch_index:04d}.json", json.dumps({
