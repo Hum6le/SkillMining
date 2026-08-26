@@ -118,24 +118,26 @@ Return valid JSON only:
 """
 
 _AUTONOMOUS_RESOURCE_REFLECTION_PROMPT = """You maintain a graph-compiled
-customer-service skill and its progressive-disclosure resources. Inspect the
-complete rollout-versus-ground-truth trajectories below, then decide yourself
-whether any resource needs an update. Do not assume that every batch requires
-a change.
+customer-service skill and its progressive-disclosure resources. The current
+skill is a compact backbone extracted from a complete transition graph. Many
+valid but less central transitions are intentionally not written in skill.md;
+they are retained in reference.md for retrieval.
 
-Use `transition_guard` only for a listed graph edge and only when it separates
-sibling destinations. Use `action_rule` for an action-level procedure error,
-`slot_policy` for ordered-value source/timing/reuse errors after the action is
-correct, and `reference` for useful but uncertain or exception-only evidence.
-Never invent action names, edges, hidden state, slot names, or literal private
-values. Learn general rules from the gold/prediction contrast.
+Inspect the rollout-versus-ground-truth trajectories, complete current skill,
+retrieved resource snippets, and graph edges. Decide yourself which changes,
+if any, would make the skill more correct, compact, and well-organized.
 
-If any supplied supervised record has a gold/prediction mismatch, do not emit
-an empty update list merely because the evidence is incomplete: either make a
-safe resource update or add an `uncertain` `reference` note describing the
-unresolved exception and what evidence would distinguish it. Use no update
-only when every supervised record is correct or an existing visible rule
-already fully explains the mismatch.
+You may promote a useful transition from reference into skill, revise an
+existing action/transition explanation, move a confusing or mostly harmful
+skill rule back to reference, refine an action rule or slot policy, add a
+retrieval instruction where a deferred transition should be consulted, or make
+no change. Do not assume every observed error requires a skill edit. When
+information belongs in reference, ensure the relevant skill rule explains when
+to retrieve it instead of flattening all exceptional logic into skill.md.
+
+Use only listed action names and graph edges. Learn general rules from the
+gold/prediction contrast: never hard-code literal customer values or invent
+hidden state, slot names, actions, or edges.
 
 The runtime provides an MCP-style local resource lookup. First choose which
 small parts of the auxiliary resources are relevant to this batch; retrieved
@@ -149,15 +151,18 @@ auxiliary resource says anything in particular.
 <rollout_supervision>
 Each record contains the model's final prediction and, when retrieval was
 used, only its generated `reference_query`; the dialogue context and gold
-action/slots are supplied separately in that same record.
+action/slots or gold agent response are supplied separately in that same
+record.
 {rollout_supervision}
 </rollout_supervision>
 
 Return valid JSON only:
 {{"decision":"update|no_update","no_update_reason":"required only for no_update",
 "updates":[{{"resource":"transition_guard|action_rule|slot_policy|reference",
-"edge_id":"required only for transition_guard", "action":"required only for action_rule/slot_policy",
-"content":"concise natural-language replacement or addition", "status":"resolved|uncertain",
+"edge_id":"required for transition_guard; optional but recommended for edge-scoped reference",
+"action":"required only for action_rule/slot_policy",
+"op":"upsert|delete",
+"content":"concise natural-language replacement or addition; empty only for delete", "status":"resolved|uncertain",
 "rationale":"grounded in specific rollout-vs-gold evidence"}}]}}
 """
 
@@ -1006,13 +1011,17 @@ def autonomous_resource_reflection(
             return str(action_input)[:300]
         return ""
 
-    supervised_rows = [row for row in rollout_supervision if row.get("gold") is not None]
+    supervised_rows = [
+        row for row in rollout_supervision
+        if row.get("gold") is not None or str(row.get("gold_response", "")).strip()
+    ]
     compact_supervision = [{
         "conversation_id": row.get("conversation_id"), "turn_index": row.get("turn_index"),
         "target_type": row.get("target_type"), "context": str(row.get("context", ""))[-700:],
         "prediction": str(row.get("prediction", ""))[:500],
         "predicted_action": row.get("predicted_action", ""),
         "predicted_slots": row.get("predicted_slots", []), "gold": row.get("gold"),
+        "gold_response": str(row.get("gold_response", ""))[:500],
         "reference_query": reference_query_from_trace(row.get("react_trace")),
     } for row in supervised_rows[-32:]]
     graph_edges = [{
@@ -1058,9 +1067,16 @@ def autonomous_resource_reflection(
         if not isinstance(update, dict):
             continue
         resource, content = str(update.get("resource", "")), str(update.get("content", "")).strip()
+        operation = str(update.get("op", "upsert")).strip().lower()
         status = str(update.get("status", "uncertain")).lower()
-        if resource not in {"transition_guard", "action_rule", "slot_policy", "reference"} or not content:
+        if resource not in {"transition_guard", "action_rule", "slot_policy", "reference"} or operation not in {"upsert", "delete"}:
             rejected.append({"update": update, "reason": "unsupported_resource_or_empty_content"})
+            continue
+        if operation == "delete" and resource not in {"transition_guard", "action_rule"}:
+            rejected.append({"update": update, "reason": "delete_not_supported_for_resource"})
+            continue
+        if operation == "upsert" and not content:
+            rejected.append({"update": update, "reason": "empty_upsert_content"})
             continue
         if resource == "transition_guard":
             edge_id = str(update.get("edge_id", ""))
@@ -1068,8 +1084,16 @@ def autonomous_resource_reflection(
                 rejected.append({"update": update, "reason": "unknown_edge"})
                 continue
             edge = state["edges"][edge_id]
-            edge["guard"] = content
-            edge["guard_status"] = "resolved" if status == "resolved" else "uncertain"
+            edge["guard"] = content if operation == "upsert" else ""
+            edge["guard_status"] = "resolved" if operation == "upsert" and status == "resolved" else "uncertain"
+            # The optimizer, not a confidence threshold or topology heuristic,
+            # decides whether this documented transition belongs in skill.
+            if operation == "upsert" and edge["guard_status"] == "resolved":
+                if edge.get("kind") == "candidate_branch":
+                    edge["kind"] = "promoted_branch"
+                edge["visibility"] = "skill"
+            else:
+                edge["visibility"] = "reference"
         elif resource in {"action_rule", "slot_policy"}:
             action = str(update.get("action", ""))
             if action not in valid_actions:
@@ -1077,10 +1101,17 @@ def autonomous_resource_reflection(
                 continue
             bucket = "action_rules" if resource == "action_rule" else "slot_policies"
             record = state.setdefault(bucket, {}).setdefault(action, {"action": action})
-            record["policy" if resource == "slot_policy" else "rule"] = content
+            record["policy" if resource == "slot_policy" else "rule"] = content if operation == "upsert" else ""
             record["status"] = "resolved" if status == "resolved" else "uncertain"
         else:
-            state.setdefault("reference_notes", []).append({"content": content, "status": status, "rationale": update.get("rationale", "")})
+            edge_id = str(update.get("edge_id", ""))
+            if edge_id and edge_id not in state.get("edges", {}):
+                rejected.append({"update": update, "reason": "unknown_reference_edge"})
+                continue
+            state.setdefault("reference_notes", []).append({
+                "edge_id": edge_id, "content": content, "status": status,
+                "rationale": update.get("rationale", ""),
+            })
         accepted.append(update)
     return {
         "planner_prompt": planner_prompt, "planner_prompt_chars": len(planner_prompt),
@@ -1101,6 +1132,54 @@ def render_online_action_rules(state: dict[str, Any]) -> str:
         if rule and record.get("status") == "resolved":
             lines.extend([f"#### `{action}`", rule, ""])
     return "\n".join(lines).rstrip() + "\n"
+
+
+def apply_working_skill_operations(
+    skill: str, state: dict[str, Any], updates: list[dict[str, Any]],
+) -> tuple[str, list[dict[str, Any]]]:
+    """Apply optimizer-approved edits only inside compiler-owned MCP anchors."""
+    from skill_mining.skill_writer import _upsert_action_rule, _upsert_transition_rule
+
+    applied = []
+    current = skill
+    for update in updates:
+        resource = str(update.get("resource", ""))
+        operation = str(update.get("op", "upsert")).lower()
+        content = str(update.get("content", "")).strip()
+        try:
+            if resource == "action_rule":
+                action = str(update.get("action", ""))
+                if operation == "upsert":
+                    current = _upsert_action_rule(current, action, f"#### `{action}`\n{content}")
+                elif operation == "delete":
+                    heading = re.escape(f"#### `{action}`")
+                    pattern = rf"(?ms)^{heading}\s*$.*?(?=^####\s+`|^<!-- ACTION_RULES_END -->\s*$)"
+                    current, count = re.subn(pattern, "", current, count=1)
+                    if count != 1:
+                        raise ValueError("action rule heading was not found inside skill")
+                else:
+                    continue
+            elif resource == "transition_guard":
+                edge = state["edges"][str(update.get("edge_id", ""))]
+                source, target = str(edge["source"]), str(edge["target"])
+                source_label, target_label = str(edge["source_action"]), str(edge["target_action"])
+                if operation == "upsert":
+                    block = f"##### `{source_label}` -> `{target_label}`\n- Transition when: {content}"
+                    current = _upsert_transition_rule(current, source, target, block)
+                elif operation == "delete":
+                    key = re.escape(f"<!-- EDGE_RULE:{source}=>{target} -->")
+                    pattern = rf"(?ms)^{key}\s*$.*?(?=^<!-- EDGE_RULE:|^<!-- TRANSITION_RULES_END -->\s*$)"
+                    current, count = re.subn(pattern, "", current, count=1)
+                    if count != 1:
+                        raise ValueError("transition rule key was not found inside skill")
+                else:
+                    continue
+            else:
+                continue
+            applied.append({"resource": resource, "op": operation, "action": update.get("action"), "edge_id": update.get("edge_id")})
+        except Exception as exc:
+            applied.append({"resource": resource, "op": operation, "error": repr(exc), "action": update.get("action"), "edge_id": update.get("edge_id")})
+    return current, applied
 
 
 def render_online_slot_policies(state: dict[str, Any]) -> str:
@@ -1124,7 +1203,7 @@ def render_online_resources(state: dict[str, Any]) -> tuple[str, str]:
         target = edge.get("target_action", edge.get("target"))
         guard = str(edge.get("guard", "")).strip()
         confidence = edge_confidence(edge)
-        if edge.get("visibility") == "skill" and edge.get("kind") != "backbone" and guard:
+        if edge.get("visibility") == "skill" and guard:
             skill_lines.extend([
                 f"- From `{source}`, transition to `{target}` when: {guard}",
             ])
@@ -1141,7 +1220,12 @@ def render_online_resources(state: dict[str, Any]) -> tuple[str, str]:
             ])
     for note in state.get("reference_notes", []):
         if str(note.get("content", "")).strip():
-            reference_lines.extend(["## Online-maintained note", f"- {note['content']}", ""])
+            edge = state.get("edges", {}).get(str(note.get("edge_id", "")), {})
+            title = (
+                f"{edge.get('source_action')} -> {edge.get('target_action')}"
+                if edge else "Online-maintained note"
+            )
+            reference_lines.extend([f"## {title}", f"- {note['content']}", ""])
     if len(skill_lines) == 2:
         skill_lines.append("- No non-backbone transition has met the online promotion criteria yet.")
     return "\n".join(skill_lines).rstrip() + "\n", "\n".join(reference_lines).rstrip() + "\n"

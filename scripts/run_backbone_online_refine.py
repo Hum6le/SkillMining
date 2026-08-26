@@ -8,9 +8,11 @@ are appended to the runtime skill only after an evidence-based promotion.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -22,8 +24,8 @@ from awm import MemoryStore, WorkflowStore
 from eval_tod.abcd.agent import ABCDAgent
 from skill_mining.online_refinement import (
     RefinementPolicy,
-    apply_refinement_patches,
     autonomous_resource_reflection,
+    apply_working_skill_operations,
     initialize_skill_dag,
     load_skill_dag,
     localize_rollout_batch,
@@ -48,6 +50,12 @@ def _write(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def _append_jsonl(path: Path, record: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
 def _batch_rollout_supervision(conversations: list[dict], turn_results: list[dict]) -> list[dict]:
     """Align every rollout target with gold action/slot supervision when present."""
     gold_by_turn = {}
@@ -69,15 +77,19 @@ def _batch_rollout_supervision(conversations: list[dict], turn_results: list[dic
             "predicted_action": row.get("predicted_action", ""),
             "predicted_slots": row.get("predicted_slots", []),
             "gold": gold_by_turn.get(key), "react_trace": row.get("react_trace", []),
+            "gold_response": (
+                row.get("reference_original") or row.get("reference", "")
+                if row.get("target_type") == "utterance" else ""
+            ),
         })
     return rows
 
 
-def _build_agent(args, base_skill: str, base_reference: str, action_rules: str,
+def _build_agent(args, working_skill: str, base_reference: str, action_rules: str,
                  slot_policies: str, state: dict) -> ABCDAgent:
-    online_skill, online_reference = render_online_resources(state)
+    _, online_reference = render_online_resources(state)
     workflow = WorkflowStore()
-    workflow.update(base_skill.rstrip() + "\n\n" + online_skill)
+    workflow.update(working_skill)
     return ABCDAgent(
         model=args.model,
         workflow=workflow,
@@ -92,7 +104,7 @@ def _build_agent(args, base_skill: str, base_reference: str, action_rules: str,
 
 
 def _checkpoint(
-    out_dir: Path, state: dict, base_skill: str, base_reference: str,
+    out_dir: Path, state: dict, working_skill: str, base_reference: str,
     policy: RefinementPolicy | None = None, base_slot_policies: str = "", base_action_rules: str = "",
 ) -> None:
     online_skill, online_reference = render_online_resources(state)
@@ -101,7 +113,8 @@ def _checkpoint(
     _write(out_dir / "online_reference.md", online_reference)
     _write(out_dir / "online_slot_policies.md", render_online_slot_policies(state))
     _write(out_dir / "online_action_rules.md", render_online_action_rules(state))
-    _write(out_dir / "skill.md", base_skill.rstrip() + "\n\n" + online_skill)
+    _write(out_dir / "working_skill.md", working_skill)
+    _write(out_dir / "skill.md", working_skill)
     _write(out_dir / "reference.md", base_reference.rstrip() + "\n\n" + online_reference)
     _write(out_dir / "slot_policies.md", base_slot_policies.rstrip() + "\n\n" + render_online_slot_policies(state))
     _write(out_dir / "action_rules.md", base_action_rules.rstrip() + "\n\n" + render_online_action_rules(state))
@@ -169,6 +182,8 @@ def main() -> None:
             raise FileNotFoundError(f"Cannot resume: {state_path} does not exist")
         state = load_skill_dag(state_path)
         base_skill = (out_dir / "base_skill.md").read_text(encoding="utf-8")
+        working_path = out_dir / "working_skill.md"
+        working_skill = working_path.read_text(encoding="utf-8") if working_path.exists() else (out_dir / "skill.md").read_text(encoding="utf-8")
         base_reference = (out_dir / "base_reference.md").read_text(encoding="utf-8")
         action_rules = (out_dir / "action_rules.md").read_text(encoding="utf-8")
         slot_policies = (out_dir / "slot_policies.md").read_text(encoding="utf-8")
@@ -204,10 +219,11 @@ def main() -> None:
             slot_policies = mined.get("slot_policies_md", "")
             _write(out_dir / "subgraph.json", json.dumps(mined["subgraph"], indent=2, ensure_ascii=False))
         _write(out_dir / "base_skill.md", base_skill)
+        working_skill = base_skill
         _write(out_dir / "base_reference.md", base_reference)
         _write(out_dir / "action_rules.md", action_rules)
         _write(out_dir / "slot_policies.md", slot_policies)
-        _checkpoint(out_dir, state, base_skill, base_reference, base_slot_policies=slot_policies, base_action_rules=action_rules)
+        _checkpoint(out_dir, state, working_skill, base_reference, base_slot_policies=slot_policies, base_action_rules=action_rules)
 
     if args.resume:
         if not schedule_path.exists():
@@ -260,26 +276,53 @@ def main() -> None:
 
     for batch_index, batch in enumerate(batches[completed:], start=completed + 1):
         log.info("Online batch %d/%d: %d sessions", batch_index, len(batches), len(batch))
-        agent = _build_agent(args, base_skill, base_reference, action_rules, slot_policies, state)
+        agent = _build_agent(args, working_skill, base_reference, action_rules, slot_policies, state)
         turns = []
         for conversation in batch:
             turns.extend(agent.predict_all_turns(conversation, predict_actions=True, verbose=False))
         _write(out_dir / "rollouts" / f"batch_{batch_index:04d}.json", json.dumps(turns, indent=2, ensure_ascii=False))
         localized = localize_rollout_batch(batch, turns, state)
+        # Retain threshold-based proposals only as diagnostics. In autonomous
+        # mode they must not mutate visibility or override the optimizer's
+        # resource decision.
         patches = propose_refinement_patches(state, policy)
-        apply_refinement_patches(state, patches)
         reflection = {"accepted": [], "rejected": []}
         if not args.skip_guard_llm:
             online_skill, online_reference = render_online_resources(state)
             reflection = autonomous_resource_reflection(
-                state, _batch_rollout_supervision(batch, turns), base_skill + "\n" + online_skill,
+                state, _batch_rollout_supervision(batch, turns), working_skill,
                 base_reference + "\n" + online_reference,
                 action_rules + "\n" + render_online_action_rules(state),
                 slot_policies + "\n" + render_online_slot_policies(state),
                 args.model, max_retries=args.guard_retries,
             )
+            skill_before_sha256 = hashlib.sha256(working_skill.encode("utf-8")).hexdigest()
+            working_skill, skill_operations = apply_working_skill_operations(
+                working_skill, state, reflection.get("accepted", []),
+            )
+            reflection["skill_operations"] = skill_operations
+            reflection["working_skill_before_sha256"] = skill_before_sha256
+            reflection["working_skill_after_sha256"] = hashlib.sha256(working_skill.encode("utf-8")).hexdigest()
             _write(out_dir / "autonomous_reflection" / f"batch_{batch_index:04d}.json",
                    json.dumps(reflection, indent=2, ensure_ascii=False))
+            _append_jsonl(out_dir / "refinement_ledger.jsonl", {
+                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                "batch_index": batch_index,
+                "conversation_ids": [str(item.get("convo_id", "?")) for item in batch],
+                "model_decision": reflection.get("model_decision", ""),
+                "no_update_reason": reflection.get("model_no_update_reason", ""),
+                "lookups": reflection.get("lookups", []),
+                "retrieved_sections": [
+                    {"resource": item.get("resource"), "title": item.get("title")}
+                    for item in reflection.get("retrieved_resources", [])
+                ],
+                "accepted_updates": reflection.get("accepted", []),
+                "rejected_updates": reflection.get("rejected", []),
+                "skill_operations": reflection.get("skill_operations", []),
+                "working_skill_before_sha256": reflection.get("working_skill_before_sha256", ""),
+                "working_skill_after_sha256": reflection.get("working_skill_after_sha256", ""),
+                "error": reflection.get("error", "") or reflection.get("planner_error", ""),
+            })
             if reflection.get("error"):
                 log.warning(
                     "  autonomous reflection failed after retries (prompt_chars=%s): %s",
@@ -294,8 +337,7 @@ def main() -> None:
                     reflection.get("model_decision", "missing"),
                     reflection.get("model_no_update_reason", "")[:180], reflection.get("prompt_chars", 0),
                 )
-            apply_refinement_patches(state, propose_refinement_patches(state, policy))
-        _checkpoint(out_dir, state, base_skill, base_reference, policy, slot_policies, action_rules)
+        _checkpoint(out_dir, state, working_skill, base_reference, policy, slot_policies, action_rules)
         _write(out_dir / "batch_diagnostics" / f"batch_{batch_index:04d}.json", json.dumps({
             "batch_index": batch_index,
             "conversation_ids": [str(item.get("convo_id", "?")) for item in batch],
@@ -311,10 +353,10 @@ def main() -> None:
         )
 
     log.info("Frozen test evaluation on %d held-out sessions", len(test))
-    final_agent = _build_agent(args, base_skill, base_reference, action_rules, slot_policies, state)
+    final_agent = _build_agent(args, working_skill, base_reference, action_rules, slot_policies, state)
     result = evaluate_agent_on_subflow(final_agent, test, "online_refined", args.subflow, save_dir=out_dir)
     _write(out_dir / "online_refine_result.json", json.dumps(result, indent=2, ensure_ascii=False))
-    _checkpoint(out_dir, state, base_skill, base_reference, policy, slot_policies, action_rules)
+    _checkpoint(out_dir, state, working_skill, base_reference, policy, slot_policies, action_rules)
     log.info("Final AST=%.4f action=%.4f slot=%.4f", result["ast_cds"]["ast_joint"], result["ast_cds"]["ast_action_name"], result["ast_cds"]["ast_slot_value"])
 
 

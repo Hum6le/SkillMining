@@ -7,6 +7,7 @@ from unittest.mock import patch
 from skill_mining.online_refinement import (
     RefinementPolicy,
     apply_refinement_patches,
+    apply_working_skill_operations,
     build_guard_induction_context,
     edge_confidence,
     initialize_skill_dag,
@@ -187,6 +188,43 @@ class OnlineRefinementTest(unittest.TestCase):
         self.assertEqual(policy["slot_success"], 0)
         self.assertEqual(policy["slot_failures"], 0)
 
+    def test_working_skill_operations_edit_anchor_sections_in_place(self):
+        state = initialize_skill_dag(_subgraph(), "account_access")
+        skill = '''# Skill
+<!-- ACTION_RULES_START -->
+#### `enter-details`
+Old action rule.
+<!-- ACTION_RULES_END -->
+<!-- TRANSITION_RULES_START -->
+<!-- TRANSITION_RULES_END -->
+'''
+        updated, operations = apply_working_skill_operations(skill, state, [
+            {"resource": "action_rule", "op": "upsert", "action": "enter-details", "content": "New action rule."},
+            {"resource": "transition_guard", "op": "upsert", "edge_id": "a=>c", "content": "The customer is creating a password."},
+        ])
+        self.assertIn("New action rule.", updated)
+        self.assertNotIn("Old action rule.", updated)
+        self.assertIn("EDGE_RULE:a=>c", updated)
+        self.assertIn("creating a password", updated)
+        self.assertFalse(any("error" in operation for operation in operations))
+
+    @patch("llm.resolve_config", return_value={"model": "test", "api_key": "", "base_url": ""})
+    @patch("llm.chat")
+    def test_threshold_diagnostics_do_not_revert_autonomous_skill_edit(self, chat, _config):
+        state = initialize_skill_dag(_subgraph(), "account_access")
+        chat.side_effect = [
+            '''{"lookups":[]}''',
+            '''{"decision":"update","updates":[{"resource":"transition_guard","edge_id":"a=>c","op":"upsert","content":"The customer is creating a password.","status":"resolved","rationale":"gold mismatch"}]}''',
+        ]
+        reflection = autonomous_resource_reflection(state, [{"gold": {"gold_action": "make-password"}}], "# Skill\n<!-- ACTION_RULES_START -->\n<!-- ACTION_RULES_END -->\n<!-- TRANSITION_RULES_START -->\n<!-- TRANSITION_RULES_END -->", "", "", "", "test")
+        skill, operations = apply_working_skill_operations(reflection["prompt"].split("<current_skill>", 1)[1].split("</current_skill>", 1)[0], state, reflection["accepted"])
+        self.assertEqual(state["edges"]["a=>c"]["visibility"], "skill")
+        diagnostics = propose_refinement_patches(state, RefinementPolicy())
+        self.assertTrue(any(item["operation"] == "sink_to_reference" for item in diagnostics))
+        self.assertEqual(state["edges"]["a=>c"]["visibility"], "skill")
+        self.assertIn("EDGE_RULE:a=>c", skill)
+        self.assertFalse(any("error" in item for item in operations))
+
     @patch("llm.resolve_config", return_value={"model": "test", "api_key": "", "base_url": ""})
     @patch("llm.chat")
     def test_joint_reflection_updates_guard_and_slot_policy_together(self, chat, _config):
@@ -223,7 +261,7 @@ class OnlineRefinementTest(unittest.TestCase):
             '''{"decision":"update","updates":[
           {"resource":"transition_guard","edge_id":"a=>c","content":"The customer is creating a password.","status":"resolved","rationale":"gold mismatch"},
           {"resource":"slot_policy","action":"make-password","content":"Use the newly confirmed value only.","status":"resolved","rationale":"slot mismatch"},
-          {"resource":"reference","content":"Keep rare recovery evidence in reference.","status":"uncertain","rationale":"limited support"}
+          {"resource":"reference","edge_id":"a=>c","content":"Keep rare recovery evidence in reference.","status":"uncertain","rationale":"limited support"}
         ]}'''
         ]
         result = autonomous_resource_reflection(state, [{"gold_action": "make-password", "predicted_action": "send-link"}], "skill", "reference", "rules", "slots", "test")
@@ -235,8 +273,13 @@ class OnlineRefinementTest(unittest.TestCase):
         self.assertEqual(result["model_decision"], "update")
         self.assertEqual(len(result["accepted"]), 3)
         self.assertEqual(state["edges"]["a=>c"]["guard_status"], "resolved")
+        self.assertEqual(state["edges"]["a=>c"]["visibility"], "skill")
+        online_skill, _ = render_online_resources(state)
+        self.assertIn("enter-details", online_skill)
+        self.assertIn("make-password", online_skill)
         self.assertEqual(state["slot_policies"]["make-password"]["status"], "resolved")
         self.assertEqual(len(state["reference_notes"]), 1)
+        self.assertEqual(state["reference_notes"][0]["edge_id"], "a=>c")
 
     def test_summary_names_branch_blockers(self):
         state = initialize_skill_dag(_subgraph(), "account_access")
