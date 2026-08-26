@@ -626,6 +626,12 @@ Writing requirements:
   conservatively. If the mode is `underspecified` or the interpretation is uncertain,
   say that the route is an observed alternative whose exact trigger is not
   fully identifiable; do not invent a precise condition.
+- At a source with sibling routes, retain the inferred conversational contrast:
+  explain which customer response, agent offer/question, clarification, or
+  unresolved exchange directs the workflow differently. Do not reduce several
+  distinct routes to the same vague condition or to an action-label paraphrase.
+  The prose must let an agent distinguish routes from dialogue context, while
+  remaining natural language rather than a state-variable decision table.
 - A self-transition means repeated action / retry behavior. Describe it as a
   retry or continued attempt when supported, not as a new action.
 - Do not claim mutual exclusion unless the evidence explicitly supports it.
@@ -659,7 +665,11 @@ Return only one valid JSON object, without Markdown fences.
 """
 
 
-def _parse_transition_write(raw: str, expected_source_ids: set[str]) -> str:
+def _parse_transition_write(
+    raw: str,
+    expected_source_ids: set[str],
+    fallback_by_source: dict[str, str] | None = None,
+) -> str:
     text = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.I | re.S).strip()
     parsed = json.loads(text)
     operations = parsed.get("operations") if isinstance(parsed, dict) else None
@@ -688,15 +698,96 @@ def _parse_transition_write(raw: str, expected_source_ids: set[str]) -> str:
         raise ValueError(
             f"transition write decision coverage mismatch; duplicate={duplicates}"
         )
+    fallback_by_source = fallback_by_source or {}
+
+    def has_routing_prose(source_id: str) -> bool:
+        marker = re.escape(_route_source_marker(source_id))
+        match = re.search(
+            rf"(?ms){marker}\s*(.*?)(?=<!-- ROUTE_SOURCE:|\Z)", content,
+        )
+        if not match:
+            return False
+        # Headings and compiler comments alone are not a routing policy.
+        return any(
+            line.strip()
+            and not line.lstrip().startswith("#")
+            and not line.lstrip().startswith("<!--")
+            for line in match.group(1).splitlines()
+        )
+
     missing = sorted(expected_source_ids - found)
+    semantically_empty = sorted(source for source in found if not has_routing_prose(source))
+    if semantically_empty:
+        # Remove blocks by marker positions rather than a multiline regex:
+        # a greedy whitespace token can otherwise span across the next marker.
+        marker_matches = list(re.finditer(marker_pattern, content))
+        blocks = {
+            match.group(1).strip(): (
+                match.start(),
+                marker_matches[index + 1].start() if index + 1 < len(marker_matches) else len(content),
+            )
+            for index, match in enumerate(marker_matches)
+        }
+        for source_id in sorted(semantically_empty, key=lambda source: blocks[source][0], reverse=True):
+            start, end = blocks[source_id]
+            content = (content[:start] + content[end:]).strip()
+        missing = sorted(set(missing) | set(semantically_empty))
     if missing:
-        # These comments are compiler metadata, not LLM-authored prose. Repair
-        # omission deterministically so a valid natural-language write cannot
-        # fail merely because the model forgot a hidden coverage marker.
-        content = content.rstrip() + "\n\n" + "\n".join(
-            _route_source_marker(source_id) for source_id in missing
+        # Do not repair a semantic omission with markers alone. Add a complete
+        # conservative paragraph for each omitted source so every observed
+        # decision point remains executable even if the LLM dropped it.
+        content = content.rstrip() + "\n\n" + "\n\n".join(
+            fallback_by_source.get(source_id, _route_source_marker(source_id))
+            for source_id in missing
         )
     return content
+
+
+def _render_routing_fallback(
+    transition_induction: dict[str, Any] | None,
+    nodes: dict[str, dict[str, Any]],
+    source_ids: set[str] | None = None,
+) -> str:
+    """Render complete conservative routing prose without another LLM call.
+
+    This is deliberately an editorial fallback, not a second induction pass.
+    It guarantees that a malformed workflow response cannot erase decision
+    points that were already observed in the mined graph.
+    """
+    rules_by_source = (transition_induction or {}).get("rules_by_source", {})
+    paragraphs: list[str] = []
+    for source, rules in sorted(rules_by_source.items()):
+        if source_ids is not None and source not in source_ids:
+            continue
+        valid_rules = [
+            rule for rule in (rules or [])
+            if isinstance(rule, dict) and str(rule.get("target") or "").strip()
+        ]
+        if not valid_rules:
+            continue
+        source_label = nodes.get(source, {}).get("label", _short_label(str(source)))
+        lines = [_route_source_marker(str(source)), f"#### Routing after `{source_label}`"]
+        for rule in valid_rules:
+            target = str(rule["target"])
+            target_label = nodes.get(target, {}).get("label", _short_label(target))
+            status = str(rule.get("status") or "underspecified")
+            condition = str(rule.get("condition") or "").strip()
+            if status == "distinguishable" and condition:
+                lines.append(f"- Continue to `{target_label}` when {condition}.")
+            elif status == "ordered_fallback" and condition:
+                lines.append(f"- Use `{target_label}` as a fallback when {condition}.")
+            elif target == source:
+                lines.append(f"- Repeating `{source_label}` is an observed retry or continued attempt.")
+            else:
+                lines.append(
+                    f"- `{target_label}` is an observed alternative continuation; "
+                    "consult `reference.md` when the dialogue does not make its trigger clear."
+                )
+        paragraphs.append("\n".join(lines))
+    return "\n\n".join(paragraphs) or (
+        "- No transition-specific routing evidence was recoverable; follow the Backbone Tree "
+        "and consult `reference.md` for observed alternatives."
+    )
 
 
 def build_backbone_seed_skill(
@@ -753,10 +844,16 @@ def _compile_backbone_skill_with_transition_mcp(
     from llm import chat
     nodes = {node["id"]: node for node in subgraph.get("nodes", [])}
     prompt = _build_transition_write_prompt(subflow, seed, transition_induction, nodes)
+    fallback_by_source = {
+        source: _render_routing_fallback(transition_induction, nodes, {source})
+        for source in expected_source_ids
+    }
     last_error: Exception | None = None
     for attempt in range(1, _SKILL_LLM_MAX_RETRIES + 1):
         try:
-            content = _parse_transition_write(chat(prompt, temperature=0.0).strip(), expected_source_ids)
+            content = _parse_transition_write(
+                chat(prompt, temperature=0.0).strip(), expected_source_ids, fallback_by_source,
+            )
             return _replace_routing_section(seed, content)
         except Exception as exc:
             last_error = exc
@@ -768,9 +865,15 @@ def _compile_backbone_skill_with_transition_mcp(
                     f"retrying in {delay:.1f}s"
                 )
                 time.sleep(delay)
-    raise RuntimeError(
-        f"LLM transition write failed for {subflow} after "
-        f"{_SKILL_LLM_MAX_RETRIES} attempts: {last_error}"
+    # The induced graph facts are already available. Do not allow an editorial
+    # JSON/MCP failure to leave Routing Policies blank or discard the subflow.
+    print(
+        f"  LLM transition write warning for {subflow}: {last_error}; "
+        "using deterministic complete routing fallback"
+    )
+    return _replace_routing_section(
+        seed,
+        _render_routing_fallback(transition_induction, nodes),
     )
 
 
@@ -1909,8 +2012,14 @@ def induce_transition_rules(
     edge_cases: dict[str, list[dict[str, Any]]],
     max_retries: int = 3,
     skill_context: str | None = None,
+    max_sources_per_call: int = 8,
 ) -> dict[str, Any]:
-    """Induce continuation modes using local cases and the global skill draft."""
+    """Induce continuation modes using local cases and the global skill draft.
+
+    Sources are compared jointly inside bounded groups. This retains sibling
+    contrast while preventing one oversized or malformed workflow response
+    from dropping all routing decisions for a large subflow.
+    """
     from llm import chat
 
     def parse_json_object(raw: str) -> dict[str, Any] | None:
@@ -1973,30 +2082,46 @@ def induce_transition_rules(
         graph_overview.append(f"{source} -> {targets}")
     global_skill = str(skill_context or "(No previously compiled skill draft is available.)")
 
-    discovery_prompt = f"""Discover continuation modes for a session-mined action graph.
+    def build_discovery_prompt(source_groups: list[str]) -> str:
+        return f"""Discover continuation modes for a session-mined action graph.
 
 The graph overview and current skill draft provide global context. Use them to
 understand how a local transition fits the whole workflow, including its
 backbone position, likely rejoin points, and neighboring decisions. Do not
 rewrite the skill and do not invent graph edges.
 
-For EACH source, compare ALL outgoing target groups jointly. The primary
-evidence is the raw dialogue BETWEEN the source action and the target action.
-Use it to identify interaction events: an agent proposal/question, a user
-acceptance/rejection/correction, newly supplied information, an unresolved
-request, or another exchange that explains why the next action differs. Use
-the earlier prefix only to interpret that exchange. Do not treat the action
-label, slot values, or a precomputed state variable as the explanation.
-Treat literal values as instance-specific. Do not force an explanation into a
-variable, boolean, or formal predicate. A valid interpretation may be ordinary
-natural language describing how the intervening utterances differ, or may say
-that the route is only supported by the preceding dialogue and lacks a stable
-general trigger.
-For each target choose exactly one status: `distinguishable` when the supplied
-dialogue gives a meaningful clue, `ordered_fallback` when it is only valid
-after a normal route cannot proceed, or `underspecified` when the evidence does
-not uniquely explain the difference. For `underspecified`, leave `interpretation` empty
-and preserve the uncertainty in `evidence`. Do not add targets.
+For EACH source, compare ALL of its outgoing target groups side by side before
+writing any answer. Your actual task is to infer, from the trajectories, why
+the conversation continues to one target rather than another. The primary
+evidence is the raw agent/customer dialogue BETWEEN the source action and the
+next action. The earlier dialogue prefix is also raw evidence: use it only to
+resolve what the intervening exchange refers to.
+
+For every target, write an ordinary-language continuation explanation that is
+grounded in the observed interaction: for example, what the agent just asked
+or offered; whether the customer accepted, rejected, clarified, supplied a
+missing detail, changed the request, or left an issue unresolved; and why that
+event makes this target appropriate relative to its sibling targets. The
+explanation must state the discriminating conversational circumstance when one
+is visible. Do not merely paraphrase the target action name, repeat a generic
+condition shared by several sibling targets, or say that a route has higher
+support. Explicitly contrast siblings: if two targets look similar, explain
+the different wording, response, or preceding event that separates them.
+
+Do NOT use a precomputed state, a slot schema, action labels, frequencies, or
+invented boolean variables as the cause of a transition. Treat literal values
+as instance-specific. Do not force the evidence into a predicate, field, or
+formal state representation. The desired output is a concise natural-language
+account of the dialogue situation. When the supplied trajectories do not
+provide a stable distinction, say so honestly rather than inventing one.
+
+The JSON fields below are only a transport format; `interpretation` and
+`evidence` must remain natural-language trajectory reasoning. For each target
+choose exactly one status: `distinguishable` when the dialogue supplies a
+specific differentiating clue, `ordered_fallback` when the path appears after
+another route cannot proceed, or `underspecified` when the trajectories do not
+uniquely explain the difference. For `underspecified`, leave `interpretation`
+empty and record the uncertainty in `evidence`. Do not add targets.
 
 <global_graph_overview>
 {chr(10).join(graph_overview) or '(no retained graph edges)'}
@@ -2006,7 +2131,7 @@ and preserve the uncertainty in `evidence`. Do not add targets.
 {global_skill}
 </existing_skill_draft>
 
-{chr(10).join(groups)}
+{chr(10).join(source_groups)}
 
 Return ONLY JSON in this schema:
 {{"modes_by_source": {{
@@ -2050,38 +2175,58 @@ Return ONLY JSON in this schema:
             for source, targets in allowed.items()
         }
 
-    last_error: Exception | None = None
-    for attempt in range(max_retries):
-        try:
-            discovery_raw = chat(discovery_prompt, temperature=0.0).strip()
-            discovery = parse_json_object(discovery_raw)
-            if discovery is None:
-                print(
-                    f"  Transition induction warning for {subflow}: "
-                    f"discovery returned invalid or truncated JSON; using conservative fallback"
-                )
-                return {
-                    "rules_by_source": underspecified_modes(),
-                    "discovery_raw_output": discovery_raw,
-                    "verifier_raw_output": "",
-                    "parse_warning": "invalid_or_truncated_discovery_json",
-                }
-            # Keep the single joint induction result as evidence for the
-            # later filesystem-MCP writing pass. Do not run a second verifier:
-            # the writer should express uncertainty naturally instead of
-            # forcing every edge through another rigid classification step.
-            rules_by_source = clean_modes(discovery)
-            return {
-                "rules_by_source": rules_by_source,
-                "discovery_raw_output": discovery_raw,
-                "verifier_raw_output": "",
-                "verification_skipped": True,
-            }
-        except Exception as exc:
-            last_error = exc
-            if attempt + 1 < max_retries:
-                time.sleep(_SKILL_LLM_RETRY_BASE_DELAY * (2 ** attempt))
-    raise RuntimeError(f"Continuation-mode induction failed for {subflow}: {last_error}")
+    source_order = sorted(allowed)
+    max_sources_per_call = max(1, int(max_sources_per_call))
+    grouped_sources = [
+        source_order[index:index + max_sources_per_call]
+        for index in range(0, len(source_order), max_sources_per_call)
+    ]
+    group_text_by_source = dict(zip(source_order, groups))
+    rules_by_source: dict[str, list[dict[str, str]]] = {}
+    raw_outputs: list[dict[str, Any]] = []
+    fallback_sources: list[str] = []
+
+    for group_index, source_ids in enumerate(grouped_sources, 1):
+        prompt = build_discovery_prompt([group_text_by_source[source] for source in source_ids])
+        last_error: Exception | None = None
+        for attempt in range(max_retries):
+            try:
+                discovery_raw = chat(prompt, temperature=0.0).strip()
+                discovery = parse_json_object(discovery_raw)
+                raw_outputs.append({
+                    "sources": source_ids,
+                    "raw_output": discovery_raw,
+                    "error": "" if discovery is not None else "invalid_or_truncated_json",
+                })
+                if discovery is None:
+                    raise ValueError("invalid or truncated discovery JSON")
+                cleaned = clean_modes(discovery)
+                rules_by_source.update({source: cleaned[source] for source in source_ids})
+                break
+            except Exception as exc:
+                last_error = exc
+                if attempt + 1 < max_retries:
+                    time.sleep(_SKILL_LLM_RETRY_BASE_DELAY * (2 ** attempt))
+        else:
+            # Preserve coverage for only the failed group. Its routing prose
+            # will explicitly remain conservative instead of disappearing.
+            print(
+                f"  Transition induction warning for {subflow} group {group_index}/"
+                f"{len(grouped_sources)} ({', '.join(source_ids)}): {last_error}; "
+                "using underspecified fallback for this group"
+            )
+            fallback = underspecified_modes()
+            rules_by_source.update({source: fallback[source] for source in source_ids})
+            fallback_sources.extend(source_ids)
+
+    return {
+        "rules_by_source": rules_by_source,
+        "discovery_raw_output": raw_outputs,
+        "verifier_raw_output": "",
+        "verification_skipped": True,
+        "induction_groups": len(grouped_sources),
+        "fallback_sources": fallback_sources,
+    }
 
 
 def _build_skill_md_from_backbone_fallback(subflow: str, subgraph: dict) -> str:

@@ -92,6 +92,15 @@ them directly against `predicted_action` and `predicted_slots` to diagnose the
 failure. Learn a reusable rule from the contrast, not a transcript-specific
 answer.
 
+For a transition guard, the gold/predicted labels identify what was correct or
+incorrect; they are NOT an explanation of why the route should be chosen.
+Infer that explanation from the dialogue context, especially the agent's
+immediately preceding request/offer and the customer's response, clarification,
+acceptance, rejection, or unresolved concern. Compare sibling targets jointly
+and state the conversational difference that makes one route appropriate.
+Never turn this into a state table, slot-schema test, frequency rule, or
+action-name paraphrase.
+
 Do not invent actions, edges, hidden state, slot names, or literal customer
 values. A routing guard must distinguish its target from every sibling target.
 A slot policy must state general value source, availability timing, reuse, and
@@ -138,6 +147,14 @@ to retrieve it instead of flattening all exceptional logic into skill.md.
 Use only listed action names and graph edges. Learn general rules from the
 gold/prediction contrast: never hard-code literal customer values or invent
 hidden state, slot names, actions, or edges.
+
+For transition edits, gold and predicted actions identify the error only.
+Derive the routing explanation from the dialogue context itself: compare what
+the agent and customer said before the decision with sibling routes, and write
+the natural-language circumstance that distinguishes them. Never use graph
+kind, edge frequency, a synthetic state field, slot schema, or an action name
+as the claimed cause of a transition. For utterance edits, use the dialogue
+and gold response to infer a reusable response policy, not a copied reply.
 
 The runtime provides an MCP-style local resource lookup. First choose which
 small parts of the auxiliary resources are relevant to this batch; retrieved
@@ -699,27 +716,35 @@ def build_guard_induction_context(state: dict[str, Any], edge_id: str, max_cases
         if other.get("source") == edge.get("source") and other.get("target") != edge.get("target")
     ]
 
+    def compact_case(case: dict[str, Any]) -> dict[str, Any]:
+        """Expose dialogue supervision, never serialized ReAct/state payloads."""
+        return {
+            "conversation_id": case.get("conversation_id"),
+            "gold_action": case.get("gold_action"),
+            "predicted_action": case.get("predicted_action"),
+            "action_success": bool(case.get("action_success")),
+            "context": str(case.get("context", ""))[-1200:],
+        }
+
     def compact(item: dict[str, Any]) -> dict[str, Any]:
-        positives = [case for case in item.get("evidence", []) if case.get("action_success")][:max_cases]
-        negatives = [case for case in item.get("evidence", []) if not case.get("action_success")][:max_cases]
+        positives = [
+            compact_case(case) for case in item.get("evidence", [])
+            if case.get("action_success")
+        ][:max_cases]
+        negatives = [
+            compact_case(case) for case in item.get("evidence", [])
+            if not case.get("action_success")
+        ][:max_cases]
         return {
             "edge_id": _edge_id(item["source"], item["target"]),
             "source_action": item.get("source_action"),
             "target_action": item.get("target_action"),
-            "kind": item.get("kind"),
-            "visibility": item.get("visibility"),
             "guard": item.get("guard"),
-            "guard_status": item.get("guard_status"),
-            "gold_support": item.get("gold_support", 0),
-            "confidence": round(edge_confidence(item), 6),
-            "competing_targets": dict(item.get("competing_targets", {})),
             "positive_cases": positives,
             "negative_cases": negatives,
         }
 
     return {
-        "subflow": state.get("subflow"),
-        "backbone_order": state.get("backbone_order", []),
         "target_edge": compact(edge),
         "sibling_edges": [compact(item) for item in sorted(siblings, key=lambda item: item["target"])],
         "instruction": (
