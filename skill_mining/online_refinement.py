@@ -183,6 +183,15 @@ reflection call: a failure alone is not sufficient evidence to delete a
 previously working rule, and a success is positive evidence for retaining the
 corresponding action, transition, slot policy, or response behavior.
 
+The primary online objective is to improve joint AST, not an isolated action
+accuracy or isolated slot accuracy. For an action turn, AST is successful only
+when both the predicted action and its ordered slot values match the gold
+decision. Diagnose action and slot errors together and prefer an update that
+improves the complete decision without regressing the other part. A rule that
+raises action accuracy while causing slot-value failures is not an improvement.
+Agent-utterance quality may be considered as secondary evidence, but it must
+never replace the joint action-and-slot AST objective.
+
 <current_skill>{skill}</current_skill>
 <retrieved_resources>{retrieved_resources}</retrieved_resources>
 <graph_edges>{graph_edges}</graph_edges>
@@ -1100,7 +1109,7 @@ def autonomous_resource_reflection(
         return ""
 
     def _supervision_outcome(row: dict[str, Any]) -> str:
-        """Expose only reliable action-and-slot success labels to reflection."""
+        """Compute the per-turn joint AST outcome from action and slots."""
         gold = row.get("gold")
         if not isinstance(gold, dict) or not gold.get("gold_action"):
             # Text metrics are aggregate-level in this runner, so exact string
@@ -1123,6 +1132,7 @@ def autonomous_resource_reflection(
         "predicted_action": row.get("predicted_action", ""),
         "predicted_slots": row.get("predicted_slots", []), "gold": row.get("gold"),
         "gold_response": str(row.get("gold_response", ""))[:500],
+        "ast_outcome": _supervision_outcome(row),
         "evidence_outcome": _supervision_outcome(row),
         "reference_query": reference_query_from_trace(row.get("react_trace")),
     } for row in supervised_rows[-32:]]
