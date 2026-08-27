@@ -67,6 +67,14 @@ availability timing, reuse constraints, and missing-value handling. Do not
 copy literal customer values, names, emails, ids, or invent slot names/hidden
 state. Do not alter the workflow topology or action choice.
 
+Interpret evidence action-centrically. When the action prediction is wrong,
+its emitted values belong to the wrong action and are not slot-policy evidence.
+When action and slots are both correct, retain that case as positive evidence
+but do not revise the policy merely because it succeeded. Revise a slot policy
+only for cases where the action is correct but the ordered slot values are
+wrong, and use successful cases for the same action to preserve compatible
+value-source, order, and reuse behavior.
+
 <existing_slot_resource>
 {existing_slot_resource}
 </existing_slot_resource>
@@ -191,6 +199,15 @@ improves the complete decision without regressing the other part. A rule that
 raises action accuracy while causing slot-value failures is not an improvement.
 Agent-utterance quality may be considered as secondary evidence, but it must
 never replace the joint action-and-slot AST objective.
+
+Apply this AST triage exactly for every action turn. (1) If the predicted
+action is wrong, diagnose routing/action selection; do not attribute its slot
+list to the gold action's Action Card. (2) If action and ordered slots are both
+correct, treat the case as positive evidence to preserve, not as a reason to
+edit. (3) Only if the action is correct but ordered slots are wrong should you
+consider an Action Card slot-binding update. Compare those failures with
+successful cases for the same action, and modify only the slot-binding logic
+when routing itself is already correct.
 
 <current_skill>{skill}</current_skill>
 <retrieved_resources>{retrieved_resources}</retrieved_resources>
@@ -597,9 +614,52 @@ def localize_rollout_batch(
         by_conversation[str(row.get("convo_id", "?"))].append(row)
     action_to_node = {node["label"]: node["id"] for node in state.get("nodes", [])}
     events = []
+    slot_events = []
     for conversation in conversations:
         sid = str(conversation.get("convo_id", "?"))
         actions = _gold_action_rows(conversation, by_conversation.get(sid, []))
+        # Slot binding is an action-level property, not a property of the
+        # incoming transition. Record every gold action turn, including the
+        # first action and single-action sessions. Only action-correct turns
+        # can be valid evidence for that action's ordered slot policy.
+        for current in actions:
+            action_ok = bool(current["action_correct"])
+            slot_ok = bool(current["slot_correct"])
+            if not action_ok:
+                continue
+            evidence = {
+                "conversation_id": sid,
+                "source_turn": None,
+                "target_turn": current["turn_index"],
+                "action_success": True,
+                "slot_success": slot_ok,
+                "slot_evaluable": True,
+                "gold_action": current["gold_action"],
+                "predicted_action": current["predicted_action"],
+                "gold_slots": current["gold_slots"],
+                "predicted_slots": current["predicted_slots"],
+                "gold_slot_count": current["gold_slot_count"],
+                "predicted_slot_count": current["predicted_slot_count"],
+                "context": current["context"],
+                "react_trace": current["react_trace"],
+            }
+            policy = state.setdefault("slot_policies", {}).setdefault(current["gold_action"], {
+                "action": current["gold_action"], "slot_total": 0, "slot_success": 0,
+                "slot_failures": 0, "evidence": [], "policy": "", "status": "pending",
+            })
+            for field, default in {
+                "slot_total": 0, "slot_success": 0, "slot_failures": 0,
+                "evidence": [], "policy": "", "status": "pending",
+            }.items():
+                policy.setdefault(field, default)
+            policy["slot_total"] += 1
+            if slot_ok:
+                policy["slot_success"] += 1
+            else:
+                policy["slot_failures"] += 1
+            if len(policy["evidence"]) < max_evidence_per_edge:
+                policy["evidence"].append(evidence)
+            slot_events.append(evidence)
         for previous, current in zip(actions, actions[1:]):
             source = action_to_node.get(previous["gold_action"], previous["gold_action"])
             target = action_to_node.get(current["gold_action"], current["gold_action"])
@@ -628,16 +688,6 @@ def localize_rollout_batch(
                 edge["rollout_success"] += 1
             else:
                 edge["rollout_failure"] += 1
-            # Slot quality is meaningful only when the selected action is
-            # correct. Otherwise the values belong to another schema and must
-            # not be blamed on this action's slot policy.
-            slot_evaluable = action_ok
-            if slot_evaluable:
-                edge["slot_total"] += 1
-                if slot_ok:
-                    edge["slot_success"] += 1
-            if slot_evaluable and not slot_ok:
-                edge["slot_failures"] += 1
             predicted_target = str(current.get("predicted_action") or "")
             if predicted_target and predicted_target != current["gold_action"]:
                 predicted_node = action_to_node.get(predicted_target, predicted_target)
@@ -648,7 +698,7 @@ def localize_rollout_batch(
                 "target_turn": current["turn_index"],
                 "action_success": action_ok,
                 "slot_success": slot_ok,
-                "slot_evaluable": slot_evaluable,
+                "slot_evaluable": action_ok,
                 "gold_action": current["gold_action"],
                 "predicted_action": current["predicted_action"],
                 "gold_slots": current["gold_slots"],
@@ -662,28 +712,13 @@ def localize_rollout_batch(
             if len(edge["evidence"]) < max_evidence_per_edge:
                 edge["evidence"].append(evidence)
             events.append({"edge_id": key, **evidence})
-            if slot_evaluable:
-                policy = state.setdefault("slot_policies", {}).setdefault(current["gold_action"], {
-                    "action": current["gold_action"], "slot_total": 0, "slot_success": 0,
-                    "slot_failures": 0, "evidence": [], "policy": "", "status": "pending",
-                })
-                # A prior autonomous patch may have created this action's
-                # record with only policy/status fields. Hydrate it before
-                # accumulating new rollout statistics.
-                for field, default in {
-                    "slot_total": 0, "slot_success": 0, "slot_failures": 0,
-                    "evidence": [], "policy": "", "status": "pending",
-                }.items():
-                    policy.setdefault(field, default)
-                policy["slot_total"] += 1
-                if slot_ok:
-                    policy["slot_success"] += 1
-                else:
-                    policy["slot_failures"] += 1
-                if len(policy["evidence"]) < max_evidence_per_edge:
-                    policy["evidence"].append(evidence)
     state["batches_processed"] = int(state.get("batches_processed", 0)) + 1
-    return {"events": events, "num_events": len(events)}
+    return {
+        "events": events,
+        "num_events": len(events),
+        "slot_events": slot_events,
+        "num_slot_events": len(slot_events),
+    }
 
 
 @dataclass(frozen=True)

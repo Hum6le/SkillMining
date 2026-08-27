@@ -25,7 +25,12 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 from eval_tod.evaluate import AbstractTodAgent
 from eval_tod.schemas import Prediction
 from awm.memory import MemoryStore, WorkflowStore
-from .action_schema import action_contract_prompt, canonicalize_prediction, load_action_schema
+from .action_schema import (
+    action_contract_prompt,
+    canonical_action_name,
+    canonicalize_prediction,
+    load_action_schema,
+)
 
 
 # ── Prompt templates ──────────────────────────────────────────
@@ -92,10 +97,15 @@ sections as a fallback.
 </mcp_protocol>"""
 
 _POLICY_RESOURCE_PROMPT = """<progressive_disclosure_mcp>
-Two local read-only policy resources may be retrieved at runtime:
-- `retrieve_action_rule`: fetches an action-specific procedure card from `action_rules.md`.
-- `retrieve_slot_policy`: fetches the selected action's ordered value-source and reuse policy from `slot_policies.md`.
-Use returned policy cards as general constraints. Resolve actual values only from the current dialogue or compatible scenario facts.
+One local read-only resource may be retrieved at runtime:
+- `retrieve_action_card`: fetches one action-specific card combining the action
+  rule and all ordered slot-binding policies for that action.
+
+Use the card only after identifying a plausible action (or a small set of
+candidate actions). The action rule explains when to choose the action; the
+slot-binding part explains where each ordered value comes from, when it may be
+reused, and how missing values are handled. Resolve actual values only from
+the current dialogue or compatible scenario facts.
 </progressive_disclosure_mcp>"""
 
 _RESOURCE_PRIORITY_PROMPT = """<resource_priority>
@@ -180,6 +190,7 @@ Return ONLY valid JSON:
 ```json
 {{
   "thought": "why this reference lookup is useful",
+  "candidate_actions": ["one or two canonical action names that may be needed next"],
   "action": "retrieve_reference",
   "action_input": {{
     "query": "...",
@@ -382,6 +393,7 @@ class ABCDAgent(AbstractTodAgent):
         self.reference_sections = _parse_reference_sections(self.reference_text)
         self.action_rule_sections = _parse_action_policy_sections(action_rules_text or "")
         self.slot_policy_sections = _parse_action_policy_sections(slot_policies_text or "")
+        self.action_cards = self._build_action_cards()
         self.reference_top_k = max(0, reference_top_k)
         self.reference_max_chars = max(200, reference_max_chars)
         self.workflow_max_chars = max(1000, workflow_max_chars)
@@ -402,6 +414,24 @@ class ABCDAgent(AbstractTodAgent):
         """Replace prompt-time mined-reference material."""
         self.reference_text = reference_text or ""
         self.reference_sections = _parse_reference_sections(self.reference_text)
+
+    def _build_action_cards(self) -> dict[str, dict[str, str]]:
+        """Merge legacy action-rule and slot-policy files by canonical action."""
+        cards: dict[str, dict[str, str]] = {}
+        for key, sections in (
+            ("action_rule", self.action_rule_sections),
+            ("slot_policy", self.slot_policy_sections),
+        ):
+            for row in sections:
+                action = str(row.get("action", "")).strip()
+                body = str(row.get("body", "")).strip()
+                if not action or not body:
+                    continue
+                card = cards.setdefault(action, {})
+                previous = card.get(key, "")
+                if body not in previous:
+                    card[key] = f"{previous}\n\n{body}".strip()
+        return cards
 
     def _retrieve_policy_resource(
         self, sections: list[dict[str, str]], context: str, resource_name: str,
@@ -428,6 +458,37 @@ class ABCDAgent(AbstractTodAgent):
             used += len(block)
         parts.append(f"</retrieved_{resource_name}>")
         return "\n".join(parts) if len(parts) > 2 else ""
+
+    def _retrieve_action_cards(
+        self, candidate_actions: list[str], max_chars: int = 2200,
+    ) -> str:
+        """Retrieve unified action cards, never independent slot resources."""
+        self._last_action_card_lookup = {
+            "tool": "retrieve_action_card", "executed": bool(self.action_cards),
+            "query": list(candidate_actions), "selected_actions": [],
+        }
+        if not self.action_cards or not candidate_actions:
+            return ""
+        selected = [
+            (action, self.action_cards[action]) for action in candidate_actions
+            if action in self.action_cards
+        ]
+        parts = ['<retrieved_action_card tool="retrieve_action_card">']
+        used = len(parts[0])
+        for action, card in selected:
+            blocks = [f"\n#### `{action}`"]
+            if card.get("action_rule"):
+                blocks.extend(["Action rule:", card["action_rule"]])
+            if card.get("slot_policy"):
+                blocks.extend(["Slot binding policy:", card["slot_policy"]])
+            block = "\n".join(blocks)
+            if used + len(block) > max_chars:
+                continue
+            parts.append(block)
+            used += len(block)
+            self._last_action_card_lookup["selected_actions"].append(action)
+        parts.append("</retrieved_action_card>")
+        return "\n".join(parts) if self._last_action_card_lookup["selected_actions"] else ""
 
     # ── AbstractTodAgent interface ─────────────────────────
 
@@ -483,7 +544,8 @@ class ABCDAgent(AbstractTodAgent):
 
         reference_plan = self._plan_reference_lookup(context, scenario, verbose=False)
         system = self._build_system_prompt(
-            scenario, context, reference_plan.get("query_text", ""),
+            scenario, context,
+            candidate_actions=reference_plan.get("candidate_actions", []),
         )
         reference_lookup = self._lookup_reference(
             reference_plan.get("query_text", ""),
@@ -587,10 +649,10 @@ class ABCDAgent(AbstractTodAgent):
                 continue
 
             system = self._build_system_prompt(scenario, context)
-
             reference_plan = self._plan_reference_lookup(context, scenario, verbose=verbose)
             system = self._build_system_prompt(
-                scenario, context, reference_plan.get("query_text", ""),
+                scenario, context,
+                candidate_actions=reference_plan.get("candidate_actions", []),
             )
             reference_lookup = self._lookup_reference(
                 reference_plan.get("query_text", ""),
@@ -643,6 +705,7 @@ class ABCDAgent(AbstractTodAgent):
                 "system_prompt_chars": self._last_prompt_budget.get("system_chars", 0),
                 "memory_exemplars": len(self.memory),
                 "reference_lookup": reference_lookup,
+                "action_card_lookup": getattr(self, "_last_action_card_lookup", {}),
                 "exemplar_lookup": getattr(self, "_last_exemplar_lookup", {}),
                 "react_trace": [
                     {
@@ -677,6 +740,14 @@ class ABCDAgent(AbstractTodAgent):
                     },
                     {
                         "turn": 4,
+                        "thought": "Retrieve the complete action card for the planner's candidate actions.",
+                        "action": "retrieve_action_card",
+                        "action_input": getattr(self, "_last_action_card_lookup", {}).get("query", []),
+                        "executed": getattr(self, "_last_action_card_lookup", {}).get("executed", False),
+                        "selected_actions": getattr(self, "_last_action_card_lookup", {}).get("selected_actions", []),
+                    },
+                    {
+                        "turn": 5,
                         "thought": "Predict the backend action, ordered slots, and response using the workflow, scenario, dialogue context, and retrieved snippets.",
                         "action": "llm_generate",
                         "action_input": {
@@ -753,6 +824,7 @@ class ABCDAgent(AbstractTodAgent):
                     "top_k": self.reference_top_k,
                 },
                 "fallback_used": True,
+                "candidate_actions": [],
             }
 
         action_input = parsed.get("action_input", {})
@@ -768,6 +840,16 @@ class ABCDAgent(AbstractTodAgent):
             top_k = int(action_input.get("top_k", self.reference_top_k))
         except Exception:
             top_k = self.reference_top_k
+        candidate_actions = []
+        raw_candidates = parsed.get("candidate_actions", [])
+        if not isinstance(raw_candidates, list):
+            raw_candidates = [raw_candidates]
+        for value in raw_candidates:
+            action, _ = canonical_action_name(value, self.action_schema.get("actions"))
+            if action in self.action_schema.get("actions", set()) and action not in candidate_actions:
+                candidate_actions.append(action)
+            if len(candidate_actions) >= 2:
+                break
 
         return {
             "thought": str(parsed.get("thought", "")).strip(),
@@ -775,9 +857,10 @@ class ABCDAgent(AbstractTodAgent):
             "action_input": {
                 "query": query_text,
                 "subflow": str(action_input.get("subflow") or visible_subflow),
-                "top_k": max(1, top_k),
+                "top_k": max(0, top_k),
             },
             "fallback_used": fallback_used,
+            "candidate_actions": candidate_actions,
         }
 
     def _plan_reference_lookup(
@@ -787,15 +870,16 @@ class ABCDAgent(AbstractTodAgent):
         verbose: bool = False,
     ) -> dict[str, Any]:
         """Ask the model to produce an MCP-style reference lookup query."""
-        if not self.reference_sections or self.reference_top_k <= 0:
+        if (not self.reference_sections or self.reference_top_k <= 0) and not self.action_cards:
             return {
-                "thought": "No reference sections are available.",
+                "thought": "No reference sections or action cards are available.",
                 "query_text": "",
                 "top_k": self.reference_top_k,
                 "raw_output": "",
                 "tool_call": {},
                 "messages": [],
                 "fallback_used": False,
+                "candidate_actions": [],
             }
 
         if self.expose_scenario_labels:
@@ -841,6 +925,7 @@ class ABCDAgent(AbstractTodAgent):
             "tool_call": tool_call,
             "messages": messages,
             "fallback_used": bool(tool_call.get("fallback_used", False)),
+            "candidate_actions": list(tool_call.get("candidate_actions", [])),
         }
 
     def _lookup_reference(
@@ -851,7 +936,9 @@ class ABCDAgent(AbstractTodAgent):
         top_k: int | None = None,
     ) -> dict[str, Any]:
         """Return compact reference snippets relevant to the model-written query."""
-        requested_top_k = max(1, int(top_k or self.reference_top_k))
+        requested_top_k = max(0, int(
+            self.reference_top_k if top_k is None else top_k
+        ))
         visible_subflow = (
             str(scenario.get("subflow", ""))
             if self.expose_scenario_labels else ""
@@ -1046,7 +1133,8 @@ class ABCDAgent(AbstractTodAgent):
         return all_results
 
     def _build_system_prompt(
-        self, scenario: dict[str, Any], context: str = "", policy_query: str = "",
+        self, scenario: dict[str, Any], context: str = "",
+        candidate_actions: list[str] | None = None,
     ) -> str:
         """Build system prompt with scenario context + workflow + memory."""
         flow = scenario.get("flow", "unknown")
@@ -1109,19 +1197,12 @@ class ABCDAgent(AbstractTodAgent):
         ]
         if self.reference_sections and self.reference_top_k > 0:
             extra_parts.append(_REFERENCE_TOOL_PROMPT)
-        if self.action_rule_sections or self.slot_policy_sections:
+        if self.action_cards:
             extra_parts.append(_POLICY_RESOURCE_PROMPT)
 
-        action_rules = self._retrieve_policy_resource(
-            self.action_rule_sections, context + "\n" + policy_query, "action_rule",
-        )
-        if action_rules:
-            extra_parts.append(action_rules)
-        slot_policies = self._retrieve_policy_resource(
-            self.slot_policy_sections, context + "\n" + policy_query, "slot_policy",
-        )
-        if slot_policies:
-            extra_parts.append(slot_policies)
+        action_cards = self._retrieve_action_cards(candidate_actions or [])
+        if action_cards:
+            extra_parts.append(action_cards)
 
         wf = self.workflow.format_prompt(
             query_text=self._recent_context_excerpt(context, max_lines=8),

@@ -18,6 +18,7 @@ OFFLINE_DIR=""
 OUTPUT_DIR=""
 RESUME_RUN=""
 WORKFLOW_ID=""
+EVAL_WORKFLOW_IDS=""
 EXTRA_ARGS=()
 
 usage() {
@@ -35,6 +36,7 @@ Required:
 Options:
   --output-dir DIR           New online run directory. Default: outputs/online_refine_<subflow>_<timestamp>
   --workflow-id ID           Export SKILLMINING_WORKFLOW_ID for workflow API routing
+  --eval-workflow-ids IDS    Comma-separated workflow IDs for parallel online rollouts
   --conda-env NAME           Default: skillmining310
   --hf-endpoint URL          Default: https://hf-mirror.com
   --python-bin PATH          Default: python
@@ -63,6 +65,7 @@ while [[ $# -gt 0 ]]; do
         --output-dir) require_value "$1" "$#"; OUTPUT_DIR="$2"; shift 2 ;;
         --resume-run) require_value "$1" "$#"; RESUME_RUN="$2"; shift 2 ;;
         --workflow-id) require_value "$1" "$#"; WORKFLOW_ID="$2"; shift 2 ;;
+        --eval-workflow-ids) require_value "$1" "$#"; EVAL_WORKFLOW_IDS="$2"; shift 2 ;;
         --conda-env) require_value "$1" "$#"; CONDA_ENV="$2"; shift 2 ;;
         --hf-endpoint) require_value "$1" "$#"; HF_ENDPOINT_VALUE="$2"; shift 2 ;;
         --python-bin) require_value "$1" "$#"; PYTHON_BIN="$2"; shift 2 ;;
@@ -113,6 +116,7 @@ if [[ -n "$RESUME_RUN" ]]; then
 elif [[ -n "$OFFLINE_DIR" ]]; then
     COMMAND+=(--offline-dir "$OFFLINE_DIR")
 fi
+[[ -n "$EVAL_WORKFLOW_IDS" ]] && COMMAND+=(--eval-workflow-ids "$EVAL_WORKFLOW_IDS")
 COMMAND+=("${EXTRA_ARGS[@]}")
 
 MANIFEST="$RUN_DIR/online_refine_manifest.txt"
@@ -125,6 +129,7 @@ MANIFEST="$RUN_DIR/online_refine_manifest.txt"
     echo "conda_env=$CONDA_ENV"
     echo "hf_endpoint=$HF_ENDPOINT"
     echo "workflow_id=${WORKFLOW_ID:-config.py}"
+    echo "eval_workflow_ids=${EVAL_WORKFLOW_IDS:-none}"
     printf 'command='; printf '%q ' "${COMMAND[@]}"; echo
 } > "$MANIFEST"
 
@@ -133,6 +138,7 @@ echo "Subflow:       $SUBFLOW"
 echo "Offline input: ${OFFLINE_DIR:-state in $RUN_DIR}"
 echo "Run directory: $RUN_DIR"
 echo "Workflow ID:   ${WORKFLOW_ID:-config.py}"
+echo "Eval workers:  ${EVAL_WORKFLOW_IDS:-1 (workflow_id/config.py)}"
 echo "HF_ENDPOINT:   $HF_ENDPOINT"
 printf 'Command:       '; printf '%q ' "${COMMAND[@]}"; echo
 

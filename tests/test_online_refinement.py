@@ -218,6 +218,35 @@ class OnlineRefinementTest(unittest.TestCase):
         state["slot_policies"]["send-link"].update({"policy": "Use the current customer-provided value after confirmation.", "status": "resolved"})
         self.assertIn("#### `send-link`", render_online_slot_policies(state))
 
+    def test_slot_evidence_covers_first_and_single_action_turns(self):
+        state = initialize_skill_dag(_subgraph(), "account_access")
+        conversations = [
+            {
+                "convo_id": "single",
+                "delexed": [{"targets": ["", "take_action", "send-link", ["gold"]]}],
+            },
+            {
+                "convo_id": "first",
+                "delexed": [
+                    {"targets": ["", "take_action", "enter-details", []]},
+                    {"targets": ["", "take_action", "send-link", ["gold"]]},
+                ],
+            },
+        ]
+        rows = [
+            {"convo_id": "single", "turn_index": 0, "predicted_action": "send-link", "predicted_slots": ["wrong"], "context": "", "react_trace": []},
+            {"convo_id": "first", "turn_index": 0, "predicted_action": "enter-details", "predicted_slots": [], "context": "", "react_trace": []},
+            {"convo_id": "first", "turn_index": 1, "predicted_action": "send-link", "predicted_slots": ["gold"], "context": "", "react_trace": []},
+        ]
+
+        localized = localize_rollout_batch(conversations, rows, state)
+
+        self.assertEqual(localized["num_slot_events"], 3)
+        self.assertEqual(state["slot_policies"]["send-link"]["slot_total"], 2)
+        self.assertEqual(state["slot_policies"]["send-link"]["slot_success"], 1)
+        self.assertEqual(state["slot_policies"]["send-link"]["slot_failures"], 1)
+        self.assertEqual(state["slot_policies"]["enter-details"]["slot_total"], 1)
+
     def test_load_legacy_slot_policy_record_hydrates_rollout_counters(self):
         state = initialize_skill_dag(_subgraph(), "account_access")
         state["slot_policies"]["send-link"] = {"action": "send-link", "policy": "old", "status": "resolved"}
