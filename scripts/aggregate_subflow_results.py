@@ -72,11 +72,13 @@ def _summary_paths(inputs: list[str], recursive: bool) -> list[Path]:
     paths: list[Path] = []
     for raw in inputs:
         path = Path(raw).resolve()
-        if path.is_file() and path.name == "summary.json":
+        if path.is_file() and path.name in {"summary.json", "online_refine_result.json"}:
             paths.append(path)
         elif path.is_dir():
-            pattern = "**/summary.json" if recursive else "summary.json"
-            paths.extend(path.glob(pattern))
+            names = ("summary.json", "online_refine_result.json")
+            for name in names:
+                pattern = f"**/{name}" if recursive else name
+                paths.extend(path.glob(pattern))
     return sorted(set(p for p in paths if p.is_file()))
 
 
@@ -108,6 +110,14 @@ def _record_from_eval(
 def _records_from_summary(path: Path) -> list[dict[str, Any]]:
     summary = _read_json(path)
     run_dir = path.parent
+
+    if path.name == "online_refine_result.json":
+        subflow = run_dir.name
+        record = _record_from_eval(
+            method="backbone_online_refine", phase="online_refined",
+            subflow=subflow, run_dir=run_dir, payload=summary,
+        )
+        return [record] if record else []
 
     # Graph Mining currently stores {subflow: {seed, mined, ...}} directly.
     graph_rows = {
