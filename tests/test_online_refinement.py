@@ -7,6 +7,7 @@ from unittest.mock import patch
 from skill_mining.online_refinement import (
     RefinementPolicy,
     apply_refinement_patches,
+    apply_dynamic_skill_operations,
     apply_working_skill_operations,
     build_guard_induction_context,
     edge_confidence,
@@ -43,6 +44,24 @@ def _subgraph():
 
 
 class OnlineRefinementTest(unittest.TestCase):
+    def test_dynamic_skill_operations_do_not_require_compiler_anchors(self):
+        skill = "# Skill\n\n## Workflow\n- Route A.\n\n## Reference\n- Retrieve details.\n"
+        updated, operations = apply_dynamic_skill_operations(skill, [
+            {
+                "op": "replace", "match_text": "- Route A.",
+                "new_text": "- Route B when the customer rejects the first option.",
+            },
+            {
+                "op": "insert_after", "match_text": "## Reference",
+                "new_text": "\n- Use transition evidence for uncertain alternatives.",
+            },
+            {"op": "delete", "match_text": "- Retrieve details.\n", "new_text": ""},
+        ])
+        self.assertFalse(any("error" in operation for operation in operations))
+        self.assertIn("Route B when", updated)
+        self.assertIn("transition evidence", updated)
+        self.assertNotIn("Retrieve details", updated)
+
     def test_initialization_separates_backbone_branch_and_retry(self):
         state = initialize_skill_dag(_subgraph(), "account_access")
         self.assertEqual(state["edges"]["a=>b"]["kind"], "backbone")
@@ -244,7 +263,7 @@ Old action rule.
         state = initialize_skill_dag(_subgraph(), "account_access")
         chat.side_effect = [
             '''{"lookups":[]}''',
-            '''{"decision":"update","updates":[{"resource":"transition_guard","edge_id":"a=>c","op":"upsert","content":"The customer is creating a password.","status":"resolved","rationale":"gold mismatch"}]}''',
+            '''{"decision":"update","updates":[{"resource":"transition_guard","edge_id":"a=>c","op":"upsert","content":"The customer is creating a password.","status":"resolved","rationale":"gold mismatch"}],"skill_operations":[{"op":"insert_after","edge_id":"a=>c","match_text":"<!-- TRANSITION_RULES_START -->","new_text":"\\n- Password route.","rationale":"integrate guard"}]}''',
         ]
         reflection = autonomous_resource_reflection(state, [{"gold": {"gold_action": "make-password"}}], "# Skill\n<!-- ACTION_RULES_START -->\n<!-- ACTION_RULES_END -->\n<!-- TRANSITION_RULES_START -->\n<!-- TRANSITION_RULES_END -->", "", "", "", "test")
         skill, operations = apply_working_skill_operations(reflection["prompt"].split("<current_skill>", 1)[1].split("</current_skill>", 1)[0], state, reflection["accepted"])
@@ -292,7 +311,7 @@ Old action rule.
           {"resource":"transition_guard","edge_id":"a=>c","content":"The customer is creating a password.","status":"resolved","rationale":"gold mismatch"},
           {"resource":"slot_policy","action":"make-password","content":"Use the newly confirmed value only.","status":"resolved","rationale":"slot mismatch"},
           {"resource":"reference","edge_id":"a=>c","content":"Keep rare recovery evidence in reference.","status":"uncertain","rationale":"limited support"}
-        ]}'''
+        ],"skill_operations":[{"op":"replace","edge_id":"a=>c","match_text":"skill","new_text":"updated skill","rationale":"integrate guard"}]}'''
         ]
         result = autonomous_resource_reflection(state, [{"gold_action": "make-password", "predicted_action": "send-link"}], "skill", "reference", "rules", "slots", "test")
         self.assertEqual(chat.call_count, 2)

@@ -25,6 +25,7 @@ from eval_tod.abcd.agent import ABCDAgent
 from skill_mining.online_refinement import (
     RefinementPolicy,
     autonomous_resource_reflection,
+    apply_dynamic_skill_operations,
     apply_working_skill_operations,
     initialize_skill_dag,
     load_skill_dag,
@@ -69,13 +70,18 @@ def _repair_failed_skill_operations(
         previous = payload.get("skill_operations", [])
         if not any(isinstance(item, dict) and item.get("error") for item in previous):
             continue
-        updates = [
-            item for item in payload.get("accepted", [])
-            if isinstance(item, dict) and item.get("resource") in {"action_rule", "transition_guard"}
-        ]
-        if not updates:
-            continue
-        working_skill, replayed = apply_working_skill_operations(working_skill, state, updates)
+        dynamic_updates = payload.get("proposed_skill_operations", [])
+        if dynamic_updates:
+            working_skill, replayed = apply_dynamic_skill_operations(working_skill, dynamic_updates)
+        else:
+            # Pre-content-addressed runs only stored semantic resource updates.
+            updates = [
+                item for item in payload.get("accepted", [])
+                if isinstance(item, dict) and item.get("resource") in {"action_rule", "transition_guard"}
+            ]
+            if not updates:
+                continue
+            working_skill, replayed = apply_working_skill_operations(working_skill, state, updates)
         payload["resume_repair_skill_operations"] = replayed
         _write(path, json.dumps(payload, indent=2, ensure_ascii=False))
         repaired.append({"batch": path.stem, "operations": replayed})
@@ -338,9 +344,11 @@ def main() -> None:
                 args.model, max_retries=args.guard_retries,
             )
             skill_before_sha256 = hashlib.sha256(working_skill.encode("utf-8")).hexdigest()
-            working_skill, skill_operations = apply_working_skill_operations(
-                working_skill, state, reflection.get("accepted", []),
+            proposed_skill_operations = reflection.get("proposed_skill_operations", [])
+            working_skill, skill_operations = apply_dynamic_skill_operations(
+                working_skill, proposed_skill_operations,
             )
+            reflection["requested_skill_operations"] = proposed_skill_operations
             reflection["skill_operations"] = skill_operations
             reflection["working_skill_before_sha256"] = skill_before_sha256
             reflection["working_skill_after_sha256"] = hashlib.sha256(working_skill.encode("utf-8")).hexdigest()

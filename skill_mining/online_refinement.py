@@ -180,7 +180,31 @@ Return valid JSON only:
 "action":"required only for action_rule/slot_policy",
 "op":"upsert|delete",
 "content":"concise natural-language replacement or addition; empty only for delete", "status":"resolved|uncertain",
-"rationale":"grounded in specific rollout-vs-gold evidence"}}]}}
+"rationale":"grounded in specific rollout-vs-gold evidence"}}],
+"skill_operations":[{{"op":"replace|insert_after|delete",
+"edge_id":"optional graph edge ID; required when applying a transition_guard",
+"match_text":"an exact, unique excerpt copied from current_skill",
+"new_text":"replacement/inserted text; empty only for delete",
+"rationale":"why this local edit improves the executable skill"}}]}}
+
+<filesystem_mcp>
+You may directly edit the complete current skill without relying on any fixed
+heading, HTML marker, transition block, or line number. Choose the most
+appropriate existing prose to revise, remove, or extend. Each `match_text`
+must be copied exactly from `current_skill` and must identify one location:
+- `replace`: replace that exact excerpt with `new_text`.
+- `insert_after`: insert `new_text` immediately after that exact excerpt.
+- `delete`: remove that exact excerpt; set `new_text` to an empty string.
+The executor applies operations in order and requires each match to occur
+exactly once in the then-current file. Prefer a sufficiently specific local
+paragraph or bullet over an entire document. Do not emit a skill operation
+when a resource-only update is enough.
+
+If an update changes a transition guard that should affect runtime routing,
+also emit the matching `skill_operation` that integrates, rewrites, or removes
+that routing prose in `skill.md`. A transition update without such an edit is
+reference-only and must not be presented as a change to the executable skill.
+</filesystem_mcp>
 """
 
 _RESOURCE_LOOKUP_PLANNER_PROMPT = """You are planning local MCP-style
@@ -1086,8 +1110,32 @@ def autonomous_resource_reflection(
         if attempt < max(1, max_retries):
             time.sleep(float(2 ** (attempt - 1)))
 
+    proposed_skill_operations, rejected_skill_operations = [], []
+    for item in payload.get("skill_operations", []):
+        if not isinstance(item, dict):
+            rejected_skill_operations.append({"operation": item, "reason": "not_an_object"})
+            continue
+        op = str(item.get("op", "")).strip().lower()
+        match_text = str(item.get("match_text", ""))
+        new_text = str(item.get("new_text", ""))
+        if op not in {"replace", "insert_after", "delete"} or not match_text:
+            rejected_skill_operations.append({"operation": item, "reason": "invalid_dynamic_skill_operation"})
+            continue
+        if (op == "delete" and new_text) or (op != "delete" and not new_text):
+            rejected_skill_operations.append({"operation": item, "reason": "invalid_dynamic_skill_content"})
+            continue
+        proposed_skill_operations.append({
+            "op": op, "edge_id": str(item.get("edge_id", "")).strip(),
+            "match_text": match_text, "new_text": new_text,
+            "rationale": str(item.get("rationale", "")),
+        })
+
     valid_actions = {str(node["label"]) for node in state.get("nodes", [])}
     accepted, rejected = [], []
+    executable_transition_edges = {
+        str(item.get("edge_id", "")) for item in proposed_skill_operations
+        if str(item.get("edge_id", ""))
+    }
     for update in payload.get("updates", []):
         if not isinstance(update, dict):
             continue
@@ -1107,6 +1155,12 @@ def autonomous_resource_reflection(
             edge_id = str(update.get("edge_id", ""))
             if edge_id not in state.get("edges", {}):
                 rejected.append({"update": update, "reason": "unknown_edge"})
+                continue
+            if operation == "upsert" and status == "resolved" and edge_id not in executable_transition_edges:
+                rejected.append({
+                    "update": update,
+                    "reason": "resolved_transition_guard_missing_executable_skill_edit",
+                })
                 continue
             edge = state["edges"][edge_id]
             edge["guard"] = content if operation == "upsert" else ""
@@ -1144,6 +1198,8 @@ def autonomous_resource_reflection(
         "retrieved_resources": retrieved, "planner_error": planner_error,
         "prompt": prompt, "prompt_chars": len(prompt), "raw_response": raw,
         "accepted": accepted, "rejected": rejected,
+        "proposed_skill_operations": proposed_skill_operations,
+        "rejected_skill_operations": rejected_skill_operations,
         "model_decision": str(payload.get("decision", "")),
         "model_no_update_reason": str(payload.get("no_update_reason", "")),
         "error": last_error if not payload else "",
@@ -1157,6 +1213,57 @@ def render_online_action_rules(state: dict[str, Any]) -> str:
         if rule and record.get("status") == "resolved":
             lines.extend([f"#### `{action}`", rule, ""])
     return "\n".join(lines).rstrip() + "\n"
+
+
+def apply_dynamic_skill_operations(
+    skill: str, operations: list[dict[str, Any]],
+) -> tuple[str, list[dict[str, Any]]]:
+    """Apply model-authored, content-addressed edits to the current skill.
+
+    Unlike the legacy anchor editor, this treats the complete skill as the
+    editable artifact. Exact unique excerpts provide an optimistic-concurrency
+    check without coupling online refinement to a particular compiler layout.
+    """
+    current = skill
+    applied: list[dict[str, Any]] = []
+    for operation in operations:
+        op = str(operation.get("op", "")).strip().lower()
+        match_text = str(operation.get("match_text", ""))
+        new_text = str(operation.get("new_text", ""))
+        record = {
+            "op": op,
+            "edge_id": str(operation.get("edge_id", "")),
+            "match_text": match_text,
+            "new_text": new_text,
+            "rationale": str(operation.get("rationale", "")),
+        }
+        try:
+            if op not in {"replace", "insert_after", "delete"}:
+                raise ValueError("unsupported dynamic skill operation")
+            if not match_text:
+                raise ValueError("dynamic skill operation requires match_text")
+            if op == "delete" and new_text:
+                raise ValueError("delete operation must use an empty new_text")
+            if op != "delete" and not new_text:
+                raise ValueError("replace/insert_after operation requires new_text")
+            occurrences = current.count(match_text)
+            if occurrences != 1:
+                raise ValueError(
+                    f"match_text must occur exactly once in current skill; found={occurrences}"
+                )
+            position = current.index(match_text)
+            if op == "replace":
+                current = current[:position] + new_text + current[position + len(match_text):]
+            elif op == "insert_after":
+                end = position + len(match_text)
+                current = current[:end] + new_text + current[end:]
+            else:
+                current = current[:position] + current[position + len(match_text):]
+            record["applied"] = True
+        except Exception as exc:
+            record["error"] = repr(exc)
+        applied.append(record)
+    return current, applied
 
 
 def apply_working_skill_operations(
