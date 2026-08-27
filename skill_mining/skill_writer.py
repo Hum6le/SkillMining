@@ -561,6 +561,96 @@ def _replace_routing_section(skill: str, content: str) -> str:
     return skill[:start] + "\n\n" + content.strip() + "\n\n" + skill[end:]
 
 
+def _ensure_action_rules_region(skill: str) -> str:
+    """Add editable action-rule anchors to a current-format compiled skill.
+
+    Older compiler variants already emit these anchors. The organized compiler
+    originally emitted only a Markdown ``### Action Rules`` heading, so this
+    migration keeps existing offline skills editable during online refinement.
+    """
+    if skill.count(_ACTION_RULES_START) == 1 and skill.count(_ACTION_RULES_END) == 1:
+        return skill
+    if _ACTION_RULES_START in skill or _ACTION_RULES_END in skill:
+        raise ValueError("skill has malformed ACTION_RULES anchors")
+    match = re.search(
+        r"(?ms)^(### Action Rules\s*$\n)(.*?)(?=^## (?:Slot Discipline|Slot Policies|Reference)\s*$|\Z)",
+        skill,
+    )
+    if not match:
+        raise ValueError("skill does not contain an Action Rules section to migrate")
+    body = match.group(2).strip()
+    replacement = (
+        match.group(1)
+        + _ACTION_RULES_START + "\n"
+        + (body + "\n" if body else "")
+        + _ACTION_RULES_END + "\n"
+    )
+    return skill[:match.start()] + replacement + skill[match.end():]
+
+
+def _routing_source_bounds(skill: str, source: str) -> tuple[int, int] | None:
+    """Locate one source block inside the current Routing Policies region."""
+    routing_start = skill.index(_ROUTING_SECTION_START) + len(_ROUTING_SECTION_START)
+    routing_end = skill.index(_ROUTING_SECTION_END)
+    matches = list(re.finditer(r"<!-- ROUTE_SOURCE:\s*(.*?)\s*-->", skill[routing_start:routing_end]))
+    for index, match in enumerate(matches):
+        if match.group(1).strip() == source:
+            start = routing_start + match.start()
+            end = routing_start + (matches[index + 1].start() if index + 1 < len(matches) else routing_end - routing_start)
+            return start, end
+    return None
+
+
+def _upsert_routing_transition_rule(
+    skill: str, source: str, target: str, source_label: str, target_label: str, content: str,
+) -> str:
+    """Edit one online transition in the organized Routing Policies section."""
+    if skill.count(_ROUTING_SECTION_START) != 1 or skill.count(_ROUTING_SECTION_END) != 1:
+        raise ValueError("skill does not contain a unique ROUTING_SECTION region")
+    if skill.index(_ROUTING_SECTION_START) >= skill.index(_ROUTING_SECTION_END):
+        raise ValueError("ROUTING_SECTION markers are out of order")
+    bounds = _routing_source_bounds(skill, source)
+    if bounds is None:
+        insertion = skill.index(_ROUTING_SECTION_END)
+        source_block = (
+            f"{_route_source_marker(source)}\n#### Routing after `{source_label}`\n"
+            f"{_route_edge_marker(f'{source}=>{target}')}\n"
+            f"- Continue to `{target_label}` when {content.strip()}.\n\n"
+        )
+        return skill[:insertion] + source_block + skill[insertion:]
+
+    start, end = bounds
+    block = skill[start:end]
+    edge_marker = _route_edge_marker(f"{source}=>{target}")
+    new_edge = edge_marker + f"\n- Continue to `{target_label}` when {content.strip()}.\n"
+    position = block.find(edge_marker)
+    if position >= 0:
+        following = re.search(r"(?m)^<!-- ROUTE_EDGE:.*? -->\s*$", block[position + len(edge_marker):])
+        edge_end = position + len(edge_marker) + (following.start() if following else len(block) - position - len(edge_marker))
+        block = block[:position] + new_edge + block[edge_end:]
+    else:
+        block = block.rstrip() + "\n" + new_edge + "\n"
+    return skill[:start] + block + skill[end:]
+
+
+def _delete_routing_transition_rule(skill: str, source: str, target: str) -> str:
+    """Delete only an online edge block from Routing Policies."""
+    if skill.count(_ROUTING_SECTION_START) != 1 or skill.count(_ROUTING_SECTION_END) != 1:
+        raise ValueError("skill does not contain a unique ROUTING_SECTION region")
+    bounds = _routing_source_bounds(skill, source)
+    if bounds is None:
+        raise ValueError("routing source marker was not found")
+    start, end = bounds
+    block = skill[start:end]
+    edge_marker = _route_edge_marker(f"{source}=>{target}")
+    position = block.find(edge_marker)
+    if position < 0:
+        raise ValueError("online routing edge marker was not found")
+    following = re.search(r"(?m)^<!-- ROUTE_EDGE:.*? -->\s*$", block[position + len(edge_marker):])
+    edge_end = position + len(edge_marker) + (following.start() if following else len(block) - position - len(edge_marker))
+    return skill[:start] + (block[:position] + block[edge_end:]).rstrip() + "\n\n" + skill[end:]
+
+
 def _transition_induction_source_ids(
     transition_induction: dict[str, Any] | None,
 ) -> set[str]:
@@ -1105,6 +1195,8 @@ def _validate_backbone_skill(
         raise ValueError("compiled skill omitted the complete Backbone Tree")
     if "### Action Rules" not in skill:
         raise ValueError("compiled skill omitted the Action Rules section")
+    if skill.count(_ACTION_RULES_START) != 1 or skill.count(_ACTION_RULES_END) != 1:
+        raise ValueError("compiled skill omitted the unique ACTION_RULES edit region")
     if "## Slot Policies" not in skill:
         raise ValueError("compiled skill omitted the Slot Policies section")
     for source, target in required_backbone_edges or []:
@@ -1981,6 +2073,7 @@ the authoritative parent-child placement contract for actions in the tree.]
 <!-- ROUTING_SECTION_END -->
 
 ### Action Rules
+<!-- ACTION_RULES_START -->
 #### `action-a`
 - Slots: ordered real values only; `arg1` is ...
 - Position: parent `...`; backbone children `...`.
@@ -1989,6 +2082,7 @@ the authoritative parent-child placement contract for actions in the tree.]
 
 #### `every-other-retained-action`
 - [Repeat one concise rule for every remaining allowed action, including branch and retry actions.]
+<!-- ACTION_RULES_END -->
 
 ## Slot Discipline
 - Use only real values available in the current dialogue state.

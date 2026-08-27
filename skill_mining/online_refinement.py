@@ -1163,7 +1163,13 @@ def apply_working_skill_operations(
     skill: str, state: dict[str, Any], updates: list[dict[str, Any]],
 ) -> tuple[str, list[dict[str, Any]]]:
     """Apply optimizer-approved edits only inside compiler-owned MCP anchors."""
-    from skill_mining.skill_writer import _upsert_action_rule, _upsert_transition_rule
+    from skill_mining.skill_writer import (
+        _delete_routing_transition_rule,
+        _ensure_action_rules_region,
+        _upsert_action_rule,
+        _upsert_routing_transition_rule,
+        _upsert_transition_rule,
+    )
 
     applied = []
     current = skill
@@ -1174,6 +1180,7 @@ def apply_working_skill_operations(
         try:
             if resource == "action_rule":
                 action = str(update.get("action", ""))
+                current = _ensure_action_rules_region(current)
                 if operation == "upsert":
                     current = _upsert_action_rule(current, action, f"#### `{action}`\n{content}")
                 elif operation == "delete":
@@ -1189,14 +1196,22 @@ def apply_working_skill_operations(
                 source, target = str(edge["source"]), str(edge["target"])
                 source_label, target_label = str(edge["source_action"]), str(edge["target_action"])
                 if operation == "upsert":
-                    block = f"##### `{source_label}` -> `{target_label}`\n- Transition when: {content}"
-                    current = _upsert_transition_rule(current, source, target, block)
+                    if "<!-- ROUTING_SECTION_START -->" in current:
+                        current = _upsert_routing_transition_rule(
+                            current, source, target, source_label, target_label, content,
+                        )
+                    else:
+                        block = f"##### `{source_label}` -> `{target_label}`\n- Transition when: {content}"
+                        current = _upsert_transition_rule(current, source, target, block)
                 elif operation == "delete":
-                    key = re.escape(f"<!-- EDGE_RULE:{source}=>{target} -->")
-                    pattern = rf"(?ms)^{key}\s*$.*?(?=^<!-- EDGE_RULE:|^<!-- TRANSITION_RULES_END -->\s*$)"
-                    current, count = re.subn(pattern, "", current, count=1)
-                    if count != 1:
-                        raise ValueError("transition rule key was not found inside skill")
+                    if "<!-- ROUTING_SECTION_START -->" in current:
+                        current = _delete_routing_transition_rule(current, source, target)
+                    else:
+                        key = re.escape(f"<!-- EDGE_RULE:{source}=>{target} -->")
+                        pattern = rf"(?ms)^{key}\s*$.*?(?=^<!-- EDGE_RULE:|^<!-- TRANSITION_RULES_END -->\s*$)"
+                        current, count = re.subn(pattern, "", current, count=1)
+                        if count != 1:
+                            raise ValueError("transition rule key was not found inside skill")
                 else:
                     continue
             else:

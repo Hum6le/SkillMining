@@ -56,6 +56,32 @@ def _append_jsonl(path: Path, record: dict) -> None:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def _repair_failed_skill_operations(
+    out_dir: Path, state: dict, working_skill: str,
+) -> tuple[str, list[dict]]:
+    """Replay only historically failed in-place skill edits after an anchor migration."""
+    repaired: list[dict] = []
+    reflection_dir = out_dir / "autonomous_reflection"
+    if not reflection_dir.exists():
+        return working_skill, repaired
+    for path in sorted(reflection_dir.glob("batch_*.json")):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        previous = payload.get("skill_operations", [])
+        if not any(isinstance(item, dict) and item.get("error") for item in previous):
+            continue
+        updates = [
+            item for item in payload.get("accepted", [])
+            if isinstance(item, dict) and item.get("resource") in {"action_rule", "transition_guard"}
+        ]
+        if not updates:
+            continue
+        working_skill, replayed = apply_working_skill_operations(working_skill, state, updates)
+        payload["resume_repair_skill_operations"] = replayed
+        _write(path, json.dumps(payload, indent=2, ensure_ascii=False))
+        repaired.append({"batch": path.stem, "operations": replayed})
+    return working_skill, repaired
+
+
 def _batch_rollout_supervision(conversations: list[dict], turn_results: list[dict]) -> list[dict]:
     """Align every rollout target with gold action/slot supervision when present."""
     gold_by_turn = {}
@@ -188,6 +214,21 @@ def main() -> None:
         action_rules = (out_dir / "action_rules.md").read_text(encoding="utf-8")
         slot_policies = (out_dir / "slot_policies.md").read_text(encoding="utf-8")
         log.info("Resuming after %d batches", state.get("batches_processed", 0))
+        working_skill, repaired_operations = _repair_failed_skill_operations(
+            out_dir, state, working_skill,
+        )
+        if repaired_operations:
+            _write(out_dir / "working_skill.md", working_skill)
+            _write(out_dir / "skill.md", working_skill)
+            repaired_count = sum(len(item["operations"]) for item in repaired_operations)
+            failed_count = sum(
+                1 for item in repaired_operations for operation in item["operations"]
+                if operation.get("error")
+            )
+            log.info(
+                "Resume repaired %d historical skill operations across %d batches (%d still failed)",
+                repaired_count, len(repaired_operations), failed_count,
+            )
     else:
         offline_dir = Path(args.offline_dir) if args.offline_dir else None
         if offline_dir is not None:

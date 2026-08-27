@@ -208,6 +208,36 @@ Old action rule.
         self.assertIn("creating a password", updated)
         self.assertFalse(any("error" in operation for operation in operations))
 
+    def test_working_skill_operations_support_current_routing_compiler_format(self):
+        state = initialize_skill_dag(_subgraph(), "account_access")
+        skill = '''# Skill
+## Workflow
+### Routing Policies
+<!-- ROUTING_SECTION_START -->
+<!-- ROUTE_SOURCE:a -->
+#### Routing after `enter-details`
+- Continue along the observed workflow.
+<!-- ROUTING_SECTION_END -->
+
+### Action Rules
+#### `enter-details`
+- Gather required information.
+
+## Slot Discipline
+- Use dialogue values only.
+'''
+        updated, operations = apply_working_skill_operations(skill, state, [
+            {"resource": "transition_guard", "op": "upsert", "edge_id": "a=>c",
+             "content": "the customer asks to create or reset a password"},
+            {"resource": "action_rule", "op": "upsert", "action": "enter-details",
+             "content": "Collect only details supplied in the dialogue."},
+        ])
+        self.assertFalse(any("error" in operation for operation in operations))
+        self.assertIn("<!-- ROUTE_EDGE:a=>c -->", updated)
+        self.assertIn("create or reset a password", updated)
+        self.assertIn("<!-- ACTION_RULES_START -->", updated)
+        self.assertIn("Collect only details supplied in the dialogue.", updated)
+
     @patch("llm.resolve_config", return_value={"model": "test", "api_key": "", "base_url": ""})
     @patch("llm.chat")
     def test_threshold_diagnostics_do_not_revert_autonomous_skill_edit(self, chat, _config):
