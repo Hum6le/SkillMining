@@ -30,8 +30,15 @@ thought process, tool calls, and observations), identify:
 
 1. **Success Patterns**: What sequence of actions reliably leads to task completion?
 2. **Failure Patterns**: What mistakes does the agent make and how to avoid them?
-3. **Domain-Specific Strategies**: For each domain (hotel, train, restaurant, attraction, \
+3. **Contrastive Principles**: Compare successful and failed trajectories together. Explain
+   which observable difference separates a reliable behavior from a failure, and preserve
+   successful behavior when proposing a correction.
+4. **Domain-Specific Strategies**: For each domain (hotel, train, restaurant, attraction, \
 taxi, hospital, police), what are the key steps?
+
+The examples below are explicitly labeled as SUCCESS or FAILURE by evaluation. Use both
+sets in this same induction call: successes are positive evidence for what to retain, while
+failures are evidence for what to avoid or repair. Do not infer a rule from failures alone.
 
 ## Output Format
 Output ONLY workflow patterns in this format. No introduction, no summary.
@@ -139,9 +146,17 @@ def _format_examples(
     Mirrors ``format_examples()`` from AWM/mind2web/utils/data.py.
     Each case is a dict with keys: dialogue_id, domains, goal, trajectory_steps.
     """
-    lines = []
+    lines = [
+        "## Joint Success/Failure Evidence",
+        "The following successful and failed cases belong to one induction batch. "
+        "Use them together and compare contrasting behavior.",
+        "",
+    ]
     for i, case in enumerate(cases):
+        outcome = "SUCCESS" if case.get("success") else "FAILURE"
+        info_rate = case.get("info_rate", "N/A")
         lines.append(f"Query #{i+1}: {case.get('goal', '')[:300]}")
+        lines.append(f"Outcome: {outcome} (info_rate={info_rate})")
         lines.append("Actions and Environments:")
         traj_text = case.get("trajectory_text", "")
         if traj_text:
@@ -149,6 +164,14 @@ def _format_examples(
         else:
             lines.append(f"Predicted: {json.dumps(case.get('prediction', {}))}")
         lines.append("")
+    success_count = sum(1 for case in cases if case.get("success"))
+    lines.extend([
+        "## Required Joint Synthesis",
+        f"Successful cases: {success_count}; failed cases: {len(cases) - success_count}.",
+        "Summarize both what should be retained from SUCCESS cases and what should be "
+        "avoided or repaired from FAILURE cases, grounding differences in observable "
+        "trajectory evidence.",
+    ])
     prompt = "\n".join(lines)
     if prefix:
         prompt = prefix + "\n" + prompt

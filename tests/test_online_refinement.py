@@ -48,19 +48,42 @@ class OnlineRefinementTest(unittest.TestCase):
         skill = "# Skill\n\n## Workflow\n- Route A.\n\n## Reference\n- Retrieve details.\n"
         updated, operations = apply_dynamic_skill_operations(skill, [
             {
-                "op": "replace", "match_text": "- Route A.",
+                "op": "upsert", "match_text": "- Route A.",
                 "new_text": "- Route B when the customer rejects the first option.",
+                "rationale": "Clarify the existing route using rollout evidence.",
             },
             {
-                "op": "insert_after", "match_text": "## Reference",
-                "new_text": "\n- Use transition evidence for uncertain alternatives.",
+                "op": "upsert", "match_text": "## Reference",
+                "new_text": "## Reference\n- Use transition evidence for uncertain alternatives.",
+                "rationale": "Add compatible retrieval guidance without changing the workflow.",
             },
-            {"op": "delete", "match_text": "- Retrieve details.\n", "new_text": ""},
+            {"op": "delete", "match_text": "- Retrieve details.\n", "new_text": "",
+             "rationale": "The old retrieval line is duplicated by the new guidance."},
         ])
         self.assertFalse(any("error" in operation for operation in operations))
         self.assertIn("Route B when", updated)
         self.assertIn("transition evidence", updated)
         self.assertNotIn("Retrieve details", updated)
+
+    def test_dynamic_skill_operations_require_disambiguation_for_repeated_text(self):
+        skill = "# Skill\n\n- Ask for details.\n- Ask for details.\n"
+        unchanged, rejected = apply_dynamic_skill_operations(skill, [{
+            "op": "upsert", "match_text": "- Ask for details.",
+            "new_text": "- Ask for confirmed account details.",
+            "rationale": "Clarify a local rule.",
+        }])
+        self.assertEqual(unchanged, skill)
+        self.assertIn("occurs multiple times", rejected[0]["error"])
+
+        updated, applied = apply_dynamic_skill_operations(skill, [{
+            "op": "upsert", "match_text": "- Ask for details.",
+            "occurrence": 2,
+            "new_text": "- Ask for confirmed account details.",
+            "rationale": "Clarify the second local rule.",
+        }])
+        self.assertTrue(applied[0]["applied"])
+        self.assertEqual(updated.count("- Ask for details."), 1)
+        self.assertIn("- Ask for confirmed account details.", updated)
 
     def test_initialization_separates_backbone_branch_and_retry(self):
         state = initialize_skill_dag(_subgraph(), "account_access")
@@ -263,7 +286,7 @@ Old action rule.
         state = initialize_skill_dag(_subgraph(), "account_access")
         chat.side_effect = [
             '''{"lookups":[]}''',
-            '''{"decision":"update","updates":[{"resource":"transition_guard","edge_id":"a=>c","op":"upsert","content":"The customer is creating a password.","status":"resolved","rationale":"gold mismatch"}],"skill_operations":[{"op":"insert_after","edge_id":"a=>c","match_text":"<!-- TRANSITION_RULES_START -->","new_text":"\\n- Password route.","rationale":"integrate guard"}]}''',
+            '''{"decision":"update","updates":[{"resource":"transition_guard","edge_id":"a=>c","op":"upsert","content":"The customer is creating a password.","status":"resolved","rationale":"gold mismatch"}],"skill_operations":[{"op":"upsert","edge_id":"a=>c","match_text":"<!-- TRANSITION_RULES_START -->","new_text":"<!-- TRANSITION_RULES_START -->\\n- Password route.","rationale":"integrate guard"}]}''',
         ]
         reflection = autonomous_resource_reflection(state, [{"gold": {"gold_action": "make-password"}}], "# Skill\n<!-- ACTION_RULES_START -->\n<!-- ACTION_RULES_END -->\n<!-- TRANSITION_RULES_START -->\n<!-- TRANSITION_RULES_END -->", "", "", "", "test")
         skill, operations = apply_working_skill_operations(reflection["prompt"].split("<current_skill>", 1)[1].split("</current_skill>", 1)[0], state, reflection["accepted"])
@@ -311,7 +334,7 @@ Old action rule.
           {"resource":"transition_guard","edge_id":"a=>c","content":"The customer is creating a password.","status":"resolved","rationale":"gold mismatch"},
           {"resource":"slot_policy","action":"make-password","content":"Use the newly confirmed value only.","status":"resolved","rationale":"slot mismatch"},
           {"resource":"reference","edge_id":"a=>c","content":"Keep rare recovery evidence in reference.","status":"uncertain","rationale":"limited support"}
-        ],"skill_operations":[{"op":"replace","edge_id":"a=>c","match_text":"skill","new_text":"updated skill","rationale":"integrate guard"}]}'''
+        ],"skill_operations":[{"op":"upsert","edge_id":"a=>c","match_text":"skill","new_text":"updated skill","rationale":"integrate guard"}]}'''
         ]
         result = autonomous_resource_reflection(state, [{"gold_action": "make-password", "predicted_action": "send-link"}], "skill", "reference", "rules", "slots", "test")
         self.assertEqual(chat.call_count, 2)

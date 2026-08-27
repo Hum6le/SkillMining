@@ -136,6 +136,20 @@ Inspect the rollout-versus-ground-truth trajectories, complete current skill,
 retrieved resource snippets, and graph edges. Decide yourself which changes,
 if any, would make the skill more correct, compact, and well-organized.
 
+The current skill is the established executable baseline. Preserve its existing
+workflow, action placement, transition logic, slot discipline, and retrieval
+guidance by default. Online evidence from one batch is usually partial: do not
+rewrite or remove a working rule merely because the current batch did not show
+it. Prefer a minimal compatible addition, clarification, exception note, or
+retrieval instruction that leaves the existing behavior intact.
+
+Only delete existing skill/resource logic when the supplied evidence shows a
+clear contradiction, systematic error, misleading instruction, or duplicate
+rule that cannot be resolved by a compatible update. When evidence is
+ambiguous, retain the old logic and revise its local wording to include the
+new condition, uncertainty, or retrieval guidance instead. Never trade away a
+previously supported route to fix one isolated failure.
+
 You may promote a useful transition from reference into skill, revise an
 existing action/transition explanation, move a confusing or mostly harmful
 skill rule back to reference, refine an action rule or slot policy, add a
@@ -162,6 +176,13 @@ observations are supplied below. The complete current skill is always visible
 because it is the executable control contract. Do not assume an un-retrieved
 auxiliary resource says anything in particular.
 
+Treat the supplied batch as joint positive and negative evidence. Explicitly
+summarize the successful patterns that should be preserved and the failed
+patterns that should be repaired or avoided. Make this comparison in the same
+reflection call: a failure alone is not sufficient evidence to delete a
+previously working rule, and a success is positive evidence for retaining the
+corresponding action, transition, slot policy, or response behavior.
+
 <current_skill>{skill}</current_skill>
 <retrieved_resources>{retrieved_resources}</retrieved_resources>
 <graph_edges>{graph_edges}</graph_edges>
@@ -181,24 +202,42 @@ Return valid JSON only:
 "op":"upsert|delete",
 "content":"concise natural-language replacement or addition; empty only for delete", "status":"resolved|uncertain",
 "rationale":"grounded in specific rollout-vs-gold evidence"}}],
-"skill_operations":[{{"op":"replace|insert_after|delete",
+"skill_operations":[{{"op":"upsert|delete",
 "edge_id":"optional graph edge ID; required when applying a transition_guard",
 "match_text":"an exact, unique excerpt copied from current_skill",
-"new_text":"replacement/inserted text; empty only for delete",
+"new_text":"complete, compatibility-preserving replacement for match_text; empty only for delete",
+"occurrence":"optional 1-based occurrence number, only when match_text is repeated",
 "rationale":"why this local edit improves the executable skill"}}]}}
 
 <filesystem_mcp>
 You may directly edit the complete current skill without relying on any fixed
 heading, HTML marker, transition block, or line number. Choose the most
-appropriate existing prose to revise, remove, or extend. Each `match_text`
-must be copied exactly from `current_skill` and must identify one location:
-- `replace`: replace that exact excerpt with `new_text`.
-- `insert_after`: insert `new_text` immediately after that exact excerpt.
+appropriate existing prose to revise or remove. Each `match_text` must be
+copied exactly from `current_skill` and must identify one location:
+- `upsert`: replace that exact local excerpt with its complete updated version.
+  Include the previous valid logic in `new_text` and integrate the new evidence
+  into it naturally, rather than appending a detached patch elsewhere.
 - `delete`: remove that exact excerpt; set `new_text` to an empty string.
+If an otherwise appropriate excerpt occurs more than once, use a longer local
+excerpt first. Only when that is impractical, provide `occurrence` as a
+1-based position for the intended match; never apply the same edit to every
+occurrence.
 The executor applies operations in order and requires each match to occur
 exactly once in the then-current file. Prefer a sufficiently specific local
 paragraph or bullet over an entire document. Do not emit a skill operation
 when a resource-only update is enough.
+
+Preservation policy for `skill_operations`:
+- Default to `upsert` of a small, relevant paragraph or bullet. Preserve its
+  valid meaning and revise it into one coherent rule that includes the new
+  compatible condition or retrieval guidance.
+- Use `delete` only when the matched text is demonstrably harmful or duplicated
+  and cannot be made compatible by clarification. Do not delete a route merely
+  because it is rare, absent from this batch, or uncertain.
+- Never upsert an entire skill, a whole workflow section, or a
+  large unrelated paragraph when a smaller excerpt can express the update.
+- A patch rationale must name the preserved behavior and the concrete evidence
+  supporting the change.
 
 If an update changes a transition guard that should affect runtime routing,
 also emit the matching `skill_operation` that integrates, rewrites, or removes
@@ -1060,6 +1099,19 @@ def autonomous_resource_reflection(
             return str(action_input)[:300]
         return ""
 
+    def _supervision_outcome(row: dict[str, Any]) -> str:
+        """Expose only reliable action-and-slot success labels to reflection."""
+        gold = row.get("gold")
+        if not isinstance(gold, dict) or not gold.get("gold_action"):
+            # Text metrics are aggregate-level in this runner, so exact string
+            # equality would be a misleading per-turn success signal.
+            return "unscored"
+        action_ok = str(row.get("predicted_action", "")) == str(gold["gold_action"])
+        predicted_slots = row.get("predicted_slots", [])
+        gold_slots = gold.get("gold_slots", [])
+        slots_ok = list(predicted_slots) == list(gold_slots)
+        return "success" if action_ok and slots_ok else "failure"
+
     supervised_rows = [
         row for row in rollout_supervision
         if row.get("gold") is not None or str(row.get("gold_response", "")).strip()
@@ -1071,6 +1123,7 @@ def autonomous_resource_reflection(
         "predicted_action": row.get("predicted_action", ""),
         "predicted_slots": row.get("predicted_slots", []), "gold": row.get("gold"),
         "gold_response": str(row.get("gold_response", ""))[:500],
+        "evidence_outcome": _supervision_outcome(row),
         "reference_query": reference_query_from_trace(row.get("react_trace")),
     } for row in supervised_rows[-32:]]
     graph_edges = [{
@@ -1118,16 +1171,29 @@ def autonomous_resource_reflection(
         op = str(item.get("op", "")).strip().lower()
         match_text = str(item.get("match_text", ""))
         new_text = str(item.get("new_text", ""))
-        if op not in {"replace", "insert_after", "delete"} or not match_text:
+        rationale = str(item.get("rationale", "")).strip()
+        occurrence = item.get("occurrence")
+        if occurrence not in (None, ""):
+            try:
+                occurrence = int(occurrence)
+            except (TypeError, ValueError):
+                occurrence = None
+        if op not in {"upsert", "delete"} or not match_text:
             rejected_skill_operations.append({"operation": item, "reason": "invalid_dynamic_skill_operation"})
             continue
         if (op == "delete" and new_text) or (op != "delete" and not new_text):
             rejected_skill_operations.append({"operation": item, "reason": "invalid_dynamic_skill_content"})
             continue
+        if op == "delete" and not rationale:
+            rejected_skill_operations.append({
+                "operation": item,
+                "reason": "delete_requires_conflict_rationale",
+            })
+            continue
         proposed_skill_operations.append({
             "op": op, "edge_id": str(item.get("edge_id", "")).strip(),
             "match_text": match_text, "new_text": new_text,
-            "rationale": str(item.get("rationale", "")),
+            "occurrence": occurrence, "rationale": rationale,
         })
 
     valid_actions = {str(node["label"]) for node in state.get("nodes", [])}
@@ -1230,33 +1296,45 @@ def apply_dynamic_skill_operations(
         op = str(operation.get("op", "")).strip().lower()
         match_text = str(operation.get("match_text", ""))
         new_text = str(operation.get("new_text", ""))
+        occurrence = operation.get("occurrence")
         record = {
             "op": op,
             "edge_id": str(operation.get("edge_id", "")),
             "match_text": match_text,
             "new_text": new_text,
+            "occurrence": occurrence,
             "rationale": str(operation.get("rationale", "")),
         }
         try:
-            if op not in {"replace", "insert_after", "delete"}:
+            if op not in {"upsert", "delete"}:
                 raise ValueError("unsupported dynamic skill operation")
             if not match_text:
                 raise ValueError("dynamic skill operation requires match_text")
             if op == "delete" and new_text:
                 raise ValueError("delete operation must use an empty new_text")
             if op != "delete" and not new_text:
-                raise ValueError("replace/insert_after operation requires new_text")
+                raise ValueError("upsert operation requires new_text")
             occurrences = current.count(match_text)
-            if occurrences != 1:
+            if occurrences == 0:
+                raise ValueError("match_text was not found in current skill")
+            if occurrences > 1:
+                if not isinstance(occurrence, int) or not 1 <= occurrence <= occurrences:
+                    raise ValueError(
+                        "match_text occurs multiple times; provide a valid 1-based occurrence"
+                    )
+                positions = [
+                    index for index in range(len(current))
+                    if current.startswith(match_text, index)
+                ]
+                position = positions[occurrence - 1]
+            else:
+                position = current.index(match_text)
+            if occurrences != 1 and position < 0:
                 raise ValueError(
-                    f"match_text must occur exactly once in current skill; found={occurrences}"
+                    f"could not locate occurrence={occurrence} for match_text (found={occurrences})"
                 )
-            position = current.index(match_text)
-            if op == "replace":
+            if op == "upsert":
                 current = current[:position] + new_text + current[position + len(match_text):]
-            elif op == "insert_after":
-                end = position + len(match_text)
-                current = current[:end] + new_text + current[end:]
             else:
                 current = current[:position] + current[position + len(match_text):]
             record["applied"] = True
