@@ -11,10 +11,8 @@ import argparse
 import hashlib
 import json
 import logging
-import multiprocessing as mp
 import os
 import sys
-import queue
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -61,71 +59,13 @@ def _append_jsonl(path: Path, record: dict) -> None:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
-def _online_rollout_worker(agent, shard: list, subflow: str, workflow_id: str, result_queue) -> None:
-    """Run one immutable online-rollout shard under one workflow endpoint."""
-    try:
-        os.environ["SKILLMINING_WORKFLOW_ID"] = workflow_id
-        rows = []
-        for conversation in shard:
-            rows.extend(agent.predict_all_turns(
-                conversation, predict_actions=True, verbose=False,
-            ))
-        result_queue.put({"ok": True, "rows": rows, "workflow_id": workflow_id})
-    except Exception as exc:
-        result_queue.put({"ok": False, "error": repr(exc), "workflow_id": workflow_id})
-
-
-def _parallel_online_rollout(agent, batch: list, subflow: str,
-                             workflow_ids: list[str], log: logging.Logger) -> list[dict]:
-    """Roll out one batch in parallel while keeping refinement single-writer."""
-    ids = [str(value).strip() for value in workflow_ids if str(value).strip()]
-    if len(ids) <= 1:
-        return list(agent.predict_all_turns(
-            batch[0], predict_actions=True, verbose=False,
-        )) if len(batch) == 1 else [
-            row for conversation in batch
-            for row in agent.predict_all_turns(conversation, predict_actions=True, verbose=False)
-        ]
-    if "fork" not in mp.get_all_start_methods():
-        raise RuntimeError("--eval-workflow-ids requires a fork-capable platform")
-
-    context = mp.get_context("fork")
-    shards = [batch[index::len(ids)] for index in range(len(ids))]
-    result_queue = context.Queue()
-    workers = []
-    for shard, workflow_id in zip(shards, ids):
-        if not shard:
-            continue
-        worker = context.Process(
-            target=_online_rollout_worker,
-            args=(agent, shard, subflow, workflow_id, result_queue),
-            daemon=False,
-        )
-        worker.start()
-        workers.append(worker)
-
-    results = []
-    while len(results) < len(workers):
-        try:
-            results.append(result_queue.get(timeout=5.0))
-        except queue.Empty:
-            dead = [worker for worker in workers if not worker.is_alive()]
-            if dead:
-                results.append({
-                    "ok": False,
-                    "error": "worker exited without returning results: "
-                             + ", ".join(str(worker.exitcode) for worker in dead),
-                })
-                break
-            time.sleep(0.1)
-    for worker in workers:
-        worker.join()
-    failures = [item.get("error", "unknown worker error") for item in results if not item.get("ok")]
-    if failures:
-        raise RuntimeError("Online rollout worker failed: " + failures[0])
-    rows = [row for item in results for row in item.get("rows", [])]
-    log.info("  Parallel online rollout: %d sessions across %d workflow workers, %d turns",
-             len(batch), len(workers), len(rows))
+def _rollout_online_batch(agent: ABCDAgent, batch: list) -> list[dict]:
+    """Run one online training batch in order under the current policy state."""
+    rows: list[dict] = []
+    for conversation in batch:
+        rows.extend(agent.predict_all_turns(
+            conversation, predict_actions=True, verbose=False,
+        ))
     return rows
 
 
@@ -401,10 +341,10 @@ def main() -> None:
 
     for batch_index, batch in enumerate(batches[completed:], start=completed + 1):
         log.info("Online batch %d/%d: %d sessions", batch_index, len(batches), len(batch))
+        # Training rollouts are intentionally sequential: each batch is the
+        # evidence source for the next single-writer skill/resource update.
         agent = _build_agent(args, working_skill, base_reference, action_rules, slot_policies, state)
-        turns = _parallel_online_rollout(
-            agent, batch, args.subflow, eval_workflow_ids, log,
-        )
+        turns = _rollout_online_batch(agent, batch)
         _write(out_dir / "rollouts" / f"batch_{batch_index:04d}.json", json.dumps(turns, indent=2, ensure_ascii=False))
         localized = localize_rollout_batch(batch, turns, state)
         # Retain threshold-based proposals only as diagnostics. In autonomous
