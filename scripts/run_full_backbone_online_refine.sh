@@ -34,6 +34,7 @@ Options:
   --resume-run DIR          Resume an existing full online-refinement root.
   --workflow-ids IDS        Comma-separated workflow IDs. Subflows are balanced across
                             these workers; each worker processes its assigned flows serially.
+                            Each subflow's final evaluation uses its assigned worker workflow.
   --conda-env NAME          Default: skillmining310
   --hf-endpoint URL         Default: https://hf-mirror.com
   --python-bin PATH         Default: python
@@ -41,8 +42,11 @@ Options:
   --stop-on-error           Stop an affected worker after its first failed subflow.
   -h, --help                Show this help.
 
-All other options are forwarded to run_backbone_online_refine.py, for example:
-  --batch-size 8 --target-selection-rate 0.30 --eval-workflow-ids id_a,id_b
+All other online options are forwarded to run_backbone_online_refine.py, for example:
+  --batch-size 8 --target-selection-rate 0.30
+
+`--eval-workflow-ids` is intentionally unsupported here. It is a single-subflow
+evaluation-only option; use it with run_backbone_online_refine.sh instead.
 
 The final weighted result is saved as <run-root>/aggregate_online_refine.json.
 EOF
@@ -84,6 +88,10 @@ while [[ $# -gt 0 ]]; do
         --output-dir) require_value "$1" "$#"; OUTPUT_DIR="$2"; shift 2 ;;
         --resume-run) require_value "$1" "$#"; RESUME_RUN="$2"; shift 2 ;;
         --workflow-ids) require_value "$1" "$#"; WORKFLOW_IDS_RAW="$2"; shift 2 ;;
+        --eval-workflow-ids)
+            echo "--eval-workflow-ids is only supported for single-subflow runs; full runs use each worker's assigned workflow." >&2
+            exit 2
+            ;;
         --conda-env) require_value "$1" "$#"; CONDA_ENV="$2"; shift 2 ;;
         --hf-endpoint) require_value "$1" "$#"; HF_ENDPOINT_VALUE="$2"; shift 2 ;;
         --python-bin) require_value "$1" "$#"; PYTHON_BIN="$2"; shift 2 ;;

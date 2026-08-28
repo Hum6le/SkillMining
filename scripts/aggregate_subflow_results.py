@@ -99,6 +99,7 @@ def _record_from_eval(
         "test_sessions": int(data.get("test_sessions", payload.get("num_conversations", 0)) or 0),
         "text_samples": int(text.get("num_samples", payload.get("num_turns", 0)) or 0),
         "action_turns": int(ast.get("num_action_turns", 0) or 0),
+        "action_correct_turns": int(ast.get("num_action_correct_turns", 0) or 0),
         "metrics": {
             **{name: float(text[name]) for name in TEXT_METRICS if name in text},
             **{name: float(ast[name]) for name in AST_METRICS if name in ast},
@@ -190,6 +191,14 @@ def _weighted_average(records: list[dict[str, Any]]) -> dict[str, Any]:
             values = [(r["metrics"][metric], max(r["action_turns"], 1)) for r in group if metric in r["metrics"]]
             if values:
                 metric_values[metric] = sum(value * weight for value, weight in values) / sum(weight for _, weight in values)
+        values = [
+            (r["metrics"]["ast_slot_value_given_action"], max(r["action_correct_turns"], 1))
+            for r in group if "ast_slot_value_given_action" in r["metrics"]
+        ]
+        if values:
+            metric_values["ast_slot_value_given_action"] = sum(
+                value * weight for value, weight in values
+            ) / sum(weight for _, weight in values)
         values = [(r["metrics"]["cds_overall"], max(r["test_sessions"], 1)) for r in group if "cds_overall" in r["metrics"]]
         if values:
             metric_values["cds_overall"] = sum(value * weight for value, weight in values) / sum(weight for _, weight in values)

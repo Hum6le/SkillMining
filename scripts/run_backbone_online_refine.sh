@@ -36,7 +36,7 @@ Required:
 Options:
   --output-dir DIR           New online run directory. Default: outputs/online_refine_<subflow>_<timestamp>
   --workflow-id ID           Export SKILLMINING_WORKFLOW_ID for workflow API routing
-  --eval-workflow-ids IDS    Comma-separated workflow IDs for parallel online rollouts
+  --eval-workflow-ids IDS    Comma-separated workflow IDs for parallel held-out evaluation
   --conda-env NAME           Default: skillmining310
   --hf-endpoint URL          Default: https://hf-mirror.com
   --python-bin PATH          Default: python

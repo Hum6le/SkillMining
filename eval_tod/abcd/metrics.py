@@ -53,6 +53,8 @@ class ASTResult:
     num_action_turns: int = 0
     action_name_correct: int = 0
     slot_values_correct: int = 0
+    action_correct_slot_values_correct: int = 0
+    action_correct_turns: int = 0
     joint_correct: int = 0
 
     @property
@@ -73,6 +75,13 @@ class ASTResult:
         if self.num_action_turns == 0:
             return 1.0
         return self.joint_correct / self.num_action_turns
+
+    @property
+    def slot_accuracy_given_action(self) -> float:
+        """Slot exact-match accuracy conditioned on the correct action."""
+        if self.action_correct_turns == 0:
+            return 0.0
+        return self.action_correct_slot_values_correct / self.action_correct_turns
 
 
 @dataclass
@@ -106,6 +115,18 @@ class ASTAggregate:
         if total == 0:
             return 0.0
         return sum(r.joint_correct for r in self.per_dialogue) / total
+
+    @property
+    def action_correct_turns(self) -> int:
+        return sum(r.action_correct_turns for r in self.per_dialogue)
+
+    @property
+    def slot_accuracy_given_action(self) -> float:
+        """Slot exact-match accuracy among turns with the right action."""
+        total = self.action_correct_turns
+        if total == 0:
+            return 0.0
+        return sum(r.action_correct_slot_values_correct for r in self.per_dialogue) / total
 
     @property
     def mean_joint_accuracy(self) -> float:
@@ -163,6 +184,10 @@ def compute_ast(
             pred.predicted_action is not None
             and pred.predicted_action == gt.action_name
         )
+        if action_ok:
+            result.action_correct_turns += 1
+            if slots_ok:
+                result.action_correct_slot_values_correct += 1
         if action_ok and slots_ok:
             result.joint_correct += 1
 

@@ -616,8 +616,10 @@ def evaluate_agent_on_subflow(
             "ast_joint": round(abcd_eval.ast.joint_accuracy, 4),
             "ast_action_name": round(abcd_eval.ast.action_name_accuracy, 4),
             "ast_slot_value": round(abcd_eval.ast.slot_value_accuracy, 4),
+            "ast_slot_value_given_action": round(abcd_eval.ast.slot_accuracy_given_action, 4),
             "cds_overall": round(abcd_eval.cds.overall_cds, 4),
             "num_action_turns": abcd_eval.ast.total_action_turns,
+            "num_action_correct_turns": abcd_eval.ast.action_correct_turns,
         },
     }
 

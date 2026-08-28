@@ -417,6 +417,7 @@ def evaluate_abcd_bundle(
             "ast_joint": abcd_result.ast.joint_accuracy,
             "ast_action_name": abcd_result.ast.action_name_accuracy,
             "ast_slot_value": abcd_result.ast.slot_value_accuracy,
+            "ast_slot_value_given_action": abcd_result.ast.slot_accuracy_given_action,
             "cds_overall": abcd_result.cds.overall_cds,
             "num_action_turns": abcd_result.ast.total_action_turns,
         }

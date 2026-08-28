@@ -460,9 +460,9 @@ class ABCDAgent(AbstractTodAgent):
         return "\n".join(parts) if len(parts) > 2 else ""
 
     def _retrieve_action_cards(
-        self, candidate_actions: list[str], max_chars: int = 2200,
+        self, candidate_actions: list[str], max_chars: int | None = None,
     ) -> str:
-        """Retrieve unified action cards, never independent slot resources."""
+        """Retrieve complete unified action cards, never independent slot resources."""
         self._last_action_card_lookup = {
             "tool": "retrieve_action_card", "executed": bool(self.action_cards),
             "query": list(candidate_actions), "selected_actions": [],
@@ -474,7 +474,6 @@ class ABCDAgent(AbstractTodAgent):
             if action in self.action_cards
         ]
         parts = ['<retrieved_action_card tool="retrieve_action_card">']
-        used = len(parts[0])
         for action, card in selected:
             blocks = [f"\n#### `{action}`"]
             if card.get("action_rule"):
@@ -482,10 +481,7 @@ class ABCDAgent(AbstractTodAgent):
             if card.get("slot_policy"):
                 blocks.extend(["Slot binding policy:", card["slot_policy"]])
             block = "\n".join(blocks)
-            if used + len(block) > max_chars:
-                continue
             parts.append(block)
-            used += len(block)
             self._last_action_card_lookup["selected_actions"].append(action)
         parts.append("</retrieved_action_card>")
         return "\n".join(parts) if self._last_action_card_lookup["selected_actions"] else ""
@@ -947,7 +943,10 @@ class ABCDAgent(AbstractTodAgent):
             "query_text": query_text,
             "subflow": visible_subflow,
             "top_k": requested_top_k,
-            "max_chars": self.reference_max_chars,
+            # Kept as metadata for compatibility with old trace readers. The
+            # retrieval result itself is no longer truncated by character
+            # count; top_k remains the only result-count control.
+            "max_chars": None,
             "reference_available": bool(self.reference_sections),
         }
         if not self.reference_sections or requested_top_k <= 0:
@@ -1037,7 +1036,6 @@ class ABCDAgent(AbstractTodAgent):
             "## Reference Lookup Results",
             "Use these mined dialogue snippets as examples; do not copy private slot values unless they match the current scenario.",
         ]
-        used_chars = sum(len(p) for p in parts)
         selected_sections: list[dict[str, Any]] = []
         for score, section in scored[:requested_top_k]:
             action_title = str(section.get("action_title") or section["title"])
@@ -1049,29 +1047,7 @@ class ABCDAgent(AbstractTodAgent):
             )
             display_transition = transition_title or display_title
             snippet = section["body"].strip()
-            if len(snippet) > 600:
-                snippet = snippet[:600].rstrip() + "\n..."
             block = f"\n### {display_transition}\n{snippet}"
-            if used_chars + len(block) > self.reference_max_chars:
-                remaining = self.reference_max_chars - used_chars
-                if remaining > 120:
-                    parts.append(block[:remaining].rstrip() + "\n...")
-                    selected_sections.append({
-                        "title": section["title"],
-                        "action_title": action_title,
-                        "transition_title": transition_title,
-                        "canonical_title": display_title,
-                        "score": round(score, 4),
-                        "matched_tokens": sorted(
-                            query_tokens & (
-                                _tokenize_for_lookup(transition_title.replace("-", " "))
-                                | _tokenize_for_lookup(display_title.replace("-", " "))
-                                | _tokenize_for_lookup(section["body"][:1200])
-                            )
-                        ),
-                        "truncated": True,
-                    })
-                break
             parts.append(block)
             selected_sections.append({
                 "title": section["title"],
@@ -1088,7 +1064,6 @@ class ABCDAgent(AbstractTodAgent):
                 ),
                 "truncated": False,
             })
-            used_chars += len(block)
 
         return {
             "tool": "retrieve_reference",

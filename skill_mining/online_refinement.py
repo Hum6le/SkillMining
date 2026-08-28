@@ -69,11 +69,13 @@ state. Do not alter the workflow topology or action choice.
 
 Interpret evidence action-centrically. When the action prediction is wrong,
 its emitted values belong to the wrong action and are not slot-policy evidence.
-When action and slots are both correct, retain that case as positive evidence
-but do not revise the policy merely because it succeeded. Revise a slot policy
-only for cases where the action is correct but the ordered slot values are
-wrong, and use successful cases for the same action to preserve compatible
-value-source, order, and reuse behavior.
+When action and slots are both correct, treat that case as positive evidence
+for the observed value-source, order, reuse, and missing-value behavior. Use
+successful cases to complete or sharpen an underspecified existing policy,
+not only to preserve it. A success alone must not trigger a destructive
+rewrite. Revise a slot policy for action-correct slot failures by contrasting
+them with successful cases for the same action, and preserve compatible
+patterns that are repeatedly supported by those successes.
 
 <existing_slot_resource>
 {existing_slot_resource}
@@ -186,10 +188,13 @@ auxiliary resource says anything in particular.
 
 Treat the supplied batch as joint positive and negative evidence. Explicitly
 summarize the successful patterns that should be preserved and the failed
-patterns that should be repaired or avoided. Make this comparison in the same
-reflection call: a failure alone is not sufficient evidence to delete a
-previously working rule, and a success is positive evidence for retaining the
-corresponding action, transition, slot policy, or response behavior.
+patterns that should be repaired or avoided. Use repeated successful cases to
+complete or sharpen underspecified action rules and slot-binding policies,
+including value source, order, reuse, and missing-value behavior. Make this
+comparison in the same reflection call: a failure alone is not sufficient
+evidence to delete a previously working rule, and a success is evidence both
+for retaining valid behavior and, when the existing description is vague,
+for making that behavior more precise.
 
 The primary online objective is to improve joint AST, not an isolated action
 accuracy or isolated slot accuracy. For an action turn, AST is successful only
@@ -203,11 +208,13 @@ never replace the joint action-and-slot AST objective.
 Apply this AST triage exactly for every action turn. (1) If the predicted
 action is wrong, diagnose routing/action selection; do not attribute its slot
 list to the gold action's Action Card. (2) If action and ordered slots are both
-correct, treat the case as positive evidence to preserve, not as a reason to
-edit. (3) Only if the action is correct but ordered slots are wrong should you
-consider an Action Card slot-binding update. Compare those failures with
-successful cases for the same action, and modify only the slot-binding logic
-when routing itself is already correct.
+correct, treat the case as positive evidence for the observed Action Card
+pattern. Repeated successes may sharpen an underspecified card, but success
+alone must not justify deleting or weakening valid logic. (3) If the action is
+correct but ordered slots are wrong, compare the failure with successful cases
+for the same action and make a compatible slot-binding update when the
+contrast supports one. Routing itself must remain unchanged when it is
+already correct.
 
 <current_skill>{skill}</current_skill>
 <retrieved_resources>{retrieved_resources}</retrieved_resources>
