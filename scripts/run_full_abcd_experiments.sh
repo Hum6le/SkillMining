@@ -334,7 +334,9 @@ run_task() {
 }
 
 task_is_complete() {
-    local method_name="$1" subflow="$2" task_dir="$RUN_ROOT/$method_name/$subflow"
+    local method_name="$1"
+    local subflow="$2"
+    local task_dir="$RUN_ROOT/$method_name/$subflow"
     "$PYTHON_BIN" - "$method_name" "$subflow" "$task_dir" "$BACKBONE_COMPILER" <<'PY'
 import json
 import sys
