@@ -1085,11 +1085,22 @@ def run_pipeline(args) -> PipelineOutputs:
     # Stage 1: seed run on training set to mine failures
     seed_train_turns_path = out_dir / "seed_train_turns.json"
     seed_train_eval_path = out_dir / "seed_train_eval.json"
-    if resume_dir and seed_train_turns_path.exists() and seed_train_eval_path.exists():
-        log.info("Stage 1: reusing existing seed train outputs")
+    if resume_dir and seed_train_turns_path.exists():
+        log.info("Stage 1: reusing existing seed train turns (no rollout calls)")
         seed_train_turns = json.loads(seed_train_turns_path.read_text(encoding="utf-8"))
         train_ast_scores = compute_ast_from_turn_results(train_convs, seed_train_turns)
-        train_eval = json.loads(seed_train_eval_path.read_text(encoding="utf-8"))
+        if seed_train_eval_path.exists():
+            train_eval = json.loads(seed_train_eval_path.read_text(encoding="utf-8"))
+        else:
+            # A previous run may have crashed after saving turns but before
+            # writing the local evaluation file. Recompute it without calling
+            # the LLM, then continue from the saved rollout artifact.
+            log.info("Stage 1: rebuilding missing seed train evaluation locally")
+            train_eval = _evaluate_turn_results(train_convs, seed_train_turns, "seed_train")
+            seed_train_eval_path.write_text(
+                json.dumps(train_eval, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
     else:
         log.info("Stage 1: seed run on training set")
         seed_train_agent = _build_agent(
