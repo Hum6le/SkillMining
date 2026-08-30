@@ -29,6 +29,7 @@ SUBFLOW_DISCOVERY=0
 SKIP_GRAPH_SEED=1
 EVOLUTION_BATCH_SIZE=25
 AWM_INDUCTION_MODE="online"
+SKIP_TRACE2SKILL_SEED_TEST=0
 CONTINUE_ON_ERROR=1
 PYTHON_BIN="python"
 REBUILD_SPLITS=1
@@ -93,6 +94,7 @@ Options:
   --eval-workflow-ids IDS    Comma-separated workflow IDs used to shard test evaluation for one --subflow
   --with-graph-seed          Also run the empty-workflow HG seed baseline
   --evolution-batch-size N   Trace2Skill outer batch size (default: 25)
+  --skip-seed-test           Trace2Skill: skip the pre-evolution seed test evaluation
   --awm-induction-mode NAME  AWM induction: online or offline (default: online)
   --stop-on-error            Stop the affected worker at its first failed subflow
   --no-rebuild-splits        Reuse existing subflow session splits
@@ -126,6 +128,7 @@ while [[ $# -gt 0 ]]; do
         --eval-workflow-ids) EVAL_WORKFLOW_IDS_RAW="$2"; shift 2 ;;
         --with-graph-seed) SKIP_GRAPH_SEED=0; shift ;;
         --evolution-batch-size) EVOLUTION_BATCH_SIZE="$2"; shift 2 ;;
+        --skip-seed-test) SKIP_TRACE2SKILL_SEED_TEST=1; shift ;;
         --awm-induction-mode) AWM_INDUCTION_MODE="$2"; shift 2 ;;
         --stop-on-error) CONTINUE_ON_ERROR=0; shift ;;
         --no-rebuild-splits) REBUILD_SPLITS=0; shift ;;
@@ -415,10 +418,14 @@ run_worker() {
                         echo "Resuming Trace2Skill checkpoint: ${trace_candidates[0]}"
                     fi
                 fi
+                trace_extra_args=()
+                [[ "$SKIP_TRACE2SKILL_SEED_TEST" -eq 1 ]] && trace_extra_args+=(--skip-seed-test)
                 SKILLMINING_WORKFLOW_ID="$workflow_id" "$PYTHON_BIN" scripts/run_trace2skill_abcd.py \
                     --subflow "$subflow" --train-file "$SPLITS_DIR/$subflow/train.json" \
                     --test-file "$SPLITS_DIR/$subflow/test.json" --output-dir "$RUN_ROOT/trace2skill/$subflow" \
-                    --evolution-batch-size "$EVOLUTION_BATCH_SIZE" --continue-on-batch-error "${trace_resume_args[@]}" || {
+                    --evolution-batch-size "$EVOLUTION_BATCH_SIZE" --continue-on-batch-error \
+                    "${trace_extra_args[@]}" \
+                    "${trace_resume_args[@]}" || {
                 echo "trace2skill:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
             fi
         fi

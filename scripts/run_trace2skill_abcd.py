@@ -1025,6 +1025,7 @@ def run_pipeline(args) -> PipelineOutputs:
         "max_test": args.max_test,
         "evolution_batch_size": args.evolution_batch_size,
         "max_evolution_batches": args.max_evolution_batches,
+        "skip_seed_test": args.skip_seed_test,
     }
     if resume_dir and previous_summary.get("config"):
         previous_config = previous_summary["config"]
