@@ -55,6 +55,7 @@ ABCD_DIR = "data/eval/abcd/data"
 DEFAULT_SKILL_PATH = "eval_tod/skills/abcd_trace2skill/SKILL.md"
 DEFAULT_MODEL = "deepseek-chat"
 DEFAULT_LLM_QPS = 3.0
+log = logging.getLogger("abcd_trace2skill")
 _REPORT_ITEM_PATTERN = re.compile(
     r"^#\s+(Failure Cause Item|Failure Memory Item)\s+(\d+)\s*\n",
     re.MULTILINE,
