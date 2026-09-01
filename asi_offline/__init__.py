@@ -31,6 +31,23 @@ from .offline_validation import (
 )
 from .library import ASILibrary, render_asi_library
 from .runtime import build_asi_workflow, create_asi_offline_abcd_agent, load_asi_library
+from .online import (
+    ASIOnlineEpisode,
+    build_online_episode,
+    build_online_episode_batch,
+    build_online_induction_prompt,
+    induce_online_episode,
+    online_episode_to_induction_episode,
+    parse_online_candidate_output,
+    successful_online_episodes,
+)
+from .online_validation import ASIOnlineValidationResult, validate_online_candidates
+from .online_library import (
+    ASILibraryUpdate,
+    ASIOnlineLibraryManager,
+    candidate_to_library_record,
+)
+from .online_evaluation import ASIUpdateDecision, decide_asi_update, evaluate_asi_library
 
 __all__ = [
     "ASIOfflineEpisode",
@@ -54,4 +71,20 @@ __all__ = [
     "build_asi_workflow",
     "create_asi_offline_abcd_agent",
     "load_asi_library",
+    "ASIOnlineEpisode",
+    "build_online_episode",
+    "build_online_episode_batch",
+    "build_online_induction_prompt",
+    "induce_online_episode",
+    "online_episode_to_induction_episode",
+    "parse_online_candidate_output",
+    "successful_online_episodes",
+    "ASIOnlineValidationResult",
+    "validate_online_candidates",
+    "ASILibraryUpdate",
+    "ASIOnlineLibraryManager",
+    "candidate_to_library_record",
+    "ASIUpdateDecision",
+    "decide_asi_update",
+    "evaluate_asi_library",
 ]

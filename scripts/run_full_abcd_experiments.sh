@@ -30,6 +30,11 @@ SKIP_GRAPH_SEED=1
 EVOLUTION_BATCH_SIZE=25
 AWM_INDUCTION_MODE="online"
 SKIP_TRACE2SKILL_SEED_TEST=0
+ASI_BATCH_SIZE=25
+ASI_HELDOUT_SIZE=10
+ASI_MAX_INDUCTION_EPISODES=8
+ASI_MIN_AST_DELTA="0.0"
+ASI_SKIP_FINAL_TEST=0
 CONTINUE_ON_ERROR=1
 PYTHON_BIN="python"
 REBUILD_SPLITS=1
@@ -74,7 +79,7 @@ usage() {
 Usage: bash scripts/run_full_abcd_experiments.sh [options]
 
 Options:
-  --method NAME              all, awm, expel, trace2skill, or graph (default: all)
+  --method NAME              all, awm, expel, trace2skill, asi, or graph (default: all)
   --subflow NAME             Run one subflow instead of all complete split directories
   --workflow-ids IDS         Comma-separated workflow IDs. One balanced, serial worker is
                              started per ID; workers run in parallel. Example: id_a,id_b,id_c
@@ -96,6 +101,11 @@ Options:
   --evolution-batch-size N   Trace2Skill outer batch size (default: 25)
   --skip-seed-test           Trace2Skill: skip the pre-evolution seed test evaluation
   --awm-induction-mode NAME  AWM induction: online or offline (default: online)
+  --asi-batch-size N         ASI online rollout batch size (default: 25)
+  --asi-heldout-size N       ASI held-out gate size per update (default: 10)
+  --asi-max-induction-episodes N  Maximum successful episodes used per ASI batch (default: 8)
+  --asi-min-ast-delta N      Minimum AST joint gain required for ASI promotion (default: 0.0)
+  --asi-skip-final-test      Skip ASI final test evaluation
   --stop-on-error            Stop the affected worker at its first failed subflow
   --no-rebuild-splits        Reuse existing subflow session splits
   -h, --help                 Show this help
@@ -130,6 +140,11 @@ while [[ $# -gt 0 ]]; do
         --evolution-batch-size) EVOLUTION_BATCH_SIZE="$2"; shift 2 ;;
         --skip-seed-test) SKIP_TRACE2SKILL_SEED_TEST=1; shift ;;
         --awm-induction-mode) AWM_INDUCTION_MODE="$2"; shift 2 ;;
+        --asi-batch-size) ASI_BATCH_SIZE="$2"; shift 2 ;;
+        --asi-heldout-size) ASI_HELDOUT_SIZE="$2"; shift 2 ;;
+        --asi-max-induction-episodes) ASI_MAX_INDUCTION_EPISODES="$2"; shift 2 ;;
+        --asi-min-ast-delta) ASI_MIN_AST_DELTA="$2"; shift 2 ;;
+        --asi-skip-final-test) ASI_SKIP_FINAL_TEST=1; shift ;;
         --stop-on-error) CONTINUE_ON_ERROR=0; shift ;;
         --no-rebuild-splits) REBUILD_SPLITS=0; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -142,10 +157,13 @@ if [[ -n "${EVAL_WORKFLOW_IDS_RAW:-}" && -z "$ONE_SUBFLOW" ]]; then
     exit 2
 fi
 
-case "$METHOD" in all|awm|expel|trace2skill|graph) ;; *) echo "Invalid --method: $METHOD" >&2; exit 2 ;; esac
+case "$METHOD" in all|awm|expel|trace2skill|asi|graph) ;; *) echo "Invalid --method: $METHOD" >&2; exit 2 ;; esac
 case "$AWM_INDUCTION_MODE" in online|offline) ;; *) echo "Invalid --awm-induction-mode: $AWM_INDUCTION_MODE" >&2; exit 2 ;; esac
 case "$GRAPH_MINING_METHOD" in legacy|sequence|backbone|backbone_coverage|semantic_router) ;; *) echo "Invalid --graph-mining-method: $GRAPH_MINING_METHOD" >&2; exit 2 ;; esac
 case "$BACKBONE_COMPILER" in organized|unordered|compare) ;; *) echo "Invalid --backbone-compiler: $BACKBONE_COMPILER" >&2; exit 2 ;; esac
+[[ "$ASI_BATCH_SIZE" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --asi-batch-size: $ASI_BATCH_SIZE" >&2; exit 2; }
+[[ "$ASI_HELDOUT_SIZE" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --asi-heldout-size: $ASI_HELDOUT_SIZE" >&2; exit 2; }
+[[ "$ASI_MAX_INDUCTION_EPISODES" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --asi-max-induction-episodes: $ASI_MAX_INDUCTION_EPISODES" >&2; exit 2; }
 if [[ "$BACKBONE_ABLATION_ONLY" -eq 1 ]]; then
     [[ "$BACKBONE_COMPILER" != "compare" ]] || { echo "--backbone-ablation-only cannot be combined with --backbone-compiler compare" >&2; exit 2; }
     BACKBONE_COMPILER="unordered"
@@ -305,6 +323,7 @@ echo "Split:       current 10-flow INDEX.json protocol"
 echo "Workers:     ${#WORKFLOW_IDS[@]}"
 echo "Compiler:    $BACKBONE_COMPILER"
 [[ "$METHOD" == "all" || "$METHOD" == "awm" ]] && echo "AWM mode:    $AWM_INDUCTION_MODE"
+[[ "$METHOD" == "all" || "$METHOD" == "asi" ]] && echo "ASI config:  batch=$ASI_BATCH_SIZE heldout=$ASI_HELDOUT_SIZE max_induction=$ASI_MAX_INDUCTION_EPISODES min_ast_delta=$ASI_MIN_AST_DELTA"
 [[ "$BACKBONE_ABLATION_ONLY" -eq 1 ]] && echo "Ablation:    unordered only (organized compiler skipped)"
 [[ "$SUBFLOW_DISCOVERY" -eq 1 ]] && echo "Discovery:   latent session subflows before graph mining"
 [[ -n "$RESUME_RUN" ]] && echo "Resume:      enabled (completed subflows will be skipped)"
@@ -371,7 +390,7 @@ for path in paths:
             continue
         if method == "trace2skill" and isinstance(summary.get("evolved_test"), dict):
             raise SystemExit(0)
-        if method in {"awm", "expel"} and isinstance(summary.get("final_test"), dict):
+        if method in {"awm", "expel", "asi"} and isinstance(summary.get("final_test"), dict):
             raise SystemExit(0)
 raise SystemExit(1)
 PY
@@ -429,6 +448,20 @@ run_worker() {
                 echo "trace2skill:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
             fi
         fi
+        if [[ "$METHOD" == "all" || "$METHOD" == "asi" ]]; then
+            asi_args=(scripts/run_asi_abcd.py
+                --subflow "$subflow"
+                --train-file "$SPLITS_DIR/$subflow/train.json"
+                --test-file "$SPLITS_DIR/$subflow/test.json"
+                --output-dir "$RUN_ROOT/asi/$subflow"
+                --batch-size "$ASI_BATCH_SIZE"
+                --heldout-size "$ASI_HELDOUT_SIZE"
+                --max-induction-episodes "$ASI_MAX_INDUCTION_EPISODES"
+                --min-ast-delta "$ASI_MIN_AST_DELTA")
+            [[ "$ASI_SKIP_FINAL_TEST" -eq 1 ]] && asi_args+=(--skip-final-test)
+            run_or_resume_task "$worker_index" "$workflow_id" asi "$subflow" "${asi_args[@]}" || {
+                echo "asi:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
+        fi
         if [[ "$METHOD" == "all" || "$METHOD" == "graph" ]]; then
             train_sessions="$(train_session_count "$subflow")"
             if [[ "$train_sessions" -lt "$MIN_SESSIONS" ]]; then
@@ -485,6 +518,7 @@ aggregate_method() {
 [[ "$METHOD" == "all" || "$METHOD" == "awm" ]] && aggregate_method awm
 [[ "$METHOD" == "all" || "$METHOD" == "expel" ]] && aggregate_method expel
 [[ "$METHOD" == "all" || "$METHOD" == "trace2skill" ]] && aggregate_method trace2skill
+[[ "$METHOD" == "all" || "$METHOD" == "asi" ]] && aggregate_method asi
 [[ "$METHOD" == "all" || "$METHOD" == "graph" ]] && aggregate_method graph
 
 FINAL_SUMMARY="$RUN_ROOT/final_summary.json"

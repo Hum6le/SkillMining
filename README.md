@@ -25,8 +25,24 @@ bash scripts/run_full_abcd_experiments.sh
 bash scripts/launch_full_abcd_experiments.sh --method awm
 bash scripts/launch_full_abcd_experiments.sh --method expel
 bash scripts/launch_full_abcd_experiments.sh --method trace2skill
+bash scripts/launch_full_abcd_experiments.sh --method asi
 bash scripts/launch_full_abcd_experiments.sh --subflow recover_username
 ```
+
+ASI online induction can be configured independently:
+
+```bash
+bash scripts/launch_full_abcd_experiments.sh --method asi \
+  --workflow-ids workflow_a,workflow_b,workflow_c,workflow_d \
+  --asi-batch-size 25 --asi-heldout-size 10 \
+  --asi-max-induction-episodes 8
+```
+
+ASI writes each subflow under `outputs/full_abcd_<run>/asi/<subflow>/`. Its
+active library is versioned under `asi_library/current`, while staged versions
+and accept/rollback records are kept under `asi_library/versions` and
+`update_history.jsonl`. `--method all` now includes ASI in addition to AWM,
+ExpeL, Trace2Skill, and Graph.
 
 Task-oriented Dialogue (ToD) agent evaluation and skill evolution framework, built
 on top of the [Trace2Skill](https://github.com/Qwen-Applications/Trace2Skill)
