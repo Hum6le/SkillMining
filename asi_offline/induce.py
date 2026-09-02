@@ -15,15 +15,30 @@ from typing import Any, Callable
 from .abcd_induction import ASIOfflineEpisode
 
 
-_SYSTEM_PROMPT = """You are a proficient software engineer. Your task is to
-(1) summarize reusable functions as APIs from the provided action trajectory,
-and (2) rewrite the trajectory using the reusable functions you generated.
+_SYSTEM_PROMPT = """You are a proficient software engineer inducing reusable
+programmatic skills from one successful task-oriented dialogue trajectory.
+Your task is to (1) summarize a reusable multi-action procedure as an API and
+(2) rewrite the same trajectory using the API you generated.
 
-Do not generate a function that contains fewer than 3 or more than 10
-take_action calls. A function may call only take_action(action_name, args),
-using action names and parameters present in the example. Do not invent tools,
-hard-code concrete customer values inside a reusable function body, or include try/except blocks. Include Args,
-Returns, and Examples in each function docstring.
+The dialogue context explains why each action is appropriate, but it is not a
+literal program specification. Infer a procedure only when the action order
+and the dialogue evidence support it. Preserve the source action order and do
+not invent actions, tools, preconditions, or outcomes.
+
+Each generated function must contain 3 to 10 take_action calls. A function
+may call only take_action(action_name, args), using canonical action names from
+the example. Replace concrete customer values with meaningful parameters.
+Slot parameters are placeholders for values that must be bound from the
+current dialogue at runtime; they are never literal output values. Never
+hard-code names, emails, phones, account IDs, order IDs, or other instance
+values in a function body. Do not confuse a slot name with a slot value, and
+preserve the ordered slot contract of every primitive action.
+
+The generated function is a reusable plan, not the action emitted at runtime.
+The runtime must identify the next applicable primitive step, bind its ordered
+slot values from the current dialogue, and output that primitive action only.
+Include Args, Returns, and Examples in each function docstring, while keeping
+examples illustrative and free of private training values.
 
 After the function definitions, provide ## Rewritten Trajectory followed by a
 Python code block. The rewritten trajectory must preserve the source action
@@ -73,10 +88,10 @@ def build_episode_induction_messages(episode: ASIOfflineEpisode) -> list[dict[st
 
     The original prompt contains one successful example and ends at
     ``## Reusable Functions``. ABCD backend labels replace browser actions;
-    scenario/subflow metadata are absent. Like the official inducer, concrete
-    training values are present so the model can infer what should become a
-    function argument; a later stage checks that function *bodies* do not
-    hard-code them.
+    scenario/subflow metadata are absent. Concrete training values remain in
+    the grounded trace so the model can infer function arguments, but the
+    generated function body must parameterize them; validation rejects any
+    hard-coded instance value.
     """
     if not episode.eligible_for_induction:
         raise ValueError(
@@ -85,7 +100,7 @@ def build_episode_induction_messages(episode: ASIOfflineEpisode) -> list[dict[st
 
     trajectory = [
         f"### Example 1 ({episode.conversation_id})",
-        "Grounded dialogue context:",
+        "Grounded dialogue context (evidence, not a slot-value template):",
     ]
     for event in episode.events:
         if event["event_type"] != "backend_action":
@@ -93,7 +108,10 @@ def build_episode_induction_messages(episode: ASIOfflineEpisode) -> list[dict[st
                 f"- {event['speaker']}: "
                 f"{event.get('grounded_content', event['content'])}"
             )
-    trajectory.extend(["", "Successful backend-action trajectory:"])
+    trajectory.extend([
+        "",
+        "Successful backend-action trajectory (preserve this order):",
+    ])
     for action in episode.primitive_actions:
         arguments = repr(action["slot_values"])
         trajectory.extend([

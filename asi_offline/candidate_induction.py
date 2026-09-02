@@ -63,6 +63,8 @@ def build_induction_prompt(episode: ASIOfflineEpisode, *, min_actions: int = 3) 
         f"Each candidate replaces one contiguous span of {min_actions} or more backend actions with a callable skill.",
         "Each candidate must have one coherent purpose and only use parameters present in that span.",
         "Do not copy concrete customer values or select a whole trace with unrelated goals.",
+        "Use dialogue events as evidence for when the procedure applies, but do not turn one example's private values into fixed slot values.",
+        "The function body is a reusable plan; at runtime emit the next primitive action with ordered values from the current dialogue.",
         "Do not write arbitrary Python: the runtime rebuilds each body from the selected source span.",
         "Return exactly one JSON object and no Markdown:",
         '{"skills": [{"name": "snake_case", "description": "...", "start_action_index": 0, "end_action_index": 1, "parameters": ["parameter_name"]}]}',
