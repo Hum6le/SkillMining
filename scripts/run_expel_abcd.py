@@ -81,12 +81,23 @@ def main():
     rules = ExpeLRuleStore.load(rule_path) if rule_path and rule_path.exists() else ExpeLRuleStore(args.max_rules)
     agent = ExpeLABCDAgent(model=args.model, rule_store=rules, expose_scenario_labels=False)
     batch_records = []
+    start_batch = 1
+    if args.resume_from:
+        resume_records = Path(args.resume_from) / "train_induction.json"
+        if resume_records.is_file():
+            payload = json.loads(resume_records.read_text(encoding="utf-8"))
+            if isinstance(payload, list):
+                batch_records = payload
+                start_batch = len(batch_records) + 1
+                print(f"[ExpeL] resuming after batch {start_batch - 1}")
 
     if not args.eval_only:
         batches = _batches(train, args.batch_size)
         if args.max_batches:
             batches = batches[:args.max_batches]
         for batch_index, batch in enumerate(batches, 1):
+            if batch_index < start_batch:
+                continue
             turns = agent.generate_all_turn_predictions(batch, predict_actions=True, verbose=False)
             metrics = compute_ast_from_turn_results(batch, turns)
             induction = agent.induce_rules(batch, turns, metrics)

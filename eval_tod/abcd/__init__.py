@@ -38,6 +38,7 @@ from .agent_skill import (
     SkillSelectingAgent,
     compute_selection_accuracy,
 )
+from .sharded_eval import merge_turn_results, parse_workflow_ids, shard_conversations
 
 __all__ = [
     # Schemas
@@ -64,4 +65,7 @@ __all__ = [
     # Agent
     "SkillSelectingAgent",
     "compute_selection_accuracy",
+    "merge_turn_results",
+    "parse_workflow_ids",
+    "shard_conversations",
 ]

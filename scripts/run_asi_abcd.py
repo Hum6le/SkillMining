@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import time
 from pathlib import Path
 import sys
 from typing import Any
@@ -75,6 +76,39 @@ def _final_test(library_path: Path, conversations: list[dict[str, Any]], model: 
     return evaluate_asi_library(library_path, conversations, model=model, output_dir=output_dir)
 
 
+def _format_duration(seconds: float | None) -> str:
+    """Render an ETA without depending on an optional progress-bar package."""
+    if seconds is None or seconds < 0:
+        return "unknown"
+    total = int(seconds + 0.5)
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h{minutes:02d}m"
+    if minutes:
+        return f"{minutes}m{secs:02d}s"
+    return f"{secs}s"
+
+
+def _log_progress(log: logging.Logger, completed: int, total: int, started_at: float) -> None:
+    """Log total batch progress and an average-time ETA."""
+    elapsed = max(0.0, time.monotonic() - started_at)
+    average = elapsed / completed if completed else None
+    remaining = (total - completed) * average if average is not None else None
+    width = 24
+    filled = int(width * completed / total) if total else width
+    bar = "#" * filled + "." * (width - filled)
+    log.info(
+        "ASI progress [%s] %d/%d (%.1f%%), elapsed=%s, ETA=%s",
+        bar,
+        completed,
+        total,
+        100.0 * completed / total if total else 100.0,
+        _format_duration(elapsed),
+        _format_duration(remaining),
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Online ASI ABCD runner for one subflow")
     parser.add_argument("--subflow", required=True)
@@ -111,6 +145,8 @@ def main() -> None:
     batches = [train[i : i + args.batch_size] for i in range(0, len(train), args.batch_size)]
     if args.max_batches:
         batches = batches[: args.max_batches]
+    total_batches = len(batches)
+    progress_started_at = time.monotonic()
     manager = ASIOnlineLibraryManager(output_dir / "asi_library")
     response_logger = ResponseLogger(str(output_dir / "llm_responses"))
     history_path = output_dir / "batch_history.jsonl"
@@ -125,6 +161,7 @@ def main() -> None:
     for batch_index, batch in enumerate(batches, start=1):
         if batch_index in completed:
             log.info("Batch %d already completed; skipping", batch_index)
+            _log_progress(log, len(completed), total_batches, progress_started_at)
             continue
         batch_dir = output_dir / "batches" / f"batch_{batch_index:04d}"
         batch_dir.mkdir(parents=True, exist_ok=True)
@@ -207,6 +244,8 @@ def main() -> None:
         _write(batch_dir / "batch_summary.json", batch_summary)
         with history_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(batch_summary, ensure_ascii=False) + "\n")
+        completed.add(batch_index)
+        _log_progress(log, len(completed), total_batches, progress_started_at)
 
     final = None
     if not args.skip_final_test:

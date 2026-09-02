@@ -113,6 +113,9 @@ Options:
 Worker load is balanced by train+test non-empty agent utterance turns, not
 conversation count. The selected workflow ID is exported as
 SKILLMINING_WORKFLOW_ID; the workflow-aware llm.py must honor this override.
+When --eval-workflow-ids is supplied for one subflow, AWM, ExpeL, Trace2Skill,
+and ASI are evaluated in independent shard processes and merged back into the
+method summary; Graph keeps its native sharded evaluator.
 Without --workflow-ids, one serial worker uses config.py unchanged.
 Resume does not require a manifest. If the old run has no load plan, a new
 plan is created from the current split list and the supplied workflow IDs.
@@ -406,6 +409,44 @@ run_or_resume_task() {
     run_task "$worker_index" "$workflow_id" "$method_name" "$subflow" "$@"
 }
 
+run_sharded_eval() {
+    local method_name="$1"
+    local workflow_fallback="$2"
+    local subflow="$3"
+    local task_dir="$RUN_ROOT/$method_name/$subflow"
+    local shard_root="$task_dir/eval_shards"
+    local merged_dir="$task_dir"
+    local test_file="$SPLITS_DIR/$subflow/test.json"
+    [[ -n "$EVAL_WORKFLOW_IDS_RAW" ]] || return 0
+    [[ -d "$task_dir" ]] || { echo "Cannot shard $method_name/$subflow: resource directory missing" >&2; return 1; }
+    rm -rf "$shard_root"
+    mkdir -p "$shard_root"
+    local -a shard_pids=()
+    local index eval_id
+    for index in "${!EVAL_WORKFLOW_IDS[@]}"; do
+        eval_id="${EVAL_WORKFLOW_IDS[$index]}"
+        mkdir -p "$shard_root/shard_$index"
+        SKILLMINING_WORKFLOW_ID="${eval_id:-$workflow_fallback}" "$PYTHON_BIN" scripts/eval_abcd_shard.py \
+            --method "$method_name" --resource-dir "$task_dir" \
+            --test-file "$test_file" --subflow "$subflow" \
+            --shard-index "$index" --shard-count "${#EVAL_WORKFLOW_IDS[@]}" \
+            --output-dir "$shard_root/shard_$index" \
+            > "$shard_root/shard_$index/run.log" 2>&1 &
+        shard_pids+=("$!")
+    done
+    local shard_failure=0
+    for pid in "${shard_pids[@]}"; do
+        wait "$pid" || shard_failure=1
+    done
+    if [[ "$shard_failure" -ne 0 ]]; then
+        echo "Sharded evaluation failed for $method_name/$subflow; inspect $shard_root." >&2
+        return 1
+    fi
+    "$PYTHON_BIN" scripts/merge_abcd_eval_shards.py \
+        --method "$method_name" --subflow "$subflow" --test-file "$test_file" \
+        --shard-root "$shard_root" --output-dir "$merged_dir"
+}
+
 run_worker() {
     local worker_index="$1" workflow_id="$2"
     local failed_path="$RUN_ROOT/worker_${worker_index}_failed.txt"
@@ -419,8 +460,17 @@ run_worker() {
                 echo "awm:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
         fi
         if [[ "$METHOD" == "all" || "$METHOD" == "expel" ]]; then
-            run_or_resume_task "$worker_index" "$workflow_id" expel "$subflow" scripts/run_expel_abcd.py --subflow "$subflow" || {
+            expel_args=(scripts/run_expel_abcd.py --subflow "$subflow")
+            if [[ -n "$RESUME_RUN" && -f "$RUN_ROOT/expel/$subflow/expel_rules.json" ]]; then
+                expel_args+=(--resume-from "$RUN_ROOT/expel/$subflow")
+                echo "Resuming ExpeL checkpoint: $RUN_ROOT/expel/$subflow"
+            fi
+            run_or_resume_task "$worker_index" "$workflow_id" expel "$subflow" "${expel_args[@]}" || {
                 echo "expel:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
+            if [[ -n "$EVAL_WORKFLOW_IDS_RAW" ]]; then
+                run_sharded_eval expel "$workflow_id" "$subflow" || {
+                    echo "expel_eval:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
+            fi
         fi
         if [[ "$METHOD" == "all" || "$METHOD" == "trace2skill" ]]; then
             # Trace2Skill nests its timestamped directory below this unique
@@ -446,6 +496,10 @@ run_worker() {
                     "${trace_extra_args[@]}" \
                     "${trace_resume_args[@]}" || {
                 echo "trace2skill:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
+            fi
+            if [[ -n "$EVAL_WORKFLOW_IDS_RAW" ]]; then
+                run_sharded_eval trace2skill "$workflow_id" "$subflow" || {
+                    echo "trace2skill_eval:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
             fi
         fi
         if [[ "$METHOD" == "all" || "$METHOD" == "asi" ]]; then
@@ -480,6 +534,18 @@ run_worker() {
             [[ "$SKIP_GRAPH_SEED" -eq 1 ]] && graph_args+=(--skip-seed)
             run_or_resume_task "$worker_index" "$workflow_id" graph "$subflow" "${graph_args[@]}" || {
                 echo "graph:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
+        fi
+        if [[ "$METHOD" == "all" || "$METHOD" == "awm" ]]; then
+            if [[ -n "$EVAL_WORKFLOW_IDS_RAW" ]]; then
+                run_sharded_eval awm "$workflow_id" "$subflow" || {
+                    echo "awm_eval:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
+            fi
+        fi
+        if [[ "$METHOD" == "all" || "$METHOD" == "asi" ]]; then
+            if [[ -n "$EVAL_WORKFLOW_IDS_RAW" ]]; then
+                run_sharded_eval asi "$workflow_id" "$subflow" || {
+                    echo "asi_eval:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
+            fi
         fi
     done
 }

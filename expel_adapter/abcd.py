@@ -97,8 +97,17 @@ class ExpeLABCDAgent(ABCDAgent):
         self.rule_store = rule_store or ExpeLRuleStore()
         super().__init__(*args, **kwargs)
 
-    def _build_system_prompt(self, scenario: dict[str, Any]) -> str:
-        base = super()._build_system_prompt(scenario)
+    def _build_system_prompt(
+        self,
+        scenario: dict[str, Any],
+        context: str = "",
+        candidate_actions: list[str] | None = None,
+    ) -> str:
+        base = super()._build_system_prompt(
+            scenario,
+            context=context,
+            candidate_actions=candidate_actions,
+        )
         if not self.rule_store.rules:
             return base
         return (
@@ -147,8 +156,15 @@ class ExpeLABCDAgent(ABCDAgent):
             f"Existing rules:\n{self.rule_store.text or '(none)'}\n\n"
             + "\n\n".join(experiences[:20])
         )
-        raw = chat(prompt, model=self.model, api_key=self.api_key, base_url=self.base_url, temperature=0.0).strip()
+        raw = chat(
+            prompt,
+            model=self.model,
+            api_key=self.api_key,
+            base_url=self.base_url,
+            temperature=0.0,
+            response_logger=self._response_logger,
+            call_tag="expel_rule_induction",
+        ).strip()
         operations = _parse_operations(raw)
         self.rule_store.apply(operations)
         return {"raw_output": raw, "operations": operations, "rules": self.rule_store.text}
-
