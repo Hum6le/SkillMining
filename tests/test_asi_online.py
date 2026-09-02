@@ -7,7 +7,9 @@ from tempfile import TemporaryDirectory
 from asi_offline import (
     build_online_episode,
     build_online_induction_prompt,
+    online_episode_to_induction_episode,
     parse_online_candidate_output,
+    select_action_centered_test_suite,
     validate_online_candidates,
     ASIOnlineLibraryManager,
     decide_asi_update,
@@ -33,6 +35,35 @@ def _conversation() -> dict:
 
 
 class ASIOnlineEpisodeTest(unittest.TestCase):
+    def test_action_centered_suite_retrieves_related_real_conversations(self) -> None:
+        episode = build_online_episode(
+            _conversation(),
+            [{"convo_id": "online-1", "turn_index": 1, "target_type": "action", "predicted_action": "pull-up-account", "predicted_slots": ["alice"]}],
+            {"ast_score": 1.0, "action_total": 1, "action_correct": 1},
+        )
+        induction_episode = online_episode_to_induction_episode(episode)
+        candidates, _ = parse_online_candidate_output(
+            '{"skills": [{"name": "lookup", "description": "Lookup.", "start_action_index": 0, "end_action_index": 0, "parameters": ["slot_1"]}]}',
+            episode,
+        )
+        conversations = [_conversation(), {
+            **_conversation(),
+            "convo_id": "related",
+            "delexed": [{"speaker": "agent", "targets": ["x", "take_action", "pull-up-account", ["bob"]]}],
+        }, {
+            **_conversation(),
+            "convo_id": "unrelated",
+            "delexed": [{"speaker": "agent", "targets": ["x", "take_action", "other-action", []]}],
+        }]
+        selected, metadata = select_action_centered_test_suite(
+            conversations,
+            candidates,
+            max_size=2,
+            selector=lambda _: '{"conversation_ids": ["related"]}',
+        )
+        self.assertEqual([row["convo_id"] for row in selected], ["related", "online-1"])
+        self.assertEqual(metadata["selection_mode"], "llm_then_retrieval_fallback")
+
     def test_successful_rollout_is_eligible(self) -> None:
         episode = build_online_episode(
             _conversation(),

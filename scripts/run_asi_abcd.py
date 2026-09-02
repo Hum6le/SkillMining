@@ -27,6 +27,7 @@ from asi_offline import (
     decide_asi_update,
     evaluate_asi_library,
     induce_online_episode,
+    select_action_centered_test_suite,
     successful_online_episodes,
     validate_online_candidates,
 )
@@ -70,6 +71,15 @@ def _call_induction(episode, model: str, response_logger: ResponseLogger):
         )
 
     return induce_online_episode(episode, call)
+
+
+def _call_test_selector(prompt: str, model: str, response_logger: ResponseLogger) -> str:
+    return chat(
+        [{"role": "user", "content": prompt}],
+        model=model,
+        response_logger=response_logger,
+        call_tag="asi_online_test_selection",
+    ) or ""
 
 
 def _final_test(library_path: Path, conversations: list[dict[str, Any]], model: str, output_dir: Path) -> dict[str, Any]:
@@ -120,6 +130,10 @@ def main() -> None:
     parser.add_argument("--max-batches", type=int)
     parser.add_argument("--heldout-size", type=int, default=10)
     parser.add_argument(
+        "--test-pass-rate", type=float, default=0.5,
+        help="Minimum whole-conversation joint-AST pass rate for promotion (default: 0.5)",
+    )
+    parser.add_argument(
         "--min-actions", type=int, default=1,
         help="Compatibility option; one verified action is sufficient for online induction",
     )
@@ -130,6 +144,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.batch_size < 1 or args.heldout_size < 1:
         parser.error("--batch-size and --heldout-size must be positive")
+    if not 0.0 <= args.test_pass_rate <= 1.0:
+        parser.error("--test-pass-rate must be in [0, 1]")
     if args.max_induction_episodes < 1:
         parser.error("--max-induction-episodes must be positive")
 
@@ -221,11 +237,34 @@ def main() -> None:
             "library_version": None,
         }
         if valid_candidates:
-            heldout_start = batch_index * args.batch_size
-            heldout = train[heldout_start : heldout_start + args.heldout_size]
-            if not heldout:
-                heldout = train[max(0, len(train) - args.heldout_size) :]
-            baseline = evaluate_asi_library(library_path, heldout, model=args.model, output_dir=batch_dir / "heldout_before")
+            try:
+                test_suite, suite_meta = select_action_centered_test_suite(
+                    train,
+                    valid_candidates,
+                    max_size=args.heldout_size,
+                    selector=lambda prompt: _call_test_selector(
+                        prompt, args.model, response_logger
+                    ),
+                )
+            except Exception as exc:
+                log.warning("Action-centered test selection failed: %s", exc)
+                test_suite, suite_meta = select_action_centered_test_suite(
+                    train,
+                    valid_candidates,
+                    max_size=args.heldout_size,
+                )
+                suite_meta["selector_error"] = str(exc)
+            _write(batch_dir / "test_suite.json", {
+                **suite_meta,
+                "conversations": [str(row.get("convo_id", "")) for row in test_suite],
+                "pass_threshold": args.test_pass_rate,
+            })
+            baseline = evaluate_asi_library(
+                library_path,
+                test_suite,
+                model=args.model,
+                output_dir=batch_dir / "heldout_before",
+            )
             validation = ASIOnlineValidationResult(
                 episode_id=f"batch_{batch_index:04d}",
                 accepted_candidates=[candidate.skill_name for candidate in valid_candidates],
@@ -235,9 +274,23 @@ def main() -> None:
                 rewritten_trajectory=[],
             )
             update = manager.stage(valid_candidates, validation, ast_before=float(baseline.get("ast_cds", {}).get("ast_joint", 0.0)))
-            candidate_result = evaluate_asi_library(Path(update.version_dir) / "ASI_ACTIONS.md", heldout, model=args.model, output_dir=batch_dir / "heldout_after")
-            decision = decide_asi_update(baseline, candidate_result, min_ast_delta=args.min_ast_delta)
-            batch_summary.update({"library_version": update.version, "decision": decision.to_dict()})
+            candidate_result = evaluate_asi_library(
+                Path(update.version_dir) / "ASI_ACTIONS.md",
+                test_suite,
+                model=args.model,
+                output_dir=batch_dir / "heldout_after",
+            )
+            decision = decide_asi_update(
+                baseline,
+                candidate_result,
+                min_ast_delta=args.min_ast_delta,
+                min_test_pass_rate=args.test_pass_rate,
+            )
+            batch_summary.update({
+                "library_version": update.version,
+                "decision": decision.to_dict(),
+                "test_suite": candidate_result.get("test_suite", {}),
+            })
             if decision.accepted:
                 manager.accept(update, ast_after=decision.ast_after)
                 log.info("Batch %d: accepted library version %04d (%s)", batch_index, update.version, decision.reason)
@@ -258,6 +311,7 @@ def main() -> None:
         "config": {
             "method": "asi", "subflow": args.subflow,
             "batch_size": args.batch_size,
+            "test_pass_rate": args.test_pass_rate,
             "skip_final_test": bool(args.skip_final_test),
         },
         "data": {"train_conversations": len(train), "test_conversations": len(test)},

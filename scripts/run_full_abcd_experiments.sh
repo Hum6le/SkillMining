@@ -32,6 +32,7 @@ AWM_INDUCTION_MODE="online"
 SKIP_TRACE2SKILL_SEED_TEST=0
 ASI_BATCH_SIZE=25
 ASI_HELDOUT_SIZE=10
+ASI_TEST_PASS_RATE="0.5"
 ASI_MAX_INDUCTION_EPISODES=8
 ASI_MIN_AST_DELTA="0.0"
 ASI_SKIP_FINAL_TEST=0
@@ -102,7 +103,8 @@ Options:
   --skip-seed-test           Trace2Skill: skip the pre-evolution seed test evaluation
   --awm-induction-mode NAME  AWM induction: online or offline (default: online)
   --asi-batch-size N         ASI online rollout batch size (default: 25)
-  --asi-heldout-size N       ASI held-out gate size per update (default: 10)
+  --asi-heldout-size N       ASI action-centered test suite size per update (default: 10)
+  --asi-test-pass-rate N     Minimum whole-conversation test pass rate for ASI promotion (default: 0.5)
   --asi-max-induction-episodes N  Maximum successful episodes used per ASI batch (default: 8)
   --asi-min-ast-delta N      Minimum AST joint gain required for ASI promotion (default: 0.0)
   --asi-skip-final-test      Skip ASI final test evaluation
@@ -145,6 +147,7 @@ while [[ $# -gt 0 ]]; do
         --awm-induction-mode) AWM_INDUCTION_MODE="$2"; shift 2 ;;
         --asi-batch-size) ASI_BATCH_SIZE="$2"; shift 2 ;;
         --asi-heldout-size) ASI_HELDOUT_SIZE="$2"; shift 2 ;;
+        --asi-test-pass-rate) ASI_TEST_PASS_RATE="$2"; shift 2 ;;
         --asi-max-induction-episodes) ASI_MAX_INDUCTION_EPISODES="$2"; shift 2 ;;
         --asi-min-ast-delta) ASI_MIN_AST_DELTA="$2"; shift 2 ;;
         --asi-skip-final-test) ASI_SKIP_FINAL_TEST=1; shift ;;
@@ -166,6 +169,7 @@ case "$GRAPH_MINING_METHOD" in legacy|sequence|backbone|backbone_coverage|semant
 case "$BACKBONE_COMPILER" in organized|unordered|compare) ;; *) echo "Invalid --backbone-compiler: $BACKBONE_COMPILER" >&2; exit 2 ;; esac
 [[ "$ASI_BATCH_SIZE" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --asi-batch-size: $ASI_BATCH_SIZE" >&2; exit 2; }
 [[ "$ASI_HELDOUT_SIZE" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --asi-heldout-size: $ASI_HELDOUT_SIZE" >&2; exit 2; }
+python -c 'import sys; value=float(sys.argv[1]); sys.exit(0 if 0.0 <= value <= 1.0 else 1)' "$ASI_TEST_PASS_RATE" || { echo "Invalid --asi-test-pass-rate: $ASI_TEST_PASS_RATE" >&2; exit 2; }
 [[ "$ASI_MAX_INDUCTION_EPISODES" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --asi-max-induction-episodes: $ASI_MAX_INDUCTION_EPISODES" >&2; exit 2; }
 if [[ "$BACKBONE_ABLATION_ONLY" -eq 1 ]]; then
     [[ "$BACKBONE_COMPILER" != "compare" ]] || { echo "--backbone-ablation-only cannot be combined with --backbone-compiler compare" >&2; exit 2; }
@@ -326,7 +330,7 @@ echo "Split:       current 10-flow INDEX.json protocol"
 echo "Workers:     ${#WORKFLOW_IDS[@]}"
 echo "Compiler:    $BACKBONE_COMPILER"
 [[ "$METHOD" == "all" || "$METHOD" == "awm" ]] && echo "AWM mode:    $AWM_INDUCTION_MODE"
-[[ "$METHOD" == "all" || "$METHOD" == "asi" ]] && echo "ASI config:  batch=$ASI_BATCH_SIZE heldout=$ASI_HELDOUT_SIZE max_induction=$ASI_MAX_INDUCTION_EPISODES min_ast_delta=$ASI_MIN_AST_DELTA"
+[[ "$METHOD" == "all" || "$METHOD" == "asi" ]] && echo "ASI config:  batch=$ASI_BATCH_SIZE suite_size=$ASI_HELDOUT_SIZE pass_rate=$ASI_TEST_PASS_RATE max_induction=$ASI_MAX_INDUCTION_EPISODES min_ast_delta=$ASI_MIN_AST_DELTA"
 [[ "$BACKBONE_ABLATION_ONLY" -eq 1 ]] && echo "Ablation:    unordered only (organized compiler skipped)"
 [[ "$SUBFLOW_DISCOVERY" -eq 1 ]] && echo "Discovery:   latent session subflows before graph mining"
 [[ -n "$RESUME_RUN" ]] && echo "Resume:      enabled (completed subflows will be skipped)"
@@ -497,6 +501,7 @@ run_worker() {
                 --output-dir "$RUN_ROOT/asi/$subflow"
                 --batch-size "$ASI_BATCH_SIZE"
                 --heldout-size "$ASI_HELDOUT_SIZE"
+                --test-pass-rate "$ASI_TEST_PASS_RATE"
                 --max-induction-episodes "$ASI_MAX_INDUCTION_EPISODES"
                 --min-ast-delta "$ASI_MIN_AST_DELTA")
             [[ "$ASI_SKIP_FINAL_TEST" -eq 1 ]] && asi_args+=(--skip-final-test)

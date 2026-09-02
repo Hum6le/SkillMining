@@ -47,7 +47,13 @@ from .online_library import (
     ASIOnlineLibraryManager,
     candidate_to_library_record,
 )
-from .online_evaluation import ASIUpdateDecision, decide_asi_update, evaluate_asi_library
+from .online_evaluation import (
+    ASIUpdateDecision,
+    build_action_centered_test_selection_prompt,
+    decide_asi_update,
+    evaluate_asi_library,
+    select_action_centered_test_suite,
+)
 
 __all__ = [
     "ASIOfflineEpisode",
@@ -85,6 +91,8 @@ __all__ = [
     "ASIOnlineLibraryManager",
     "candidate_to_library_record",
     "ASIUpdateDecision",
+    "build_action_centered_test_selection_prompt",
     "decide_asi_update",
     "evaluate_asi_library",
+    "select_action_centered_test_suite",
 ]
