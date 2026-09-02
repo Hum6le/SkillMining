@@ -250,12 +250,16 @@ def main() -> None:
     final = None
     if not args.skip_final_test:
         final = _final_test(manager.current_library_path(), test, args.model, output_dir / "final_test")
-        _write(output_dir / "summary.json", {
-            "config": {"method": "asi", "subflow": args.subflow, "batch_size": args.batch_size},
-            "data": {"train_conversations": len(train), "test_conversations": len(test)},
-            "final_test": final,
-        })
         log.info("Final test: %s", final.get("summary", final))
+    _write(output_dir / "summary.json", {
+        "config": {
+            "method": "asi", "subflow": args.subflow,
+            "batch_size": args.batch_size,
+            "skip_final_test": bool(args.skip_final_test),
+        },
+        "data": {"train_conversations": len(train), "test_conversations": len(test)},
+        "final_test": final,
+    })
     log.info("ASI run complete: %s", output_dir)
 
 

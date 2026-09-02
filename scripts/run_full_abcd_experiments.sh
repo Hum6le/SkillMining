@@ -391,9 +391,15 @@ for path in paths:
         config = summary.get("config", {})
         if str(config.get("subflow", "")) != subflow:
             continue
-        if method == "trace2skill" and isinstance(summary.get("evolved_test"), dict):
+        if method == "trace2skill" and (
+            isinstance(summary.get("evolved_test"), dict)
+            or summary.get("config", {}).get("skip_test_eval") is True
+        ):
             raise SystemExit(0)
-        if method in {"awm", "expel", "asi"} and isinstance(summary.get("final_test"), dict):
+        if method in {"awm", "expel", "asi"} and (
+            isinstance(summary.get("final_test"), dict)
+            or summary.get("config", {}).get("skip_final_test") is True
+        ):
             raise SystemExit(0)
 raise SystemExit(1)
 PY
@@ -414,37 +420,14 @@ run_sharded_eval() {
     local workflow_fallback="$2"
     local subflow="$3"
     local task_dir="$RUN_ROOT/$method_name/$subflow"
-    local shard_root="$task_dir/eval_shards"
-    local merged_dir="$task_dir"
     local test_file="$SPLITS_DIR/$subflow/test.json"
     [[ -n "$EVAL_WORKFLOW_IDS_RAW" ]] || return 0
     [[ -d "$task_dir" ]] || { echo "Cannot shard $method_name/$subflow: resource directory missing" >&2; return 1; }
-    rm -rf "$shard_root"
-    mkdir -p "$shard_root"
-    local -a shard_pids=()
-    local index eval_id
-    for index in "${!EVAL_WORKFLOW_IDS[@]}"; do
-        eval_id="${EVAL_WORKFLOW_IDS[$index]}"
-        mkdir -p "$shard_root/shard_$index"
-        SKILLMINING_WORKFLOW_ID="${eval_id:-$workflow_fallback}" "$PYTHON_BIN" scripts/eval_abcd_shard.py \
-            --method "$method_name" --resource-dir "$task_dir" \
-            --test-file "$test_file" --subflow "$subflow" \
-            --shard-index "$index" --shard-count "${#EVAL_WORKFLOW_IDS[@]}" \
-            --output-dir "$shard_root/shard_$index" \
-            > "$shard_root/shard_$index/run.log" 2>&1 &
-        shard_pids+=("$!")
-    done
-    local shard_failure=0
-    for pid in "${shard_pids[@]}"; do
-        wait "$pid" || shard_failure=1
-    done
-    if [[ "$shard_failure" -ne 0 ]]; then
-        echo "Sharded evaluation failed for $method_name/$subflow; inspect $shard_root." >&2
-        return 1
-    fi
-    "$PYTHON_BIN" scripts/merge_abcd_eval_shards.py \
-        --method "$method_name" --subflow "$subflow" --test-file "$test_file" \
-        --shard-root "$shard_root" --output-dir "$merged_dir"
+    echo "Unified evaluation: method=$method_name subflow=$subflow workflows=$EVAL_WORKFLOW_IDS_RAW"
+    SKILLMINING_WORKFLOW_ID="$workflow_fallback" "$PYTHON_BIN" scripts/evaluate_abcd_method.py \
+        --method "$method_name" --resource-dir "$task_dir" \
+        --test-file "$test_file" --subflow "$subflow" \
+        --output-dir "$task_dir" --eval-workflow-ids "$EVAL_WORKFLOW_IDS_RAW"
 }
 
 run_worker() {
@@ -455,12 +438,15 @@ run_worker() {
     for subflow in "${assigned[@]}"; do
         [[ -n "$subflow" ]] || continue
         if [[ "$METHOD" == "all" || "$METHOD" == "awm" ]]; then
+            awm_extra_args=()
+            [[ -n "$EVAL_WORKFLOW_IDS_RAW" ]] && awm_extra_args+=(--skip-final-test)
             run_or_resume_task "$worker_index" "$workflow_id" awm "$subflow" scripts/run_awm_abcd.py \
-                --subflow "$subflow" --induction-mode "$AWM_INDUCTION_MODE" || {
+                --subflow "$subflow" --induction-mode "$AWM_INDUCTION_MODE" "${awm_extra_args[@]}" || {
                 echo "awm:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
         fi
         if [[ "$METHOD" == "all" || "$METHOD" == "expel" ]]; then
             expel_args=(scripts/run_expel_abcd.py --subflow "$subflow")
+            [[ -n "$EVAL_WORKFLOW_IDS_RAW" ]] && expel_args+=(--skip-final-test)
             if [[ -n "$RESUME_RUN" && -f "$RUN_ROOT/expel/$subflow/expel_rules.json" ]]; then
                 expel_args+=(--resume-from "$RUN_ROOT/expel/$subflow")
                 echo "Resuming ExpeL checkpoint: $RUN_ROOT/expel/$subflow"
@@ -489,6 +475,7 @@ run_worker() {
                 fi
                 trace_extra_args=()
                 [[ "$SKIP_TRACE2SKILL_SEED_TEST" -eq 1 ]] && trace_extra_args+=(--skip-seed-test)
+                [[ -n "$EVAL_WORKFLOW_IDS_RAW" ]] && trace_extra_args+=(--skip-test-eval)
                 SKILLMINING_WORKFLOW_ID="$workflow_id" "$PYTHON_BIN" scripts/run_trace2skill_abcd.py \
                     --subflow "$subflow" --train-file "$SPLITS_DIR/$subflow/train.json" \
                     --test-file "$SPLITS_DIR/$subflow/test.json" --output-dir "$RUN_ROOT/trace2skill/$subflow" \
@@ -513,6 +500,7 @@ run_worker() {
                 --max-induction-episodes "$ASI_MAX_INDUCTION_EPISODES"
                 --min-ast-delta "$ASI_MIN_AST_DELTA")
             [[ "$ASI_SKIP_FINAL_TEST" -eq 1 ]] && asi_args+=(--skip-final-test)
+            [[ -n "$EVAL_WORKFLOW_IDS_RAW" ]] && asi_args+=(--skip-final-test)
             run_or_resume_task "$worker_index" "$workflow_id" asi "$subflow" "${asi_args[@]}" || {
                 echo "asi:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
         fi

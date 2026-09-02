@@ -55,6 +55,8 @@ def main():
     parser.add_argument("--resume-from", type=str, default=None)
     parser.add_argument("--eval-only", action="store_true")
     parser.add_argument("--eval-from", type=str, default=None)
+    parser.add_argument("--skip-final-test", action="store_true",
+                        help="Only induce and save ExpeL rules; leave evaluation to the unified evaluator")
     args = parser.parse_args()
     from scripts.llm_usage_utils import reset_usage, get_usage, write_usage
     reset_usage()
@@ -104,6 +106,23 @@ def main():
             batch_records.append({"batch": batch_index, "metrics": metrics, "induction": induction})
             print(f"[ExpeL] batch={batch_index} rules={len(rules.rules)}")
 
+    rules_payload = {"max_rules": rules.max_rules, "rules": [asdict(r) for r in rules.rules]}
+    (out / "expel_rules.json").write_text(
+        json.dumps(rules_payload, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    (out / "train_induction.json").write_text(
+        json.dumps(batch_records, indent=2, ensure_ascii=False, default=str), encoding="utf-8"
+    )
+    if args.skip_final_test:
+        write_usage(out / "llm_usage.json")
+        (out / "summary.json").write_text(json.dumps({
+            "config": {"method": "expel", "subflow": args.subflow, "skip_final_test": True},
+            "data": {"train_sessions": len(train), "test_sessions": len(test)},
+            "final_test": None,
+        }, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(f"saved resources for unified evaluation: {out}")
+        return
+
     test_turns = agent.generate_all_turn_predictions(test, predict_actions=True, verbose=False)
     test_metrics = compute_ast_from_turn_results(test, test_turns)
     abcd_records = _serialize_predictions(test_turns, test)
@@ -113,8 +132,6 @@ def main():
         text_records.append({"dialogue_id": f"abcd-{conv.get('convo_id', '?')}", "response_text": rows[-1].get("prediction", "") if rows else ""})
     result = evaluate_abcd_bundle(test, text_records=text_records, abcd_records=abcd_records)
 
-    (out / "expel_rules.json").write_text(json.dumps({"max_rules": rules.max_rules, "rules": [asdict(r) for r in rules.rules]}, indent=2, ensure_ascii=False), encoding="utf-8")
-    (out / "train_induction.json").write_text(json.dumps(batch_records, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
     (out / "test_turn_predictions.json").write_text(json.dumps(test_turns, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
     (out / "test_abcd_predictions.json").write_text(json.dumps(abcd_records, indent=2, ensure_ascii=False), encoding="utf-8")
     (out / "result.json").write_text(json.dumps(result, indent=2, ensure_ascii=False, default=str), encoding="utf-8")

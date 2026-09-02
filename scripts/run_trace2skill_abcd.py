@@ -1316,6 +1316,42 @@ def run_pipeline(args) -> PipelineOutputs:
     )
 
     seed_test_eval = None
+    if args.skip_test_eval:
+        log.info("Skipping seed/evolved test evaluation; evolved skill is ready for unified evaluation")
+        summary = {
+            "config": {
+                "data_path": source_info["data_path"],
+                "train_split": source_info["train_split"],
+                "test_split": source_info["test_split"],
+                "train_file": source_info["train_file"],
+                "test_file": source_info["test_file"],
+                "subflow": subflow,
+                "model": model,
+                "skip_test_eval": True,
+                "evolution_batch_size": args.evolution_batch_size,
+                "resume_dir": str(out_dir) if resume_dir else None,
+                "continue_on_batch_error": args.continue_on_batch_error,
+            },
+            "seed_train": train_eval,
+            "seed_test": None,
+            "evolved_test": None,
+            "evolved_reference_chars": len(load_trace2skill_references(evolved_skill_path)),
+            "seed_failed_train_cases": len(seed_failed_cases),
+            "iterative_failed_train_cases": total_failed_cases,
+            "batch_history": batch_history,
+            "changelog": changelog,
+        }
+        summary["llm_usage"] = get_usage()
+        write_usage(out_dir / "llm_usage.json")
+        (out_dir / "summary.json").write_text(
+            json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        return PipelineOutputs(
+            seed_eval=None,
+            evolved_eval={"ast_cds": {"ast_joint": 0.0}},
+            output_dir=out_dir,
+            evolved_skill_path=evolved_skill_path,
+        )
     if args.skip_seed_test:
         log.info("Stage 4: skipping seed evaluation on test (--skip-seed-test)")
     else:
@@ -1499,6 +1535,10 @@ def main() -> None:
         "--skip-seed-test",
         action="store_true",
         help="Skip seed baseline evaluation on the test set",
+    )
+    parser.add_argument(
+        "--skip-test-eval", action="store_true",
+        help="Skip seed and evolved test evaluation; leave it to the unified evaluator",
     )
     args = parser.parse_args()
 

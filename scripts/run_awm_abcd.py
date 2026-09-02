@@ -121,6 +121,10 @@ def main():
         help="Optional reference.md or Trace2Skill skill directory to load",
     )
     _parser.add_argument(
+        "--skip-final-test", action="store_true",
+        help="Only mine and save AWM resources; leave evaluation to the unified evaluator",
+    )
+    _parser.add_argument(
         "--workflow-max-chars", type=int, default=8000,
         help="Maximum workflow characters injected into one inference prompt",
     )
@@ -445,6 +449,19 @@ def main():
 
     # ── Final test evaluation ──────────────────────────────────
     log.info("=" * 50)
+    agent.save_workflow(str(OUT_DIR / "awm_workflow.txt"))
+    agent.save_memory(str(OUT_DIR / "awm_exemplars.json"))
+    (OUT_DIR / "awm_reference.md").write_text(reference_text, encoding="utf-8")
+    if _args.skip_final_test:
+        write_usage(OUT_DIR / "llm_usage.json")
+        (OUT_DIR / "summary.json").write_text(json.dumps({
+            "config": {**run_config, "skip_final_test": True},
+            "data": {"train": len(train_convs), "dev": len(dev_convs),
+                     "test": len(test_convs), "batches": len(batches)},
+            "final_test": None,
+        }, indent=2, ensure_ascii=False), encoding="utf-8")
+        log.info("Skipping final test; resources saved for unified evaluation: %s", OUT_DIR)
+        return {"final_test": None}
     log.info("Final test evaluation")
     test_agent = ABCDAgent(
         model=MODEL, workflow=workflow, memory=memory,
@@ -528,9 +545,6 @@ def main():
     log.info(f"Final test: {test_result['summary']}")
 
     # ── Save everything ───────────────────────────────────────
-    agent.save_workflow(str(OUT_DIR / "awm_workflow.txt"))
-    agent.save_memory(str(OUT_DIR / "awm_exemplars.json"))
-    (OUT_DIR / "awm_reference.md").write_text(reference_text, encoding="utf-8")
     skill_generation_usage = logger.usage_summary("skill_induction")
     (OUT_DIR / "skill_generation_usage.json").write_text(
         json.dumps(skill_generation_usage, indent=2, ensure_ascii=False),
