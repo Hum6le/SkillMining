@@ -47,7 +47,7 @@ def _render_function_source(skill_name: str, description: str, parameters: list[
     return "\n".join(lines)
 
 
-def build_induction_prompt(episode: ASIOfflineEpisode) -> str:
+def build_induction_prompt(episode: ASIOfflineEpisode, *, min_actions: int = 3) -> str:
     """Build the label-hidden ASI-style per-trajectory abstraction prompt."""
     action_table = [
         {
@@ -60,7 +60,7 @@ def build_induction_prompt(episode: ASIOfflineEpisode) -> str:
     ]
     instruction_lines = [
         "You induce reusable programmatic skills from one successful task-oriented dialogue trajectory.",
-        "Each candidate replaces one contiguous span of three or more backend actions with a callable skill.",
+        f"Each candidate replaces one contiguous span of {min_actions} or more backend actions with a callable skill.",
         "Each candidate must have one coherent purpose and only use parameters present in that span.",
         "Do not copy concrete customer values or select a whole trace with unrelated goals.",
         "Do not write arbitrary Python: the runtime rebuilds each body from the selected source span.",
@@ -91,7 +91,7 @@ def _extract_json_object(raw_output: str) -> dict[str, Any]:
 
 def parse_candidate_output(raw_output: str, episode: ASIOfflineEpisode, *, min_actions: int = 3, max_actions: int = 10) -> tuple[list[ASISkillCandidate], list[dict[str, Any]]]:
     """Validate LLM-selected spans and rebuild their executable DSL bodies."""
-    if min_actions < 3 or max_actions < min_actions:
+    if min_actions < 1 or max_actions < min_actions:
         raise ValueError("invalid action-span bounds")
     payload = _extract_json_object(raw_output)
     records = payload.get("skills")

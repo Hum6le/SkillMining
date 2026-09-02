@@ -44,7 +44,7 @@ class ASIOnlineEpisodeTest(unittest.TestCase):
             {"ast_score": 1.0, "action_total": 3, "action_correct": 3},
         )
         self.assertTrue(episode.eligible_for_induction)
-        self.assertEqual(episode.eligibility_reason, "eligible_successful_rollout")
+        self.assertEqual(episode.eligibility_reason, "eligible_local_success_action")
         self.assertEqual([x["action"] for x in episode.primitive_actions], [
             "pull-up-account", "verify-identity", "send-link",
         ])
@@ -59,8 +59,33 @@ class ASIOnlineEpisodeTest(unittest.TestCase):
             ],
             {"ast_score": 0.66, "action_total": 3, "action_correct": 2},
         )
-        self.assertFalse(episode.eligible_for_induction)
-        self.assertEqual(episode.eligibility_reason, "rollout_action_or_slot_mismatch")
+        self.assertTrue(episode.eligible_for_induction)
+        self.assertEqual(episode.eligibility_reason, "eligible_local_success_action")
+        self.assertEqual([x["action"] for x in episode.primitive_actions], ["verify-identity"])
+
+    def test_partial_failure_keeps_long_correct_span_for_induction(self) -> None:
+        conversation = _conversation()
+        conversation["delexed"].append({
+            "speaker": "action", "text": "Done.",
+            "targets": ["x", "take_action", "record-reason", [], -1],
+        })
+        conversation["original"].append(["action", "Done."])
+        episode = build_online_episode(
+            conversation,
+            [
+                {"convo_id": "online-1", "turn_index": 1, "target_type": "action", "predicted_action": "pull-up-account", "predicted_slots": ["wrong"]},
+                {"convo_id": "online-1", "turn_index": 2, "target_type": "action", "predicted_action": "verify-identity", "predicted_slots": []},
+                {"convo_id": "online-1", "turn_index": 3, "target_type": "action", "predicted_action": "send-link", "predicted_slots": []},
+                {"convo_id": "online-1", "turn_index": 4, "target_type": "action", "predicted_action": "record-reason", "predicted_slots": []},
+            ],
+            {"ast_score": 0.75, "action_total": 4, "action_correct": 3},
+        )
+        self.assertTrue(episode.eligible_for_induction)
+        self.assertEqual(episode.eligibility_reason, "eligible_local_success_action")
+        self.assertEqual(
+            [item["action"] for item in episode.primitive_actions],
+            ["verify-identity"],
+        )
 
     def test_online_candidate_uses_positional_slot_parameters(self) -> None:
         episode = build_online_episode(
@@ -85,7 +110,7 @@ class ASIOnlineEpisodeTest(unittest.TestCase):
         self.assertTrue(validation.replay_valid)
         self.assertEqual(validation.accepted_candidates, ["verify_account"])
 
-    def test_short_candidate_span_is_rejected(self) -> None:
+    def test_online_candidate_span_uses_relaxed_one_action_bound(self) -> None:
         episode = build_online_episode(
             _conversation(),
             [
@@ -102,7 +127,8 @@ class ASIOnlineEpisodeTest(unittest.TestCase):
         validation = validate_online_candidates(episode, candidates)
         self.assertTrue(validation.replay_valid)
         self.assertEqual(validation.accepted_candidates, ["first"])
-        self.assertEqual(parse_rejected[-1]["reason"], "invalid_or_duplicate_span")
+        self.assertEqual(parse_rejected, [])
+        self.assertEqual(validation.rejected_candidates[-1]["reason"], "overlapping_candidate_not_selected")
 
     def test_online_library_stages_accepts_and_rolls_back_versions(self) -> None:
         episode = build_online_episode(

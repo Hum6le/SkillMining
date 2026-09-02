@@ -1,11 +1,10 @@
 """ABCD online-ASI episode preparation.
 
-The original ASI implementation obtains induction material from a successful
-environment rollout.  ABCD has no executable environment, so this module
-defines the corresponding boundary for the adapter: a rollout is eligible
-only when its predicted primitive action and ordered slot sequence exactly
-matches the ABCD annotation.  Candidate induction is intentionally kept out
-of this module; it consumes the auditable episodes produced here.
+The original ASI implementation induces from successful rollouts.  ABCD has
+no executable environment, so we use a local success criterion: a rollout can
+    contribute any individually correct action turn. A globally imperfect
+    conversation can therefore still provide useful evidence, while incorrect
+    actions and slots are never persisted into an induced function.
 """
 
 from __future__ import annotations
@@ -122,15 +121,14 @@ def build_online_episode(
     ast_result: dict[str, Any],
     *,
     source_split: str = "train",
-    min_actions: int = 3,
+    min_actions: int = 1,
 ) -> ASIOnlineEpisode:
-    """Prepare one rollout and apply the ABCD success gate.
+    """Prepare one rollout and retain one locally successful action.
 
-    ``turn_results`` must come from the same conversation.  The returned
-    action sequence is the rollout sequence, not a freshly reconstructed gold
-    sequence.  The gold sequence is used only for the local eligibility check,
-    mirroring ASI's successful-rollout requirement without leaking labels into
-    a future induction prompt.
+    Ground truth is used only as an eligibility check.  The induction payload
+    contains the rollout values from the selected span, never reconstructed
+    gold values.  This prevents a wrong slot outside the span from poisoning
+    the induced function and avoids the old whole-dialogue ``AST == 1`` gate.
     """
     if min_actions < 1:
         raise ValueError("min_actions must be positive")
@@ -142,22 +140,42 @@ def build_online_episode(
     action_total = int(ast_result.get("action_total", len(gold)) or 0)
     action_correct = int(ast_result.get("action_correct", 0) or 0)
 
+    rollout_by_turn = {row["turn_index"]: row for row in rollout}
+    flags = []
+    for gold_row in gold:
+        predicted = rollout_by_turn.get(gold_row["turn_index"])
+        flags.append(
+            predicted is not None
+            and predicted["action"] == gold_row["action"]
+            and predicted["slot_values"] == gold_row["slot_values"]
+        )
+
+    correct_indices = [index for index, is_correct in enumerate(flags) if is_correct]
+
     if not gold:
         reason = "no_gold_action_turns"
     elif not rollout:
         reason = "no_predicted_action_turns"
-    elif len(rollout) != len(gold):
-        reason = "predicted_action_count_mismatch"
-    elif rollout != gold:
-        reason = "rollout_action_or_slot_mismatch"
-    elif ast_score < 1.0 or action_correct != action_total:
-        reason = "ast_joint_success_gate_failed"
-    elif len(rollout) < min_actions:
-        reason = "too_few_primitive_actions"
+    elif not correct_indices:
+        reason = "no_locally_correct_action"
     else:
-        reason = "eligible_successful_rollout"
+        reason = "eligible_local_success_action"
 
-    eligible = reason == "eligible_successful_rollout"
+    eligible = reason == "eligible_local_success_action"
+    if eligible:
+        if len(correct_indices) == len(gold):
+            # Preserve the original ASI behavior for a genuinely successful
+            # rollout: the complete successful trajectory is available for
+            # multi-action induction.
+            primitive_source = rollout
+        else:
+            # A partial rollout contributes one verified turn only. Do not
+            # stitch non-adjacent correct turns or expose neighboring bad
+            # slots to the induction model.
+            selected_gold = [gold[correct_indices[0]]]
+            primitive_source = [rollout_by_turn[selected_gold[0]["turn_index"]]]
+    else:
+        primitive_source = rollout
     primitive_actions = [
         {
             "action_index": index,
@@ -165,7 +183,7 @@ def build_online_episode(
             "action": row["action"],
             "slot_values": row["slot_values"],
         }
-        for index, row in enumerate(rollout)
+        for index, row in enumerate(primitive_source)
     ]
     return ASIOnlineEpisode(
         conversation_id=conversation_id,
@@ -270,13 +288,14 @@ def online_episode_to_induction_episode(
 
 
 def build_online_induction_prompt(episode: ASIOnlineEpisode) -> str:
-    """Build the ASI candidate prompt for one successful online rollout."""
+    """Build the ASI candidate prompt for one verified online action."""
     induction_episode = online_episode_to_induction_episode(episode)
-    prompt = build_induction_prompt(induction_episode)
+    prompt = build_induction_prompt(induction_episode, min_actions=1)
     return (
         prompt
         + "\n\nOnline rollout constraints:\n"
-        + "- This trajectory was selected because its ABCD AST joint result was successful.\n"
+        + "- This trajectory contains one locally successful action; generalize only the verified action in the action table.\n"
+        + "- Ignore every other action or slot value from the source dialogue; never copy unverified behavior into a function.\n"
         + "- Infer one or more reusable contiguous procedures from the rollout; do not invent actions.\n"
         + "- `slot_1`, `slot_2`, etc. denote positional values only. Reuse a parameter only when it refers to the same entity/value in the dialogue.\n"
         + "- Never place a concrete customer value from this rollout into a function body.\n"
@@ -287,7 +306,7 @@ def parse_online_candidate_output(
     raw_output: str,
     episode: ASIOnlineEpisode,
     *,
-    min_actions: int = 3,
+    min_actions: int = 1,
     max_actions: int = 10,
 ) -> tuple[list[ASISkillCandidate], list[dict[str, Any]]]:
     """Parse and validate candidates generated from an online rollout."""

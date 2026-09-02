@@ -119,7 +119,10 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=25)
     parser.add_argument("--max-batches", type=int)
     parser.add_argument("--heldout-size", type=int, default=10)
-    parser.add_argument("--min-actions", type=int, default=3)
+    parser.add_argument(
+        "--min-actions", type=int, default=1,
+        help="Compatibility option; one verified action is sufficient for online induction",
+    )
     parser.add_argument("--max-induction-episodes", type=int, default=8)
     parser.add_argument("--min-ast-delta", type=float, default=0.0)
     parser.add_argument("--resume", action="store_true")
@@ -175,7 +178,7 @@ def main() -> None:
         episodes = build_online_episode_batch(batch, turns, ast_results, source_split="train", min_actions=args.min_actions)
         eligible = successful_online_episodes(episodes)
         _write(batch_dir / "online_episodes.json", [episode.to_dict() for episode in episodes])
-        log.info("Batch %d: eligible successful rollouts=%d/%d", batch_index, len(eligible), len(episodes))
+        log.info("Batch %d: eligible local-success spans=%d/%d", batch_index, len(eligible), len(episodes))
 
         candidates = []
         induction_records = []

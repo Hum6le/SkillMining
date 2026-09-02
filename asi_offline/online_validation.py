@@ -62,7 +62,7 @@ def validate_online_candidates(
             episode_id=episode.conversation_id,
             accepted_candidates=[],
             rejected_candidates=[{
-                "reason": "episode_not_eligible",
+                "reason": "episode_has_no_safe_local_success_span",
                 "eligibility_reason": episode.eligibility_reason,
             }],
             replay_valid=False,

@@ -29,16 +29,29 @@ def _render_function(record: dict[str, Any]) -> str:
     lines = [
         f"## Induced Action: {name}({signature})",
         "",
-        "Primitive expansion:",
+        "Execution plan (ordered primitive steps):",
     ]
     for index, action in enumerate(record["action_template"], start=1):
         arguments = ", ".join(str(item) for item in action["arguments"])
-        lines.append(f"{index}. take_action({action['action']!r}, [{arguments}])")
+        lines.append(
+            f"{index}. Primitive action: {action['action']}"
+            f"; ordered slot parameters: [{arguments or 'none'}]"
+        )
+        # Keep the executable-looking expansion for compatibility with the
+        # original ASI artifacts and downstream inspection tools.
+        lines.append(f"   take_action('{action['action']}', [{arguments}])")
+        lines.append(
+            "   Use this step only when the current dialogue supports it and "
+            "previous steps in this procedure are already satisfied."
+        )
     lines.extend([
         "",
-        "Runtime rule: bind these arguments from the current dialogue only. "
-        "For an individual ABCD target turn, output the next applicable "
-        "primitive action rather than this composite function name.",
+        "Runtime rule: this is a reusable sequence, not an output action. "
+        "At each ABCD target turn, identify the next unexecuted applicable "
+        "primitive step from the dialogue history, bind its ordered slot "
+        "parameters from the current dialogue, and output that primitive "
+        "action only. Never output the induced function name or literal "
+        "parameter names as slot values.",
     ])
     return "\n".join(lines)
 
@@ -77,11 +90,13 @@ def render_asi_library(functions: list[dict[str, Any]]) -> ASILibrary:
         })
     header = """# ASIoffline Programmatic Action Library
 
-The following composite actions were induced once from fixed successful training
-trajectories and are now frozen. Infer when a procedure applies from the current
-dialogue only. Never copy values from an induction example. ABCD evaluation
-requires a primitive action and its ordered real slot values at each target turn;
-use these functions to plan that primitive prediction, not as an output action.
+The following composite actions were induced from successful or locally
+successful training rollout spans and are now frozen. Infer when a procedure
+applies from the current dialogue only. Never copy values from an induction
+example. ABCD evaluation requires a primitive action and its ordered real slot
+values at each target turn; use these functions to plan that primitive
+prediction, not as an output action. If a procedure conflicts with the current
+dialogue, do not force it.
 """.strip()
     rendered = [_render_function(record) for record in accepted]
     return ASILibrary(

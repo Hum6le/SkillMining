@@ -16,6 +16,12 @@ argument roles as procedural guidance, but emit exactly one canonical primitive
 ABCD action with its ordered current-dialogue slot values for each target turn.
 Never emit a composite function name as the action and never copy an induction
 example's values.
+For a multi-step induced function, use the dialogue history to determine which
+primitive step has already been completed and emit only the next applicable
+primitive action. Bind every ordered slot value from the current dialogue;
+`slot_1`, `slot_2`, and similar names are parameter references, never literal
+ABCD slot values. A function is guidance, not a mandatory route: do not force a
+step when the current user utterance or dialogue context does not support it.
 """
 
 
