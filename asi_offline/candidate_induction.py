@@ -62,6 +62,8 @@ def build_induction_prompt(episode: ASIOfflineEpisode, *, min_actions: int = 3) 
         "You induce reusable programmatic skills from one successful task-oriented dialogue trajectory.",
         f"Each candidate replaces one contiguous span of {min_actions} or more backend actions with a callable skill.",
         "Each candidate must have one coherent purpose and only use parameters present in that span.",
+        "The downstream ABCD objective is joint AST, not action accuracy alone: a target turn is correct only when both the canonical primitive action name and its complete ordered slot-value list are correct.",
+        "Model action selection and slot binding together; preserve the source argument order and the relation between each parameter and its dialogue value.",
         "Do not copy concrete customer values or select a whole trace with unrelated goals.",
         "Use dialogue events as evidence for when the procedure applies, but do not turn one example's private values into fixed slot values.",
         "The function body is a reusable plan; at runtime emit the next primitive action with ordered values from the current dialogue.",

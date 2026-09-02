@@ -14,6 +14,11 @@ trajectories and is frozen. Infer relevance from the current dialogue only; no
 scenario or subflow label is available. Use a function's action order and
 argument roles as procedural guidance, but emit exactly one canonical primitive
 ABCD action with its ordered current-dialogue slot values for each target turn.
+The optimization and decision target is joint ABCD AST, not action accuracy
+alone: the action name and the complete ordered slot-value list must be right
+together. If the action is right but any slot is missing, extra, incorrect, or
+out of order, the prediction is not AST-correct. Use the current dialogue to
+bind every argument before emitting the action.
 Never emit a composite function name as the action and never copy an induction
 example's values.
 For a multi-step induced function, use the dialogue history to determine which

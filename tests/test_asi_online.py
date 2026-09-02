@@ -99,6 +99,9 @@ class ASIOnlineEpisodeTest(unittest.TestCase):
         )
         prompt = build_online_induction_prompt(episode)
         self.assertIn("slot_1", prompt)
+        self.assertIn("joint AST", prompt)
+        self.assertIn("not action accuracy alone", prompt)
+        self.assertIn("complete ordered slot-value list", prompt)
         candidates, rejected = parse_online_candidate_output(
             '{"skills": [{"name": "verify_account", "description": "Verify an account and send a link.", "start_action_index": 0, "end_action_index": 2, "parameters": ["slot_1"]}]}',
             episode,

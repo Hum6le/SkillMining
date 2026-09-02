@@ -25,6 +25,13 @@ literal program specification. Infer a procedure only when the action order
 and the dialogue evidence support it. Preserve the source action order and do
 not invent actions, tools, preconditions, or outcomes.
 
+The downstream ABCD objective is joint AST, not action accuracy alone. For
+every action turn, AST is correct only when both the canonical primitive action
+name and the complete ordered slot-value list are correct. Therefore infer
+slot binding together with the action sequence: preserve which dialogue value
+fills each positional argument and preserve argument order. Do not trade
+correct slot binding for a more abstract action description.
+
 Each generated function must contain 3 to 10 take_action calls. A function
 may call only take_action(action_name, args), using canonical action names from
 the example. Replace concrete customer values with meaningful parameters.

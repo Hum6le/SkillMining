@@ -88,6 +88,10 @@ class ASIOfflineInductionTest(unittest.TestCase):
         self.assertEqual(rewritten[0]["kind"], "skill_call")
         self.assertEqual(rewritten[0]["replaces_action_indices"], [0, 1, 2])
         self.assertIn("Backend action table", build_induction_prompt(episode))
+        prompt = build_induction_prompt(episode)
+        self.assertIn("joint AST", prompt)
+        self.assertIn("slot binding", prompt)
+        self.assertIn("complete ordered slot-value list", prompt)
 
 
 if __name__ == "__main__":

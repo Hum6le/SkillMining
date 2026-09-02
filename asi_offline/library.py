@@ -94,7 +94,8 @@ The following composite actions were induced from successful or locally
 successful training rollout spans and are now frozen. Infer when a procedure
 applies from the current dialogue only. Never copy values from an induction
 example. ABCD evaluation requires a primitive action and its ordered real slot
-values at each target turn; use these functions to plan that primitive
+values at each target turn; joint AST requires the action name and the complete
+ordered slot-value list to be correct together. Use these functions to plan that primitive
 prediction, not as an output action. If a procedure conflicts with the current
 dialogue, do not force it.
 """.strip()

@@ -294,6 +294,8 @@ def build_online_induction_prompt(episode: ASIOnlineEpisode) -> str:
     return (
         prompt
         + "\n\nOnline rollout constraints:\n"
+        + "- The optimization target is ABCD joint AST, not action accuracy alone. AST requires the canonical primitive action name and the complete ordered slot-value list to be correct on the same action turn.\n"
+        + "- A candidate is useful only if it can improve both action selection and dialogue-grounded slot binding; do not simplify away slot arguments merely to preserve the action sequence.\n"
         + "- This trajectory contains one locally successful action; generalize only the verified action in the action table.\n"
         + "- Ignore every other action or slot value from the source dialogue; never copy unverified behavior into a function.\n"
         + "- Infer one or more reusable contiguous procedures from the rollout; do not invent actions.\n"
