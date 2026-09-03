@@ -17,6 +17,44 @@ from typing import Any
 from eval_tod.abcd.agent import ABCDAgent, _build_abcd_turn_trajectory
 
 
+_ABCD_EXPEL_INSTRUCTION = """You are an expert at analyzing task-oriented dialogue agent trajectories for the ABCD benchmark.
+
+The agent must solve the customer's task while producing the exact backend action
+and ordered slot-value list required on every action-bearing turn, and a helpful
+natural-language response. A response can sound reasonable and still fail if the
+backend action or ordered slot values are wrong.
+
+Analyze the successful and failed trajectories together in this same call:
+
+1. SUCCESS cases are positive evidence. Preserve their reliable action sequence,
+   action-to-slot alignment, slot ordering, and response timing.
+2. FAILURE cases are negative evidence. Identify what should be avoided or repaired,
+   but do not infer a rule from a failure alone.
+3. Prefer rules grounded in observable dialogue context, user requests, prior turns,
+   action transitions, and slot availability. Do not copy conversation-specific
+   values, IDs, or private entities into a reusable rule.
+4. State a rule generally enough to transfer to another ABCD conversation. Mention
+   the relevant action and slot behavior when that is necessary for correctness.
+
+Return only rule operations, with at most four operations total:
+ADD: a new reusable rule.
+AGREE 1: an existing rule that is confirmed by the evidence.
+EDIT 1: a corrected replacement for existing rule 1.
+REMOVE 1: an existing rule that is contradicted by the evidence.
+
+Do not output an introduction, analysis, Markdown heading, JSON, or dialogue IDs."""
+
+
+_ABCD_EXPEL_ONESHOT = """Example of the desired level of abstraction:
+
+Successful pattern: after the user supplies a missing booking detail, the agent
+uses the booking action with the complete ordered slot list before confirming.
+Failed pattern: the agent gives a plausible response but omits or reorders a
+required slot, so the backend action is incorrect.
+
+ADD: When an action requires multiple slots, preserve the dataset-defined slot order and fill each slot from the current dialogue before generating the response."""
+
+
 @dataclass
 class _Rule:
     text: str
@@ -154,13 +192,20 @@ class ExpeLABCDAgent(ABCDAgent):
         if not experiences:
             return {"raw_output": "", "operations": [], "rules": self.text}
         prompt = (
-            "You are the insight extraction stage of ExpeL, adapted to ABCD customer-service dialogues.\n"
-            "Compare the complete successful and failed trajectories below. Infer concise, general rules about "
-            "state transitions, action selection, slot ordering, and response timing. Do not mention dialogue IDs "
-            "or private values. Return at most four lines using exactly:\n"
-            "ADD: rule.\nAGREE 1: existing rule.\nEDIT 1: rewritten rule.\nREMOVE 1: existing rule.\n\n"
-            f"Existing rules:\n{self.rule_store.text or '(none)'}\n\n"
+            _ABCD_EXPEL_INSTRUCTION
+            + "\n\n"
+            + _ABCD_EXPEL_ONESHOT
+            + "\n\n"
+            + "## Existing ExpeL Rules\n"
+            + (self.rule_store.text or "(none)")
+            + "\n\n"
+            + "## Joint Success/Failure Evidence\n"
+            + "The following cases are one induction batch. Compare them jointly; "
+              "do not process each case in isolation.\n\n"
             + "\n\n".join(experiences[:20])
+            + "\n\n## Required Synthesis\n"
+              "Prefer a small number of high-confidence rules that explain the "
+              "observable difference between successful and failed behavior."
         )
         raw = chat(
             prompt,
