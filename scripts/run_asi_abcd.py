@@ -142,6 +142,8 @@ def main() -> None:
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--skip-final-test", action="store_true")
     args = parser.parse_args()
+    from scripts.llm_usage_utils import reset_usage, get_usage, write_usage
+
     if args.batch_size < 1 or args.heldout_size < 1:
         parser.error("--batch-size and --heldout-size must be positive")
     if not 0.0 <= args.test_pass_rate <= 1.0:
@@ -154,6 +156,7 @@ def main() -> None:
     test_file = args.test_file or split_dir / "test.json"
     output_dir = args.output_dir or ROOT / "outputs" / f"asi_abcd_{args.subflow}"
     output_dir.mkdir(parents=True, exist_ok=True)
+    reset_usage()
     log = logging.getLogger("asi_abcd")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
     file_handler = logging.FileHandler(output_dir / "run.log")
@@ -307,15 +310,19 @@ def main() -> None:
     if not args.skip_final_test:
         final = _final_test(manager.current_library_path(), test, args.model, output_dir / "final_test")
         log.info("Final test: %s", final.get("summary", final))
+    usage = get_usage()
+    write_usage(output_dir / "llm_usage.json")
     _write(output_dir / "summary.json", {
         "config": {
             "method": "asi", "subflow": args.subflow,
             "batch_size": args.batch_size,
+            "heldout_size": args.heldout_size,
             "test_pass_rate": args.test_pass_rate,
             "skip_final_test": bool(args.skip_final_test),
         },
         "data": {"train_conversations": len(train), "test_conversations": len(test)},
         "final_test": final,
+        "llm_usage": usage,
     })
     log.info("ASI run complete: %s", output_dir)
 

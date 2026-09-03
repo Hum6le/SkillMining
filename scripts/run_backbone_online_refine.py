@@ -8,6 +8,7 @@ are appended to the runtime skill only after an evidence-based promotion.
 from __future__ import annotations
 
 import argparse
+import atexit
 import hashlib
 import json
 import logging
@@ -130,7 +131,7 @@ def _batch_rollout_supervision(conversations: list[dict], turn_results: list[dic
 
 
 def _build_agent(args, working_skill: str, base_reference: str, action_rules: str,
-                 slot_policies: str, state: dict) -> ABCDAgent:
+                 slot_policies: str, state: dict, response_logger=None) -> ABCDAgent:
     _, online_reference = render_online_resources(state)
     workflow = WorkflowStore()
     workflow.update(working_skill)
@@ -141,6 +142,7 @@ def _build_agent(args, working_skill: str, base_reference: str, action_rules: st
         reference_text=base_reference.rstrip() + "\n\n" + online_reference,
         action_rules_text=action_rules.rstrip() + "\n\n" + render_online_action_rules(state),
         slot_policies_text=slot_policies.rstrip() + "\n\n" + render_online_slot_policies(state),
+        response_logger=response_logger,
         reference_top_k=args.reference_top_k,
         reference_max_chars=args.reference_max_chars,
         expose_scenario_labels=False,
@@ -211,6 +213,14 @@ def main() -> None:
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    # Keep usage accounting process-local and persist it even when an online
+    # batch fails, so partial runs remain auditable and resumable.
+    from scripts.llm_usage_utils import reset_usage, get_usage, write_usage
+    from eval_tod.response_logger import ResponseLogger
+    reset_usage()
+    usage_fallback = lambda: write_usage(out_dir / "llm_usage.json")
+    atexit.register(usage_fallback)
+    response_logger = ResponseLogger(out_dir / "llm_responses")
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
         handlers=[logging.FileHandler(out_dir / "online_refine.log"), logging.StreamHandler()],
@@ -343,7 +353,8 @@ def main() -> None:
         log.info("Online batch %d/%d: %d sessions", batch_index, len(batches), len(batch))
         # Training rollouts are intentionally sequential: each batch is the
         # evidence source for the next single-writer skill/resource update.
-        agent = _build_agent(args, working_skill, base_reference, action_rules, slot_policies, state)
+        agent = _build_agent(args, working_skill, base_reference, action_rules, slot_policies, state,
+                             response_logger=response_logger)
         turns = _rollout_online_batch(agent, batch)
         _write(out_dir / "rollouts" / f"batch_{batch_index:04d}.json", json.dumps(turns, indent=2, ensure_ascii=False))
         localized = localize_rollout_batch(batch, turns, state)
@@ -420,11 +431,25 @@ def main() -> None:
         )
 
     log.info("Frozen test evaluation on %d held-out sessions", len(test))
-    final_agent = _build_agent(args, working_skill, base_reference, action_rules, slot_policies, state)
+    final_agent = _build_agent(args, working_skill, base_reference, action_rules, slot_policies, state,
+                               response_logger=response_logger)
     result = evaluate_agent_on_subflow(
         final_agent, test, "online_refined", args.subflow, save_dir=out_dir,
         eval_workflow_ids=eval_workflow_ids,
     )
+    # Parallel evaluation runs in forked processes. Merge their isolated
+    # usage snapshots with the parent process' mining/refinement usage.
+    worker_usage = result.pop("_evaluation_worker_usage", [])
+    _write(out_dir / "online_refine_result.json", json.dumps(result, indent=2, ensure_ascii=False))
+    usage = get_usage()
+    if worker_usage:
+        from scripts.llm_usage_utils import merge_usage_summaries
+        usage = merge_usage_summaries(usage, *worker_usage)
+    atexit.unregister(usage_fallback)
+    (out_dir / "llm_usage.json").write_text(
+        json.dumps(usage, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    result["llm_usage"] = usage
     _write(out_dir / "online_refine_result.json", json.dumps(result, indent=2, ensure_ascii=False))
     _checkpoint(out_dir, state, working_skill, base_reference, policy, slot_policies, action_rules)
     log.info("Final AST=%.4f action=%.4f slot=%.4f", result["ast_cds"]["ast_joint"], result["ast_cds"]["ast_action_name"], result["ast_cds"]["ast_slot_value"])

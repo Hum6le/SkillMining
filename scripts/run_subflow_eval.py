@@ -96,9 +96,20 @@ def load_subflow_data(subflow: str) -> tuple[list, list]:
 
 
 def _evaluate_test_shard_worker(agent, shard: list, label: str, subflow: str,
-                                workflow_id: str, result_queue) -> None:
+                                workflow_id: str, result_queue,
+                                response_log_dir: str | None = None) -> None:
     """Evaluate one test shard in an isolated process/workflow environment."""
     try:
+        # fork inherits the parent's tracker state; isolate this shard so the
+        # parent can merge exactly the calls made by this worker.
+        import llm
+        if response_log_dir:
+            from eval_tod.response_logger import ResponseLogger
+            # Each forked worker gets its own counter and directory.
+            agent._response_logger = ResponseLogger(response_log_dir)
+        reset = getattr(llm, "reset_usage_summary", None)
+        if reset:
+            reset()
         os.environ["SKILLMINING_WORKFLOW_ID"] = workflow_id
         rows = []
         for index, conversation in enumerate(shard, start=1):
@@ -108,9 +119,15 @@ def _evaluate_test_shard_worker(agent, shard: list, label: str, subflow: str,
             rows.extend(agent.predict_all_turns(
                 conversation, predict_actions=True, verbose=False))
         selection_log = list(getattr(agent, "selection_log", []))
-        result_queue.put({"ok": True, "rows": rows, "selection_log": selection_log})
+        usage = getattr(llm, "get_usage_summary", lambda: {})()
+        result_queue.put({"ok": True, "rows": rows, "selection_log": selection_log,
+                          "llm_usage": usage})
     except Exception as exc:
-        result_queue.put({"ok": False, "error": repr(exc)})
+        try:
+            usage = getattr(llm, "get_usage_summary", lambda: {})()
+        except Exception:
+            usage = {}
+        result_queue.put({"ok": False, "error": repr(exc), "llm_usage": usage})
 
 
 def mine_subflow_skill(
@@ -472,7 +489,9 @@ def evaluate_agent_on_subflow(
                 continue
             worker = context.Process(
                 target=_evaluate_test_shard_worker,
-                args=(agent, shard, label, subflow, workflow_id, result_queue),
+                args=(agent, shard, label, subflow, workflow_id, result_queue,
+                      str(save_dir / "llm_responses" / f"{label}_{workflow_id}")
+                      if save_dir else None),
                 daemon=False,
             )
             worker.start()
@@ -501,9 +520,11 @@ def evaluate_agent_on_subflow(
             all_turn_results.extend(result["rows"])
             if hasattr(agent, "selection_log"):
                 agent.selection_log.extend(result.get("selection_log", []))
+        worker_usage = [result.get("llm_usage", {}) for result in worker_results]
         print(f"  [{label}] Done: {total} convs across {len(workers)} evaluation workers "
               f"({len(all_turn_results)} turns)")
     else:
+        worker_usage = []
         for index, conv in enumerate(test_convs, start=1):
             cid = conv.get("convo_id", "?")
             print(f"  [{label}] [{index}/{total}] convo={cid}  {subflow}", end="\r")
@@ -598,7 +619,7 @@ def evaluate_agent_on_subflow(
             label, abcd_eval.ast.total_action_turns,
         )
 
-    return {
+    output = {
         "label": label,
         "n_turns": len(preds),
         "text": {
@@ -622,6 +643,9 @@ def evaluate_agent_on_subflow(
             "num_action_correct_turns": abcd_eval.ast.action_correct_turns,
         },
     }
+    if workflow_ids:
+        output["_evaluation_worker_usage"] = worker_usage
+    return output
 
 
 # ═══════════════════════════════════════════════════════════════

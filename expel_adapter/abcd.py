@@ -140,9 +140,15 @@ class ExpeLABCDAgent(ABCDAgent):
             metric = metric_by_id[cid]
             trajectory = _build_abcd_turn_trajectory(conv, rows)
             label = "SUCCESS" if metric.get("action_total", 0) and metric.get("ast_score", 0) >= 1.0 else "FAILURE"
+            # ExpeL receives episode-level outcome feedback. Per-turn
+            # correctness labels and the dense AST score would be extra
+            # supervision beyond the original success/failure protocol.
+            for turn in trajectory:
+                for key in ("action_correct", "slot_correct", "ast_correct"):
+                    turn.pop(key, None)
             experiences.append(
                 f"### {label} convo={cid} {conv.get('scenario', {}).get('flow', '?')}/{conv.get('scenario', {}).get('subflow', '?')}\n"
-                f"AST={metric.get('ast_score', 0):.3f}\n{json.dumps(trajectory, ensure_ascii=False, indent=2)}"
+                f"{json.dumps(trajectory, ensure_ascii=False, indent=2)}"
             )
 
         if not experiences:

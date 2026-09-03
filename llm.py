@@ -14,14 +14,113 @@ other public API — just ``prompt in, response out``.
 from __future__ import annotations
 
 import logging
+import json
 import os
 import sys
+import threading
+from collections import defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 
 log = logging.getLogger(__name__)
 
 _TRACE2SKILL = Path(__file__).resolve().parent / "Trace2Skill"
 _CLIENT_CACHE: dict[str, object] = {}
+
+
+# The server-side replacement has a richer tracker. Keep the local client
+# compatible as well, so standalone graph/online runs never silently report
+# zero calls. Workflow providers often omit usage, hence the deterministic
+# character-based estimate below.
+_USAGE_LOCK = threading.Lock()
+_USAGE_STARTED_AT = datetime.now(timezone.utc).isoformat()
+_USAGE_CALLS: list[dict] = []
+
+
+def _estimate_tokens(text: str) -> int:
+    return max(1, (len(text) + 3) // 4) if text else 0
+
+
+def _record_usage(messages: list[dict], response: str, *, model: str,
+                  call_tag: str, success: bool, usage: dict | None = None,
+                  error_type: str | None = None) -> None:
+    prompt = "\n".join(str(m.get("content", "")) for m in messages)
+    token_usage = usage or {
+        "prompt_tokens": _estimate_tokens(prompt),
+        "completion_tokens": _estimate_tokens(response),
+        "total_tokens": _estimate_tokens(prompt) + _estimate_tokens(response),
+    }
+    row = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "call_tag": call_tag,
+        "provider": "openai_compatible",
+        "model": model,
+        "success": bool(success),
+        "usage_available": True,
+        "usage_source": "exact" if usage else "estimated",
+        "usage": token_usage,
+    }
+    if error_type:
+        row["error_type"] = error_type
+    with _USAGE_LOCK:
+        _USAGE_CALLS.append(row)
+
+
+def get_usage_summary() -> dict:
+    with _USAGE_LOCK:
+        calls = list(_USAGE_CALLS)
+        started_at = _USAGE_STARTED_AT
+    def bucket(rows):
+        out = {"calls": 0, "successful_calls": 0, "failed_calls": 0,
+               "calls_with_usage": 0, "prompt_tokens": 0,
+               "completion_tokens": 0, "total_tokens": 0,
+               "usage_available": False, "exact_calls": 0,
+               "estimated_calls": 0, "usage_source": "unavailable"}
+        for row in rows:
+            out["calls"] += 1
+            out["successful_calls"] += int(row["success"])
+            out["failed_calls"] += int(not row["success"])
+            u = row.get("usage")
+            if u:
+                out["calls_with_usage"] += 1
+                out["usage_available"] = True
+                source = row.get("usage_source")
+                out["estimated_calls"] += int(source == "estimated")
+                out["exact_calls"] += int(source == "exact")
+                for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                    out[key] += int(u.get(key, 0) or 0)
+        if out["exact_calls"] and out["estimated_calls"]:
+            out["usage_source"] = "mixed"
+        elif out["exact_calls"]:
+            out["usage_source"] = "exact"
+        elif out["estimated_calls"]:
+            out["usage_source"] = "estimated"
+        return out
+    by_tag = defaultdict(list)
+    by_provider = defaultdict(list)
+    for row in calls:
+        by_tag[row["call_tag"]].append(row)
+        by_provider[row["provider"]].append(row)
+    return {"schema_version": 1, "started_at": started_at,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "total": bucket(calls),
+            "by_call_tag": {k: bucket(v) for k, v in sorted(by_tag.items())},
+            "by_provider": {k: bucket(v) for k, v in sorted(by_provider.items())}}
+
+
+def reset_usage_summary() -> None:
+    global _USAGE_STARTED_AT
+    with _USAGE_LOCK:
+        _USAGE_STARTED_AT = datetime.now(timezone.utc).isoformat()
+        _USAGE_CALLS.clear()
+
+
+def write_usage_summary(path: str | Path) -> dict:
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    summary = get_usage_summary()
+    output.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+    return summary
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -139,8 +238,16 @@ def chat(
             except Exception as e:
                 log.warning(f"Response logger failed: {e}")
 
-        return resp.choices[0].message.content or ""
+        response_text = resp.choices[0].message.content or ""
+        provider_usage = getattr(resp, "usage", None)
+        if hasattr(provider_usage, "model_dump"):
+            provider_usage = provider_usage.model_dump()
+        _record_usage(clean, response_text, model=cfg["model"], call_tag=call_tag,
+                      success=True, usage=provider_usage if isinstance(provider_usage, dict) else None)
+        return response_text
     except Exception as exc:
+        _record_usage(clean, "", model=cfg["model"], call_tag=call_tag,
+                      success=False, error_type=type(exc).__name__)
         log.warning(f"LLM call failed: {exc}")
         return ""
 
