@@ -371,6 +371,7 @@ def main() -> None:
                 action_rules + "\n" + render_online_action_rules(state),
                 slot_policies + "\n" + render_online_slot_policies(state),
                 args.model, max_retries=args.guard_retries,
+                response_logger=response_logger,
             )
             skill_before_sha256 = hashlib.sha256(working_skill.encode("utf-8")).hexdigest()
             proposed_skill_operations = reflection.get("proposed_skill_operations", [])

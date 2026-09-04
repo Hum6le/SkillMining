@@ -114,9 +114,21 @@ def _finalize(bucket: dict) -> dict:
 
 
 def summarize(root: Path) -> dict:
-    response_paths = sorted(root.rglob("*_response.json"))
+    root = root.resolve()
+    # Users often pass the logger child directory. The old online optimizer
+    # artifacts live beside it at the run root, so retain both locations.
+    scan_roots = [root]
+    if root.is_dir() and root.name in {"llm_responses", "llm_logs", "llm_calls"}:
+        scan_roots.append(root.parent)
+    response_paths = []
+    prompt_paths = []
+    for scan_root in scan_roots:
+        response_paths.extend(scan_root.rglob("*_response.json"))
+        prompt_paths.extend(scan_root.rglob("*_prompt.json"))
+    response_paths = sorted(set(response_paths))
+    prompt_paths = sorted(set(prompt_paths))
     prompts = {}
-    for path in root.rglob("*_prompt.json"):
+    for path in prompt_paths:
         try:
             prompts[path.stem.rsplit("_prompt", 1)[0]] = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -139,18 +151,57 @@ def summarize(root: Path) -> dict:
     # batch. Scan only autonomous_reflection, because batch_diagnostics embeds
     # the same object and would double count these calls.
     embedded_calls = 0
-    reflection_dir = root / "autonomous_reflection" if root.is_dir() else None
-    if reflection_dir and reflection_dir.exists():
-        for path in sorted(reflection_dir.glob("batch_*.json")):
+    reflection_paths = []
+    for scan_root in scan_roots:
+        if scan_root.is_dir():
+            reflection_paths.extend(scan_root.rglob("autonomous_reflection/batch_*.json"))
+    for path in sorted(set(reflection_paths)):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        embedded = [
+            ("online_resource_planner", record.get("planner_prompt"), record.get("planner_raw_response")),
+            ("online_resource_reflection", record.get("prompt"), record.get("raw_response")),
+        ]
+        for tag, prompt_text, response_text in embedded:
+            if not isinstance(prompt_text, str) or not prompt_text.strip():
+                continue
+            if not isinstance(response_text, str) or not response_text.strip():
+                continue
+            _add_embedded(total, prompt_text, response_text)
+            _add_embedded(by_tag[tag], prompt_text, response_text)
+            embedded_calls += 1
+
+    # Some interrupted/older runs saved the same reflection object under a
+    # different JSON path. Scan fallback JSON files only for batches that were
+    # not already found canonically; this also handles diagnostics-only runs
+    # without double counting their nested copy.
+    canonical_batches = {path.stem for path in reflection_paths}
+    for scan_root in scan_roots:
+        if not scan_root.is_dir():
+            continue
+        for path in sorted(scan_root.rglob("*.json")):
+            if "autonomous_reflection" in path.parts:
+                continue
+            if path.name == "llm_usage.json" or path.resolve() in set(response_paths):
+                continue
             try:
                 record = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 continue
-            embedded = [
-                ("online_resource_planner", record.get("planner_prompt"), record.get("planner_raw_response")),
-                ("online_resource_reflection", record.get("prompt"), record.get("raw_response")),
-            ]
-            for tag, prompt_text, response_text in embedded:
+            if not isinstance(record, dict) or not (
+                "planner_raw_response" in record or "raw_response" in record
+            ):
+                continue
+            batch_name = path.stem if path.stem.startswith("batch_") else ""
+            if batch_name and batch_name in canonical_batches:
+                continue
+            for tag, prompt_key, response_key in (
+                ("online_resource_planner", "planner_prompt", "planner_raw_response"),
+                ("online_resource_reflection", "prompt", "raw_response"),
+            ):
+                prompt_text, response_text = record.get(prompt_key), record.get(response_key)
                 if not isinstance(prompt_text, str) or not prompt_text.strip():
                     continue
                 if not isinstance(response_text, str) or not response_text.strip():

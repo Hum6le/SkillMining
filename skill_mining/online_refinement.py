@@ -1096,7 +1096,7 @@ def _resource_lookup_sections(resource: str, text: str, query: str, top_k: int =
 
 def _plan_resource_lookups(
     compact_supervision: list[dict[str, Any]], graph_edges: list[dict[str, Any]],
-    skill: str, model: str, max_retries: int,
+    skill: str, model: str, max_retries: int, response_logger: Any = None,
 ) -> tuple[list[dict[str, Any]], str, str, str]:
     """Ask the optimizer which resources it wants before exposing contents."""
     prompt = _RESOURCE_LOOKUP_PLANNER_PROMPT.format(
@@ -1109,8 +1109,11 @@ def _plan_resource_lookups(
     raw, payload, last_error = "", {}, ""
     for attempt in range(1, max(1, max_retries) + 1):
         try:
-            raw = chat([{"role": "user", "content": prompt}], model=cfg["model"], api_key=cfg["api_key"],
-                       base_url=cfg["base_url"], temperature=0.0).strip()
+            raw = chat(
+                [{"role": "user", "content": prompt}], model=cfg["model"],
+                api_key=cfg["api_key"], base_url=cfg["base_url"], temperature=0.0,
+                response_logger=response_logger, call_tag="online_resource_planner",
+            ).strip()
             start, end = raw.find("{"), raw.rfind("}")
             payload = json.loads(raw[start:end + 1]) if start >= 0 and end > start else {}
             if isinstance(payload.get("lookups"), list):
@@ -1134,7 +1137,7 @@ def _plan_resource_lookups(
 def autonomous_resource_reflection(
     state: dict[str, Any], rollout_supervision: list[dict[str, Any]], skill: str,
     reference: str, action_rules: str, slot_policies: str, model: str,
-    max_retries: int = 3,
+    max_retries: int = 3, response_logger: Any = None,
 ) -> dict[str, Any]:
     """Let the LLM select and apply bounded resource updates for one batch."""
     def reference_query_from_trace(trace: Any) -> str:
@@ -1184,7 +1187,7 @@ def autonomous_resource_reflection(
     } for edge_id, edge in state.get("edges", {}).items()]
     resources = {"reference": reference, "action_rules": action_rules, "slot_policies": slot_policies}
     lookups, planner_prompt, planner_raw, planner_error = _plan_resource_lookups(
-        compact_supervision, graph_edges, skill, model, max_retries,
+        compact_supervision, graph_edges, skill, model, max_retries, response_logger,
     )
     retrieved = []
     for lookup in lookups:
@@ -1202,8 +1205,11 @@ def autonomous_resource_reflection(
     raw, payload, last_error = "", {}, ""
     for attempt in range(1, max(1, max_retries) + 1):
         try:
-            raw = chat([{"role": "user", "content": prompt}], model=cfg["model"], api_key=cfg["api_key"],
-                       base_url=cfg["base_url"], temperature=0.0).strip()
+            raw = chat(
+                [{"role": "user", "content": prompt}], model=cfg["model"],
+                api_key=cfg["api_key"], base_url=cfg["base_url"], temperature=0.0,
+                response_logger=response_logger, call_tag="online_resource_reflection",
+            ).strip()
             text = "\n".join(raw.splitlines()[1:-1]) if raw.startswith("```") else raw
             start, end = text.find("{"), text.rfind("}")
             payload = json.loads(text[start:end + 1]) if start >= 0 and end > start else {}
