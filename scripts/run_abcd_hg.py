@@ -287,7 +287,7 @@ def run_training(
     batch_size: int = BATCH_SIZE,
     max_batches: int | None = MAX_BATCHES,
 ):
-    from scripts.llm_usage_utils import reset_usage, get_usage, write_usage
+    from scripts.llm_usage_utils import reset_usage, get_usage, write_usage, split_usage_summary
     reset_usage()
     """训练 + 评估。
 
@@ -384,6 +384,8 @@ def run_training(
     # ── Final test — per-intent 评估 ──────────────────────────
     log.info("=" * 50)
     log.info("Final test evaluation (per-intent workflow selection)")
+    generation_usage = get_usage()
+    reset_usage()
     test_preds, test_result = _evaluate_with_per_intent_workflows(
         test_convs, per_intent_workflows,
         trained_workflow=agent.workflow,
@@ -404,8 +406,10 @@ def run_training(
     # ── Save ───────────────────────────────────────────────────
     agent.save_workflow(str(OUT_DIR / "awm_workflow.txt"))
     agent.save_memory(str(OUT_DIR / "awm_exemplars.json"))
-    llm_usage = get_usage()
-    write_usage(OUT_DIR / "llm_usage.json")
+    llm_usage = split_usage_summary(generation_usage, get_usage())
+    (OUT_DIR / "llm_usage.json").write_text(
+        json.dumps(llm_usage, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
 
     return {
         "batch_metrics": batch_metrics,

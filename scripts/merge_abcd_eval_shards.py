@@ -15,6 +15,17 @@ if str(ROOT) not in sys.path:
 from eval_tod.abcd import merge_turn_results
 from eval_tod.abcd.agent import turn_results_to_abcd_predictions
 from eval_tod.cli import evaluate_abcd_bundle
+from scripts.llm_usage_utils import merge_usage_summaries, split_usage_summary
+
+
+def _read_usage(path: Path) -> dict:
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def main() -> None:
@@ -55,14 +66,31 @@ def main() -> None:
         abcd_records=abcd_records,
         text_prediction_key="response_text",
     )
+    # The root resource directory may contain generation usage from a prior
+    # --skip-final-test run; every shard is testing-only.
+    existing_summary = _read_usage(args.output_dir / "summary.json")
+    generation = existing_summary.get("llm_usage") if existing_summary else _read_usage(args.output_dir / "llm_usage.json")
+    if isinstance(generation, dict) and isinstance(generation.get("generation"), dict):
+        generation = generation["generation"]
+    shard_testing = []
+    for path in sorted(args.shard_root.glob("shard_*/llm_usage.json")):
+        usage = _read_usage(path)
+        if isinstance(usage.get("testing"), dict):
+            usage = usage["testing"]
+        if usage:
+            shard_testing.append(usage)
+    usage = split_usage_summary(generation, merge_usage_summaries(*shard_testing))
+    result["llm_usage"] = usage
     args.output_dir.mkdir(parents=True, exist_ok=True)
     (args.output_dir / "turn_predictions.json").write_text(json.dumps(turns, ensure_ascii=False, indent=2), encoding="utf-8")
     (args.output_dir / "abcd_predictions.json").write_text(json.dumps(abcd_records, ensure_ascii=False, indent=2), encoding="utf-8")
     (args.output_dir / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    (args.output_dir / "llm_usage.json").write_text(json.dumps(usage, ensure_ascii=False, indent=2), encoding="utf-8")
     (args.output_dir / "summary.json").write_text(json.dumps({
         "config": {"method": args.method, "subflow": args.subflow, "evaluation": "sharded"},
         "data": {"test_sessions": len(conversations)},
         "final_test": result,
+        "llm_usage": usage,
     }, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(result.get("summary", result), ensure_ascii=False))
 

@@ -152,6 +152,30 @@ def _merge(method: str, subflow: str, test_file: Path, shard_root: Path, output:
                             training_usage = json.loads(usage_path.read_text(encoding="utf-8"))
                         except (OSError, json.JSONDecodeError):
                             training_usage = None
+    if training_usage is None and method == "trace2skill":
+        # Trace2Skill keeps the train/evolution run in a timestamped child
+        # directory, while the unified evaluator writes its merged result at
+        # the enclosing per-subflow directory.
+        candidates = sorted(output.glob("abcd_trace2skill_*/summary.json"))
+        for path in reversed(candidates):
+            try:
+                candidate = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(candidate, dict):
+                continue
+            config = candidate.get("config", {})
+            if config.get("skip_test_eval") is not True:
+                continue
+            training_usage = candidate.get("llm_usage")
+            if training_usage is None:
+                usage_path = path.parent / "llm_usage.json"
+                if usage_path.is_file():
+                    try:
+                        training_usage = json.loads(usage_path.read_text(encoding="utf-8"))
+                    except (OSError, json.JSONDecodeError):
+                        training_usage = None
+            break
     shard_results = [
         json.loads(path.read_text(encoding="utf-8"))
         for path in sorted(shard_root.glob("shard_*/turn_predictions.json"))

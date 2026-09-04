@@ -22,6 +22,7 @@ from eval_tod.abcd import merge_turn_results, shard_conversations
 from eval_tod.abcd.agent import ABCDAgent, turn_results_to_abcd_predictions
 from eval_tod.cli import evaluate_abcd_bundle
 from eval_tod.response_logger import ResponseLogger
+from scripts.llm_usage_utils import get_usage, reset_usage, split_usage_summary
 
 
 def _load_test(path: Path, subflow: str, index: int, count: int) -> list[dict]:
@@ -101,6 +102,7 @@ def main() -> None:
     args = parser.parse_args()
     conversations = _load_test(args.test_file, args.subflow, args.shard_index, args.shard_count)
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    reset_usage()
     logger = ResponseLogger(str(args.output_dir / "llm_responses"))
     agent = _agent(args.method, args.resource_dir, args.model, logger)
     turns = agent.generate_all_turn_predictions(conversations, predict_actions=True, verbose=False)
@@ -127,6 +129,7 @@ def main() -> None:
         conversations, text_records=text_records, abcd_records=records,
         text_prediction_key="response_text",
     )
+    result["llm_usage"] = split_usage_summary(None, get_usage())
     (args.output_dir / "turn_predictions.json").write_text(
         json.dumps(turns, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -135,6 +138,9 @@ def main() -> None:
     )
     (args.output_dir / "result.json").write_text(
         json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    (args.output_dir / "llm_usage.json").write_text(
+        json.dumps(result["llm_usage"], ensure_ascii=False, indent=2), encoding="utf-8"
     )
     print(json.dumps({"shard": args.shard_index, "conversations": len(conversations), "summary": result.get("summary", {})}, ensure_ascii=False))
 
