@@ -28,6 +28,7 @@ SEMANTIC_MIN_SESSIONS=20
 SUBFLOW_DISCOVERY=0
 SKIP_GRAPH_SEED=1
 EVOLUTION_BATCH_SIZE=25
+ANALYSIS_BATCH_SIZE=8
 AWM_INDUCTION_MODE="online"
 SKIP_TRACE2SKILL_SEED_TEST=0
 ASI_BATCH_SIZE=25
@@ -100,6 +101,7 @@ Options:
   --eval-workflow-ids IDS    Comma-separated workflow IDs used to shard test evaluation for one --subflow
   --with-graph-seed          Also run the empty-workflow HG seed baseline
   --evolution-batch-size N   Trace2Skill outer batch size (default: 25)
+  --analysis-batch-size N    Trace2Skill success/error analysis conversations per LLM call (default: 8)
   --skip-seed-test           Trace2Skill: skip the pre-evolution seed test evaluation
   --awm-induction-mode NAME  AWM induction: online or offline (default: online)
   --asi-batch-size N         ASI online rollout batch size (default: 25)
@@ -143,6 +145,7 @@ while [[ $# -gt 0 ]]; do
         --eval-workflow-ids) EVAL_WORKFLOW_IDS_RAW="$2"; shift 2 ;;
         --with-graph-seed) SKIP_GRAPH_SEED=0; shift ;;
         --evolution-batch-size) EVOLUTION_BATCH_SIZE="$2"; shift 2 ;;
+        --analysis-batch-size) ANALYSIS_BATCH_SIZE="$2"; shift 2 ;;
         --skip-seed-test) SKIP_TRACE2SKILL_SEED_TEST=1; shift ;;
         --awm-induction-mode) AWM_INDUCTION_MODE="$2"; shift 2 ;;
         --asi-batch-size) ASI_BATCH_SIZE="$2"; shift 2 ;;
@@ -168,6 +171,7 @@ case "$AWM_INDUCTION_MODE" in online|offline) ;; *) echo "Invalid --awm-inductio
 case "$GRAPH_MINING_METHOD" in legacy|sequence|backbone|backbone_coverage|semantic_router) ;; *) echo "Invalid --graph-mining-method: $GRAPH_MINING_METHOD" >&2; exit 2 ;; esac
 case "$BACKBONE_COMPILER" in organized|unordered|compare) ;; *) echo "Invalid --backbone-compiler: $BACKBONE_COMPILER" >&2; exit 2 ;; esac
 [[ "$ASI_BATCH_SIZE" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --asi-batch-size: $ASI_BATCH_SIZE" >&2; exit 2; }
+[[ "$ANALYSIS_BATCH_SIZE" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --analysis-batch-size: $ANALYSIS_BATCH_SIZE" >&2; exit 2; }
 [[ "$ASI_HELDOUT_SIZE" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --asi-heldout-size: $ASI_HELDOUT_SIZE" >&2; exit 2; }
 python -c 'import sys; value=float(sys.argv[1]); sys.exit(0 if 0.0 <= value <= 1.0 else 1)' "$ASI_TEST_PASS_RATE" || { echo "Invalid --asi-test-pass-rate: $ASI_TEST_PASS_RATE" >&2; exit 2; }
 [[ "$ASI_MAX_INDUCTION_EPISODES" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --asi-max-induction-episodes: $ASI_MAX_INDUCTION_EPISODES" >&2; exit 2; }
@@ -331,6 +335,7 @@ echo "Workers:     ${#WORKFLOW_IDS[@]}"
 echo "Compiler:    $BACKBONE_COMPILER"
 [[ "$METHOD" == "all" || "$METHOD" == "awm" ]] && echo "AWM mode:    $AWM_INDUCTION_MODE"
 [[ "$METHOD" == "all" || "$METHOD" == "asi" ]] && echo "ASI config:  batch=$ASI_BATCH_SIZE suite_size=$ASI_HELDOUT_SIZE pass_rate=$ASI_TEST_PASS_RATE max_induction=$ASI_MAX_INDUCTION_EPISODES min_ast_delta=$ASI_MIN_AST_DELTA"
+[[ "$METHOD" == "all" || "$METHOD" == "trace2skill" ]] && echo "Trace2Skill analysis batch: $ANALYSIS_BATCH_SIZE"
 [[ "$BACKBONE_ABLATION_ONLY" -eq 1 ]] && echo "Ablation:    unordered only (organized compiler skipped)"
 [[ "$SUBFLOW_DISCOVERY" -eq 1 ]] && echo "Discovery:   latent session subflows before graph mining"
 [[ -n "$RESUME_RUN" ]] && echo "Resume:      enabled (completed subflows will be skipped)"
@@ -484,6 +489,7 @@ run_worker() {
                     --subflow "$subflow" --train-file "$SPLITS_DIR/$subflow/train.json" \
                     --test-file "$SPLITS_DIR/$subflow/test.json" --output-dir "$RUN_ROOT/trace2skill/$subflow" \
                     --evolution-batch-size "$EVOLUTION_BATCH_SIZE" --continue-on-batch-error \
+                    --analysis-batch-size "$ANALYSIS_BATCH_SIZE" \
                     "${trace_extra_args[@]}" \
                     "${trace_resume_args[@]}" || {
                 echo "trace2skill:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }

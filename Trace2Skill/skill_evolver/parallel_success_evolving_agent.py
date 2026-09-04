@@ -408,25 +408,61 @@ class CombinedParallelSkillEvolver(ParallelSkillEvolver):
             if self.patch_pipeline == "json"
             else self._get_markdown_map_output_format()
         )
-        base = build_combined_system_prompt()
-        marker = "## Output Format"
-        idx = base.find(marker)
-        if idx == -1:
-            return base + "\n\n" + output_format
-        return base[:idx] + output_format
+        # The upstream Trace2Skill MAP prompt is tied to spreadsheet editing.
+        # Build the ABCD contract directly so irrelevant domain instructions
+        # cannot compete with action/slot AST objectives.
+        return f"""You are the MAP-stage editor in a skill-evolution pipeline for an ABCD task-oriented dialogue agent.
+
+## MAP Role
+
+The error-analysis stage has already diagnosed individual failed cases and
+verified their AST corrections. Your job is to integrate multiple analysis
+records into a small, coherent candidate patch. The input may also contain
+success memories. Use them to preserve and summarize successful behavior while
+resolving conflicts with failure evidence. Do not redo per-case diagnosis,
+invent new evidence, or produce a final rewritten skill.
+
+## Integration Procedure
+
+1. Group recurring failure causes across records instead of copying one patch
+   per case.
+2. Compare failure memories with success memories for the same action, slot
+   handling pattern, or transition. Preserve successful behavior and clarify
+   only the boundary implicated by failures.
+3. Remove duplicate, vague, overly specific, or mutually conflicting lessons.
+4. Check the complete current skill and place only the smallest compatible
+   additions or revisions in the relevant section or linked reference.
+
+The records have already been partitioned into this MAP batch. Use only the
+evidence and current skill supplied in the user message. Do not hard-code
+customer-specific slot values, invent hidden state, or optimize response style
+unless it directly supports the action/slot behavior described by the records.
+
+## Edit Policy
+
+Prefer the smallest compatible change that prevents the observed failure while
+preserving successful workflows. Add or refine guidance before deleting it.
+Delete or replace existing guidance only when the evidence shows that it is
+incorrect, contradictory, or directly responsible for a recurring failure.
+Keep critical workflow and transition guidance in SKILL.md; put detailed,
+low-frequency variants and examples in linked reference files. Do not create
+unlinked resources. Every edit must have a concrete evidence-based rationale.
+
+## Constraints
+
+- Preserve YAML frontmatter name and description.
+- Keep SKILL.md under 500 lines and each reference file under 300 lines.
+- Do not modify protected files.
+- Return no patch when the current skill already covers the evidence.
+
+{output_format}
+"""
 
     def _build_map_system_prompt_from_patterns(self) -> str:
-        output_format = (
-            _MAP_OUTPUT_FORMAT
-            if self.patch_pipeline == "json"
-            else self._get_markdown_map_output_format()
-        )
-        base = build_combined_patterns_system_prompt()
-        marker = "## Output Format"
-        idx = base.find(marker)
-        if idx == -1:
-            return base + "\n\n" + output_format
-        return base[:idx] + output_format
+        # Pattern-mode inputs use the same ABCD objective and edit policy as
+        # record-mode inputs; only the user-message evidence representation
+        # differs. Do not reintroduce the upstream spreadsheet prompt here.
+        return self._build_map_system_prompt()
 
     def _build_map_user_message(
         self,

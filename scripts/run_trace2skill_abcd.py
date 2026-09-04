@@ -55,19 +55,20 @@ ABCD_DIR = "data/eval/abcd/data"
 DEFAULT_SKILL_PATH = "eval_tod/skills/abcd_trace2skill/SKILL.md"
 DEFAULT_MODEL = "deepseek-chat"
 DEFAULT_LLM_QPS = 3.0
+ABCD_ERROR_ANALYSIS_BATCH_SIZE = 8
 log = logging.getLogger("abcd_trace2skill")
 _REPORT_ITEM_PATTERN = re.compile(
     r"^#\s+(Failure Cause Item|Failure Memory Item)\s+(\d+)\s*\n",
     re.MULTILINE,
 )
 
-_ABCD_SUCCESS_ANALYSIS_SYSTEM = """You are an expert at distilling successful task-oriented dialogue agent trajectories for the ABCD benchmark.
+_ABCD_SUCCESS_ANALYSIS_SYSTEM = """You are an expert at distilling successful task-oriented dialogue conversations for the ABCD benchmark.
 
-Each supplied trajectory has already passed strict Action State Tracking (AST): every required backend action name and its ordered slot-value list were correct. Your task is to identify the minimal winning dialogue-control pattern that should be preserved when the skill is later updated to address other failures.
+The supplied evidence contains a full conversation in which some action turns may pass strict Action State Tracking (AST) and others may fail. Every action turn is explicitly annotated with predicted and golden action/slot values and its AST status. Use correct turns as positive evidence and incorrect turns as contrast; do not assume that the entire conversation is correct.
 
 Analyze only evidence visible in the trajectory. Do not mention gold labels, ground truth, benchmark scoring, or evaluation. Do not invent hidden state, policies, or action preconditions. Never copy customer-specific values, order IDs, names, or account data into a reusable rule.
 
-Pay particular attention to the successful relationship between: customer evidence, dialogue context, backend action selection, ordered slot usage, verification or deferral, and the subsequent natural-language response. A useful memory item states when the pattern applies, what the agent should do, and why the observed trajectory supports it.
+Pay particular attention to the successful relationship between customer evidence, dialogue context, backend action selection, ordered slot usage, transition behavior, and the subsequent natural-language response. A useful memory item states when the pattern applies, what the agent should do, and why the annotated conversation supports it.
 
 Return exactly this Markdown format. Produce at most three memory items.
 
@@ -91,15 +92,39 @@ Return exactly this Markdown format. Produce at most three memory items.
 <One to three concrete, generalizable instructions that preserve the successful action, slot, transition, or response behavior.>
 """
 
-_ABCD_SUCCESS_ANALYSIS_USER_TEMPLATE = """## Successful ABCD Dialogue
+_ABCD_SUCCESS_ANALYSIS_USER_TEMPLATE = """## ABCD Conversation For Success Analysis
 Dialogue ID: {dialogue_id}
 Task context: {scenario}
 
-## Successful Agent Trajectory
+## Annotated Dialogue And Action Decisions
 {trajectory}
 
-Distill the lean winning path and Success Memory Items. Preserve only reusable behavior that is supported by this trajectory; do not turn example-specific slot values into rules.
+Action turns that are AST-correct: {successful_action_turns}
+
+Analyze the conversation as a whole. Use the AST-correct action turns as
+positive evidence, and use any incorrect turns only as contrast for boundaries
+or dependencies. Summarize reusable action, slot, and transition behavior; do
+not turn example-specific slot values into rules.
 """
+
+_ABCD_SUCCESS_ANALYSIS_BATCH_SYSTEM = """You are an expert at distilling successful ABCD task-oriented dialogue conversations.
+
+Analyze every supplied conversation independently. Each conversation contains
+all action turns annotated with prediction, golden action/slots, and AST status.
+Use correct turns as positive evidence and incorrect turns as contrast when
+useful. The purpose is to preserve reusable behavior that can improve joint AST
+on unseen dialogues, not to praise responses or copy example-specific values.
+
+Return one JSON object with exactly one entry per supplied conversation instance_id:
+```json
+{"analyses": [{"instance_id": "abcd-example", "items": [{
+  "title": "Reusable pattern", "description": "When it applies",
+  "content": "Generalizable behavior", "skill_reflection": "How to preserve it"
+}]}]}
+```
+Produce at most three concise items per case. Use only visible dialogue evidence;
+do not invent hidden state or hard-code customer-specific values. Do not analyze
+failure cases here."""
 
 
 class _RateLimitedChat:
@@ -189,6 +214,7 @@ class _ChatClientAdapter:
             model=self.model,
             temperature=temperature,
             response_logger=self.response_logger,
+            call_tag="trace2skill_evolution",
         )
 
 
@@ -465,13 +491,64 @@ def _build_ast_mismatch_report(
             f"- Action match: {action_ok}",
             f"- Slot match: {slots_ok}",
             "- Source agent context:",
-            item["source_agent_context"][:1600],
+            item["source_agent_context"],
             f"- Source agent response: {item['source_agent_response']}",
             f"- Reference agent response: {item['reference_agent_response']}",
             "",
         ])
 
     return mismatches, "\n".join(report_lines)
+
+
+def _build_annotated_conversation_trajectory(
+    conversation: dict[str, Any],
+    turns: list[dict[str, Any]],
+) -> tuple[str, list[int]]:
+    """Render every agent turn with explicit AST prediction/gold annotations."""
+    truths_by_turn = {
+        int(truth.turn_index): truth
+        for truth in extract_ground_truth(conversation)
+        if truth.turn_type == "action"
+    }
+    predictions = turn_results_to_abcd_predictions(turns, [conversation])
+    predicted_by_turn = {
+        int(item.turn_index): item
+        for item in (predictions[0].turns if predictions else [])
+    }
+    correct_turns: list[int] = []
+    parts: list[str] = []
+    for row in sorted(turns, key=lambda item: int(item["turn_index"])):
+        turn_index = int(row["turn_index"])
+        truth = truths_by_turn.get(turn_index)
+        prediction = predicted_by_turn.get(turn_index)
+        parts.extend([
+            f"### Turn {turn_index}",
+            "Dialogue context:",
+            row.get("context", ""),
+            f"Agent response: {row.get('prediction', '')}",
+            f"Reference response: {row.get('reference', '')}",
+        ])
+        if truth is None:
+            parts.extend(["Turn type: non-action / not scored for AST", ""])
+            continue
+
+        predicted_action = prediction.predicted_action if prediction else None
+        predicted_slots = (prediction.predicted_slots if prediction else []) or []
+        gold_action = truth.action_name
+        gold_slots = truth.slot_values or []
+        is_correct = predicted_action == gold_action and predicted_slots == gold_slots
+        if is_correct:
+            correct_turns.append(turn_index)
+        parts.extend([
+            "Turn type: action",
+            f"Predicted action: {predicted_action}",
+            f"Predicted ordered slots: {predicted_slots}",
+            f"Golden action: {gold_action}",
+            f"Golden ordered slots: {gold_slots}",
+            f"AST status: {'CORRECT' if is_correct else 'INCORRECT'}",
+            "",
+        ])
+    return "\n".join(parts), correct_turns
 
 
 def _verify_corrected_actions(
@@ -540,11 +617,23 @@ def _extract_corrections(report: str) -> list[dict[str, Any]]:
 
 _ABCD_VERIFIED_ANALYSIS_SYSTEM = """You are an expert failure-analysis agent for ABCD task-oriented dialogue action tracking.
 
-Your job is to diagnose why an agent failed AST (Action State Tracking), propose exact corrected action/slot labels for every mismatched action turn, and then write reusable skill lessons.
+You will receive a batch of failed ABCD dialogue cases. Analyze every case in the
+batch independently, but use the batch to notice recurring failure patterns. The
+ultimate purpose is to improve joint AST on unseen dialogues: the agent must select
+the exact backend action name and the exact ordered slot-value list on every action
+turn. Action-only or slot-only improvements are insufficient when the joint pair is
+still wrong.
+
+For each case, diagnose why the agent failed AST (Action State Tracking), propose
+exact corrected action/slot labels for every mismatched action turn, and write
+reusable skill lessons. Do not analyze successful trajectories here; success
+evidence is handled separately and will be integrated during MAP.
 
 AST is strict: a turn is correct only when the action name exactly matches and the slot value list exactly matches in order.
 
-You will receive a verified mismatch report. Do not guess beyond that report. Ground every cause in the provided context, predicted labels, and gold labels.
+Every case contains a verified mismatch report and dialogue evidence. Do not guess
+beyond the evidence. Ground every cause in the provided context, predicted labels,
+and gold labels. Do not let one case's labels or explanation leak into another case.
 
 For every reusable skill lesson involving slots, explicitly identify the slot
 policy failure: value source (latest customer utterance, prior dialogue state,
@@ -552,43 +641,41 @@ or scenario fact), availability/reuse condition, missing-value behavior, and
 required order. Generalize the policy; never put example-specific customer
 values into the lesson.
 
-First output a JSON block with exact corrections:
+Return one JSON object for the whole batch. It must contain exactly one analysis
+entry for every supplied case, matched by the exact dialogue_id. First output:
 ```json
 {
-  "corrections": [
+  "analyses": [
     {
-      "turn_index": 0,
-      "corrected_action": "action-name",
-      "corrected_slots": ["slot1", "slot2"],
-      "reason": "short evidence-based reason"
+      "dialogue_id": "abcd-example",
+      "corrections": [
+        {
+          "turn_index": 0,
+          "corrected_action": "action-name",
+          "corrected_slots": ["slot1", "slot2"],
+          "reason": "short evidence-based reason"
+        }
+      ],
+      "failure_cause": {
+        "title": "One-line cause",
+        "description": "What went wrong and what evidence supports it",
+        "content": "Reusable guidance that would improve joint AST",
+        "relation_to_skill": "Where the guidance belongs"
+      },
+      "failure_memory": {
+        "title": "Reusable pattern",
+        "description": "When this pattern applies",
+        "content": "Concrete generalizable behavior",
+        "skill_reflection": "How the skill should encode it"
+      }
     }
   ]
 }
 ```
 
-Then output the analysis in this exact markdown format:
-
-# Failure Cause Item 1
-## Title
-<One-line summary>
-## Description
-<What went wrong, citing the mismatched turn and evidence>
-## Content
-<What the agent should do instead, stated as actionable skill guidance>
-## Relation to Skill
-<Concrete skill update suggestion>
-
-# Failure Memory Item 1
-## Title
-<Reusable pattern>
-## Description
-<When this pattern occurs>
-## Content
-<Concrete behavior to remember>
-## Skill Reflection
-<Where/how the skill should encode this lesson>
-
-Output at least one Failure Cause Item and one Failure Memory Item."""
+Every analysis entry must contain at least one failure_cause and one
+failure_memory. Keep each field concise and generalizable. Do not put
+customer-specific values into the proposed guidance."""
 
 
 def _has_parseable_failure_items(report: str) -> bool:
@@ -667,22 +754,165 @@ def _build_verified_analysis_prompt(case: dict[str, Any], feedback: str | None =
         f"Subflow: {case.get('domains', [])}",
         "",
         "## Scenario",
-        case.get("goal_description", "")[:2000],
+        case.get("goal_description", ""),
         "",
         "## AST Summary",
         f"Dialogue AST: {case.get('info_rate', 'N/A')}",
         f"Joint correct: {case.get('inform_correct', '?')}/{case.get('inform_total', '?')}",
         "",
         "## Verified AST Mismatch Report",
-        case.get("ast_mismatch_report", "")[:9000],
+        case.get("ast_mismatch_report", ""),
         "",
         "## Full Trajectory",
-        case.get("trajectory", "")[:5000],
+        case.get("trajectory", ""),
     ])
     if feedback:
         prompt += "\n\n## Local Verification Feedback\n" + feedback
         prompt += "\nRevise the corrections JSON so every corrected action and corrected_slots exactly matches the verified AST labels."
     return prompt
+
+
+def _build_local_failure_trajectory(
+    turns: list[dict[str, Any]],
+    mismatches: list[dict[str, Any]],
+    *,
+    chars_per_mismatch: int = 2000,
+) -> str:
+    """Keep a bounded backward context window for each failed action turn."""
+    ordered_turns = sorted(turns, key=lambda row: int(row["turn_index"]))
+    blocks: list[str] = []
+    seen_turns: set[int] = set()
+    for mismatch in mismatches:
+        target = mismatch.get("action_turn_index")
+        if target is None:
+            continue
+        target_index = int(target)
+        relevant = [
+            row for row in ordered_turns
+            if int(row["turn_index"]) <= target_index
+        ]
+        lines: list[str] = []
+        for row in relevant:
+            lines.extend([
+                f"[Context upto turn {row['turn_index']}]",
+                row.get("context", ""),
+                f"[Predicted action] {row.get('predicted_action', '')}",
+                f"[Predicted slots] {row.get('predicted_slots', [])}",
+                f"[Predicted response] {row.get('prediction', '')}",
+                f"[Reference response] {row.get('reference', '')}",
+                "",
+            ])
+        window = "\n".join(lines)
+        if len(window) > chars_per_mismatch:
+            window = window[-chars_per_mismatch:]
+            if "\n" in window:
+                window = window[window.find("\n") + 1:]
+            window = "[Earlier context omitted; window ends at the failed turn]\n" + window
+        if target_index not in seen_turns:
+            blocks.extend([
+                f"## Local Evidence For Failed Action Turn {target_index}",
+                window,
+                "",
+            ])
+            seen_turns.add(target_index)
+    if not blocks:
+        return "[No localized mismatch window was available.]"
+    return "\n".join(blocks)
+
+
+def _build_verified_analysis_batch_prompt(
+    cases: list[dict[str, Any]], feedback: str | None = None
+) -> str:
+    """Build one failure-analysis request for a bounded batch of cases."""
+    parts = [
+        "## ABCD Failed-Case Batch",
+        f"Analyze exactly {len(cases)} cases. Return one analysis entry per dialogue_id.",
+        "Keep each case independent and use only its own evidence.",
+        "",
+    ]
+    for index, case in enumerate(cases, start=1):
+        parts.extend([
+            f"===== CASE {index}: {case.get('dialogue_id', 'N/A')} =====",
+            _build_verified_analysis_prompt(case),
+            f"===== END CASE {index} =====",
+            "",
+        ])
+    if feedback:
+        parts.extend([
+            "## Batch Verification Feedback",
+            feedback,
+            "Revise the complete JSON object. Include every supplied dialogue_id, "
+            "including cases that were already correct.",
+        ])
+    return "\n".join(parts)
+
+
+def _extract_batch_analysis_payload(raw: str) -> dict[str, Any] | None:
+    """Parse the JSON envelope returned by the batch failure analyzer."""
+    fenced = re.search(r"```json\s*(\{.*\})\s*```", raw, re.DOTALL)
+    payload = fenced.group(1) if fenced else ""
+    if not payload:
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start >= 0 and end > start:
+            payload = raw[start:end + 1]
+    if not payload:
+        return None
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        return None
+    analyses = data.get("analyses") if isinstance(data, dict) else None
+    if not isinstance(analyses, list):
+        return None
+    return data
+
+
+def _render_batch_case_report(
+    case: dict[str, Any], analysis: dict[str, Any] | None, reason: str = ""
+) -> tuple[str, list[dict[str, Any]], bool]:
+    """Turn one entry of a batch response into the legacy per-case report."""
+    analysis = analysis if isinstance(analysis, dict) else {}
+    corrections = analysis.get("corrections", [])
+    if not isinstance(corrections, list):
+        corrections = []
+    verified, feedback = _verify_corrected_actions(
+        case.get("ast_mismatches", []), corrections
+    )
+    cause = analysis.get("failure_cause") or {}
+    memory = analysis.get("failure_memory") or {}
+    if not isinstance(cause, dict):
+        cause = {}
+    if not isinstance(memory, dict):
+        memory = {}
+    report = "\n".join([
+        "```json",
+        json.dumps({"corrections": corrections}, indent=2, ensure_ascii=False),
+        "```",
+        "",
+        "# Failure Cause Item 1",
+        "## Title",
+        str(cause.get("title") or "ABCD action or ordered-slot decision failure"),
+        "## Description",
+        str(cause.get("description") or feedback),
+        "## Content",
+        str(cause.get("content") or "Before response generation, determine the exact action and ordered slot list from the visible dialogue evidence."),
+        "## Relation to Skill",
+        str(cause.get("relation_to_skill") or "Add the smallest compatible action-slot decision rule to the relevant skill section."),
+        "",
+        "# Failure Memory Item 1",
+        "## Title",
+        str(memory.get("title") or "Verify the joint action-slot decision"),
+        "## Description",
+        str(memory.get("description") or "Apply this pattern whenever dialogue evidence could support multiple action or slot interpretations."),
+        "## Content",
+        str(memory.get("content") or "Select the exact backend action and ordered slot values before composing the response; do not guess unavailable values."),
+        "## Skill Reflection",
+        str(memory.get("skill_reflection") or "Encode this as reusable guidance without hard-coding customer-specific values."),
+    ])
+    if not verified:
+        report += "\n\n<!-- Batch AST verification failed: " + (reason or feedback) + " -->"
+    return report, corrections, verified
 
 
 def _fallback_verified_report(case: dict[str, Any], feedback: str) -> str:
@@ -757,23 +987,24 @@ def _run_verified_abcd_error_analysis(
     response_logger: ResponseLogger,
     *,
     max_rounds: int = 2,
+    batch_size: int = ABCD_ERROR_ANALYSIS_BATCH_SIZE,
 ) -> list[str]:
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     output_paths: list[str] = []
 
-    for idx, case in enumerate(failed_cases, start=1):
-        print(f"  Verified ABCD analysis {idx}/{len(failed_cases)}: {case.get('dialogue_id', '?')}")
-        report = ""
-        verified = False
-        parseable = False
-        parse_repaired = False
+    batch_size = max(1, int(batch_size))
+    for batch_index, batch in enumerate(_chunk_list(failed_cases, batch_size), start=1):
+        print(
+            f"  Verified ABCD error-analysis batch {batch_index}/"
+            f"{(len(failed_cases) + batch_size - 1) // batch_size}: {len(batch)} cases"
+        )
+        raw = ""
+        payload: dict[str, Any] | None = None
         feedback: str | None = None
-        corrections: list[dict[str, Any]] = []
-
         for _ in range(max_rounds + 1):
-            prompt = _build_verified_analysis_prompt(case, feedback)
-            report = chat(
+            prompt = _build_verified_analysis_batch_prompt(batch, feedback)
+            raw = chat(
                 [
                     {"role": "system", "content": _ABCD_VERIFIED_ANALYSIS_SYSTEM},
                     {"role": "user", "content": prompt},
@@ -781,48 +1012,68 @@ def _run_verified_abcd_error_analysis(
                 model=model,
                 temperature=0.2,
                 response_logger=response_logger,
+                call_tag="trace2skill_error_analysis",
             ).strip()
-            corrections = _extract_corrections(report)
-            verified, feedback_text = _verify_corrected_actions(
-                case.get("ast_mismatches", []),
-                corrections,
-            )
-            parseable = _has_parseable_failure_items(report)
-            if verified and parseable:
+            payload = _extract_batch_analysis_payload(raw)
+            expected = {str(case.get("dialogue_id", "")) for case in batch}
+            actual = {
+                str(item.get("dialogue_id", ""))
+                for item in (payload or {}).get("analyses", [])
+                if isinstance(item, dict)
+            }
+            missing = sorted(expected - actual)
+            invalid: list[str] = []
+            invalid_feedback: list[str] = []
+            if payload is not None and not missing:
+                by_id = {
+                    str(item.get("dialogue_id")): item
+                    for item in payload.get("analyses", [])
+                    if isinstance(item, dict)
+                }
+                for case in batch:
+                    item = by_id.get(str(case.get("dialogue_id")), {})
+                    corrections = item.get("corrections", []) if isinstance(item, dict) else []
+                    verified, case_feedback = _verify_corrected_actions(
+                        case.get("ast_mismatches", []),
+                        corrections if isinstance(corrections, list) else [],
+                    )
+                    if not verified:
+                        invalid.append(str(case.get("dialogue_id", "")))
+                        invalid_feedback.append(
+                            f"{case.get('dialogue_id', 'N/A')}: {case_feedback}"
+                        )
+            if payload is not None and not missing and not invalid:
                 break
-            feedback_parts = [feedback_text]
-            if verified and not parseable:
-                feedback_parts.append(
-                    "The corrections are locally verified, but the markdown analysis "
-                    "is not parseable. Use top-level headings exactly like "
-                    "`# Failure Cause Item 1` and `# Failure Memory Item 1`, followed by "
-                    "`## Title`, `## Description`, and `## Content` sections."
-                )
-            feedback = "\n".join(part for part in feedback_parts if part)
-
-        if not report:
-            report = _fallback_verified_report(case, feedback or "No LLM report was returned.")
-            parseable = _has_parseable_failure_items(report)
-        elif not verified:
-            report = report + "\n\n<!-- Local AST verification failed:\n" + (feedback or "") + "\n-->\n"
-            parseable = _has_parseable_failure_items(report)
-        elif not parseable:
-            report = report + _build_parseable_report_suffix(
-                case,
-                corrections,
-                "LLM output did not match Trace2Skill parser headings.",
+            feedback = (
+                "The response was incomplete or invalid. Missing dialogue_id entries: "
+                + repr(missing)
+                + ". Cases whose corrections failed local AST verification: "
+                + repr(invalid)
+                + ". Return valid JSON with exactly one analysis per supplied case, "
+                "and make every correction exactly match that case's verified gold "
+                "action and ordered slots.\n"
+                + "\n".join(invalid_feedback)
             )
-            parse_repaired = True
-            parseable = _has_parseable_failure_items(report)
 
-        output_paths.append(_save_verified_report(
-            output_dir,
-            case,
-            report,
-            verified,
-            parseable,
-            parse_repaired,
-        ))
+        by_id = {
+            str(item.get("dialogue_id")): item
+            for item in (payload or {}).get("analyses", [])
+            if isinstance(item, dict)
+        }
+        for case in batch:
+            analysis = by_id.get(str(case.get("dialogue_id")))
+            report, corrections, verified = _render_batch_case_report(
+                case, analysis, feedback or "No valid batch response was returned."
+            )
+            parseable = _has_parseable_failure_items(report)
+            if not analysis:
+                report = _fallback_verified_report(
+                    case, feedback or "Case was missing from the batch response."
+                )
+                parseable = _has_parseable_failure_items(report)
+            output_paths.append(_save_verified_report(
+                output_dir, case, report, verified, parseable, False
+            ))
 
     return output_paths
 
@@ -850,15 +1101,7 @@ def _build_ast_failure_cases(
         convo_id = str(conv.get("convo_id", "?"))
         turns = sorted(by_convo.get(convo_id, []), key=lambda x: x["turn_index"])
         ast_mismatches, ast_mismatch_report = _build_ast_mismatch_report(conv, turns)
-        trajectory_lines = []
-        for row in turns:
-            trajectory_lines.append(f"[Context upto turn {row['turn_index']}]")
-            trajectory_lines.append(row.get("context", ""))
-            trajectory_lines.append(f"[Predicted action] {row.get('predicted_action', '')}")
-            trajectory_lines.append(f"[Predicted slots] {row.get('predicted_slots', [])}")
-            trajectory_lines.append(f"[Predicted response] {row.get('prediction', '')}")
-            trajectory_lines.append(f"[Reference response] {row.get('reference', '')}")
-            trajectory_lines.append("")
+        annotated_trajectory, _ = _build_annotated_conversation_trajectory(conv, turns)
 
         safe_id = convo_id.replace("/", "_").replace("\\", "_")
         log_path = log_dir / f"{safe_id}.json"
@@ -901,7 +1144,7 @@ def _build_ast_failure_cases(
             "goal_inform": {},
             "goal_request": {},
             "has_booking": False,
-            "trajectory": "\n".join(trajectory_lines),
+            "trajectory": annotated_trajectory,
         })
 
     return failed_cases
@@ -915,7 +1158,7 @@ def _build_ast_success_cases(
     log_dir: Path,
     hide_scenario_labels: bool = False,
 ) -> list[dict[str, Any]]:
-    """Build successful trajectory evidence, mirroring original Trace2Skill."""
+    """Build one success-analysis case per conversation with a correct turn."""
     log_dir = log_dir.resolve()
     log_dir.mkdir(parents=True, exist_ok=True)
     by_convo: dict[str, list[dict[str, Any]]] = {}
@@ -923,38 +1166,30 @@ def _build_ast_success_cases(
         by_convo.setdefault(str(row["convo_id"]), []).append(row)
 
     cases: list[dict[str, Any]] = []
-    for conv, ast in zip(conversations, ast_scores):
-        if ast.get("ast_score", 0.0) < 1.0 or not ast.get("action_total", 0):
-            continue
+    for conv in conversations:
         convo_id = str(conv.get("convo_id", "?"))
         turns = sorted(by_convo.get(convo_id, []), key=lambda row: row["turn_index"])
-        trajectory_lines = []
-        for row in turns:
-            trajectory_lines.extend([
-                f"[Dialogue context before turn {row['turn_index']}]",
-                row.get("context", ""),
-                f"[Selected backend action] {row.get('predicted_action', '')}",
-                f"[Selected ordered slots] {row.get('predicted_slots', [])}",
-                f"[Agent response] {row.get('prediction', '')}",
-                "",
-            ])
+        trajectory, correct_turns = _build_annotated_conversation_trajectory(conv, turns)
+        if not correct_turns:
+            continue
+        scenario = conv.get("scenario", {})
         safe_id = convo_id.replace("/", "_").replace("\\", "_")
         log_path = log_dir / f"{safe_id}.json"
         log_path.write_text(json.dumps({
             "convo_id": convo_id,
-            "ast_score": ast.get("ast_score", 0.0),
+            "successful_action_turns": correct_turns,
             "turn_results": turns,
         }, indent=2, ensure_ascii=False), encoding="utf-8")
-        scenario = conv.get("scenario", {})
         cases.append({
             "instance_id": f"abcd-{convo_id}",
             "dialogue_id": f"abcd-{convo_id}",
             "scenario": (
                 json.dumps(scenario, ensure_ascii=False)
                 if not hide_scenario_labels
-                else "ABCD customer-service dialogue; infer the task only from the trajectory."
+                else "ABCD customer-service dialogue; infer the task only from the annotated conversation."
             ),
-            "trajectory": "\n".join(trajectory_lines),
+            "successful_action_turns": correct_turns,
+            "trajectory": trajectory,
             "trajectory_log_path": str(log_path),
         })
     return cases
@@ -970,55 +1205,111 @@ def _run_success_analysis(
     output_dir: Path,
     model: str,
     response_logger: ResponseLogger,
+    *,
+    batch_size: int = 8,
+    max_rounds: int = 2,
 ) -> Path:
-    """Run the original success-analysis stage over AST-success trajectories."""
+    """Analyze AST-success turns in bounded batches and restore per-case files."""
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     records: list[dict[str, Any]] = []
-    for index, case in enumerate(success_cases, start=1):
-        instance_id = str(case["instance_id"])
-        case_dir = output_dir / instance_id
-        report_path = case_dir / "success_analysis.md"
-        prompt_path = case_dir / "prompt.md"
-        case_dir.mkdir(parents=True, exist_ok=True)
-        prompt = _ABCD_SUCCESS_ANALYSIS_USER_TEMPLATE.format(**case)
-        prompt_path.write_text(
-            "===== SYSTEM MESSAGE =====\n\n"
-            + _ABCD_SUCCESS_ANALYSIS_SYSTEM.rstrip()
-            + "\n\n===== USER MESSAGE =====\n\n"
-            + prompt.rstrip()
-            + "\n",
-            encoding="utf-8",
-        )
-        raw = chat(
-            [
-                {"role": "system", "content": _ABCD_SUCCESS_ANALYSIS_SYSTEM},
-                {"role": "user", "content": prompt},
-            ],
-            model=model,
-            temperature=0.2,
-            response_logger=response_logger,
-            call_tag="trace2skill_success_analysis",
-        ).strip()
-        report_path.write_text(raw, encoding="utf-8")
-        items = _parse_success_items(raw)
-        (case_dir / "parse.json").write_text(json.dumps({
-            "instance_id": instance_id,
-            "item_count": len(items),
-            "trajectory_log_path": case["trajectory_log_path"],
-            "prompt_path": str(prompt_path),
-        }, indent=2, ensure_ascii=False), encoding="utf-8")
-        if items:
-            records.append({
-                "instance_id": instance_id,
-                "source_file": report_path.name,
-                "items": items,
-                "prompt_path": str(prompt_path),
-            })
-        else:
-            (case_dir / "failed_to_parse.flag").write_text("no_success_memory_items\n", encoding="utf-8")
-            log.warning("Success analysis %d/%d yielded no parseable memory items: %s",
-                        index, len(success_cases), instance_id)
+    batch_size = max(1, int(batch_size))
+    batches = _chunk_list(success_cases, batch_size)
+    for batch_index, batch in enumerate(batches, start=1):
+        log.info("Success analysis batch %d/%d: %d conversations (batch_size=%d)",
+                 batch_index, len(batches), len(batch), batch_size)
+        parts = [
+            "## ABCD Successful-Target Batch",
+            f"Analyze exactly {len(batch)} conversations independently.",
+            "",
+        ]
+        for case_index, case in enumerate(batch, start=1):
+            parts.extend([
+                f"===== CASE {case_index}: {case['instance_id']} =====",
+                _ABCD_SUCCESS_ANALYSIS_USER_TEMPLATE.format(**case),
+                f"===== END CASE {case_index} =====",
+                "",
+            ])
+        batch_prompt = "\n".join(parts)
+        expected_ids = {str(case["instance_id"]) for case in batch}
+        payload: dict[str, Any] = {}
+        feedback: str | None = None
+        for attempt in range(max_rounds + 1):
+            retry_prompt = batch_prompt
+            if feedback:
+                retry_prompt += (
+                    "\n\n## Batch Verification Feedback\n" + feedback
+                    + "\nReturn valid JSON with exactly one analysis for every supplied instance_id."
+                )
+            raw = chat(
+                [
+                    {"role": "system", "content": _ABCD_SUCCESS_ANALYSIS_BATCH_SYSTEM},
+                    {"role": "user", "content": retry_prompt},
+                ],
+                model=model,
+                temperature=0.2,
+                response_logger=response_logger,
+                call_tag="trace2skill_success_analysis",
+            ).strip()
+            match = re.search(r"```json\s*(\{.*\})\s*```", raw, re.DOTALL)
+            payload_text = match.group(1) if match else raw[raw.find("{"):raw.rfind("}") + 1]
+            try:
+                candidate = json.loads(payload_text) if payload_text else {}
+            except json.JSONDecodeError as exc:
+                candidate = {}
+                feedback = f"The response was not valid JSON: {exc}."
+            if isinstance(candidate, dict) and isinstance(candidate.get("analyses"), list):
+                returned_ids = {
+                    str(item.get("instance_id"))
+                    for item in candidate["analyses"]
+                    if isinstance(item, dict)
+                }
+                missing = sorted(expected_ids - returned_ids)
+                if not missing:
+                    payload = candidate
+                    break
+                feedback = f"Missing instance_id entries: {missing}."
+            elif not feedback:
+                feedback = "The response must contain an analyses list."
+            if attempt == max_rounds:
+                log.warning(
+                    "Success analysis batch %d/%d remained incomplete after %d attempts: %s",
+                    batch_index, len(batches), max_rounds + 1, feedback,
+                )
+        by_id = {
+            str(item.get("instance_id")): item
+            for item in payload.get("analyses", [])
+            if isinstance(item, dict)
+        } if isinstance(payload, dict) else {}
+
+        for case in batch:
+            instance_id = str(case["instance_id"])
+            case_dir = output_dir / instance_id
+            report_path = case_dir / "success_analysis.md"
+            prompt_path = case_dir / "prompt.md"
+            case_dir.mkdir(parents=True, exist_ok=True)
+            item_payload = by_id.get(instance_id, {})
+            items = item_payload.get("items", []) if isinstance(item_payload, dict) else []
+            items = items if isinstance(items, list) else []
+            report_parts = [f"# Success Memory Item {idx}\n## Title\n{item.get('title', 'Reusable successful behavior')}\n## Description\n{item.get('description', '')}\n## Content\n{item.get('content', '')}\n## Skill Reflection\n{item.get('skill_reflection', '')}" for idx, item in enumerate(items, start=1) if isinstance(item, dict)]
+            report = "\n\n".join(report_parts)
+            prompt_path.write_text(
+                "===== SYSTEM MESSAGE =====\n\n" + _ABCD_SUCCESS_ANALYSIS_BATCH_SYSTEM.rstrip()
+                + "\n\n===== USER MESSAGE =====\n\n" + "\n".join(parts).rstrip() + "\n",
+                encoding="utf-8",
+            )
+            report_path.write_text(report, encoding="utf-8")
+            parsed_items = _parse_success_items(report)
+            (case_dir / "parse.json").write_text(json.dumps({
+                "instance_id": instance_id, "item_count": len(parsed_items),
+                "trajectory_log_path": case["trajectory_log_path"], "prompt_path": str(prompt_path),
+            }, indent=2, ensure_ascii=False), encoding="utf-8")
+            if parsed_items:
+                records.append({"instance_id": instance_id, "source_file": report_path.name,
+                                "items": parsed_items, "prompt_path": str(prompt_path)})
+            else:
+                (case_dir / "failed_to_parse.flag").write_text("no_success_memory_items\n", encoding="utf-8")
+                log.warning("Success analysis yielded no parseable memory items: %s", instance_id)
     parsed_path = output_dir.parent / f"{output_dir.name}_parsed.json"
     parsed_path.write_text(json.dumps(records, indent=2, ensure_ascii=False), encoding="utf-8")
     return parsed_path
@@ -1029,6 +1320,8 @@ def _run_error_analysis(
     output_dir: Path,
     model: str,
     response_logger: ResponseLogger,
+    *,
+    batch_size: int = ABCD_ERROR_ANALYSIS_BATCH_SIZE,
 ) -> Path:
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1038,6 +1331,7 @@ def _run_error_analysis(
         output_dir,
         model,
         response_logger,
+        batch_size=batch_size,
     )
 
     parsed_path = (output_dir.parent / f"{output_dir.name}_parsed.json").resolve()
@@ -1217,6 +1511,7 @@ def run_pipeline(args) -> PipelineOutputs:
         "max_test": args.max_test,
         "evolution_batch_size": args.evolution_batch_size,
         "map_batch_size": args.map_batch_size,
+        "analysis_batch_size": args.analysis_batch_size,
         "max_evolution_batches": args.max_evolution_batches,
         "skip_seed_test": args.skip_seed_test,
         "success_analysis_enabled": True,
@@ -1455,6 +1750,7 @@ def run_pipeline(args) -> PipelineOutputs:
                         error_dir,
                         model,
                         response_logger,
+                        batch_size=args.analysis_batch_size,
                     )
                     log.info("%s parsed error analysis -> %s", label, error_parsed_path)
 
@@ -1462,9 +1758,10 @@ def run_pipeline(args) -> PipelineOutputs:
                     success_dir = out_dir / "success_analysis" / label
                     success_parsed_path = _run_success_analysis(
                         batch_success_cases,
-                        success_dir,
+                    success_dir,
                         model,
                         response_logger,
+                        batch_size=args.analysis_batch_size,
                     )
                     log.info("%s parsed success analysis -> %s", label, success_parsed_path)
 
@@ -1733,6 +2030,15 @@ def main() -> None:
         help=(
             "Number of error-analysis records handled by one internal MAP "
             "LLM call during skill evolution (default: 8)."
+        ),
+    )
+    parser.add_argument(
+        "--analysis-batch-size",
+        type=int,
+        default=8,
+        help=(
+            "Number of failed cases or AST-correct target turns analyzed in one "
+            "error/success analysis LLM call (default: 8)."
         ),
     )
     parser.add_argument(
