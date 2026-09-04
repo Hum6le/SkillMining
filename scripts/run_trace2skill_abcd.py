@@ -8,8 +8,8 @@ It keeps the same high-level loop:
 
 1. Run a seed agent with a skill/workflow prompt
 2. Evaluate on AST
-3. Analyze failed conversations
-4. Evolve the skill with Trace2Skill's ParallelSkillEvolver
+3. Distill successful trajectories and analyze failed conversations
+4. Evolve the skill from combined success/failure evidence
 5. Re-evaluate on AST
 
 The key difference is that failure detection and optimization are driven by
@@ -60,6 +60,46 @@ _REPORT_ITEM_PATTERN = re.compile(
     r"^#\s+(Failure Cause Item|Failure Memory Item)\s+(\d+)\s*\n",
     re.MULTILINE,
 )
+
+_ABCD_SUCCESS_ANALYSIS_SYSTEM = """You are an expert at distilling successful task-oriented dialogue agent trajectories for the ABCD benchmark.
+
+Each supplied trajectory has already passed strict Action State Tracking (AST): every required backend action name and its ordered slot-value list were correct. Your task is to identify the minimal winning dialogue-control pattern that should be preserved when the skill is later updated to address other failures.
+
+Analyze only evidence visible in the trajectory. Do not mention gold labels, ground truth, benchmark scoring, or evaluation. Do not invent hidden state, policies, or action preconditions. Never copy customer-specific values, order IDs, names, or account data into a reusable rule.
+
+Pay particular attention to the successful relationship between: customer evidence, dialogue context, backend action selection, ordered slot usage, verification or deferral, and the subsequent natural-language response. A useful memory item states when the pattern applies, what the agent should do, and why the observed trajectory supports it.
+
+Return exactly this Markdown format. Produce at most three memory items.
+
+# Lean Solution Path
+
+## Overview
+<One or two sentences on the successful task handling pattern.>
+
+## Step 1: <Action-oriented title>
+<Only a necessary winning step grounded in the trajectory.>
+
+# Success Memory Item 1
+
+## Title
+<Short reusable pattern name>
+
+## Description
+<One sentence describing when this pattern applies.>
+
+## Content
+<One to three concrete, generalizable instructions that preserve the successful action, slot, transition, or response behavior.>
+"""
+
+_ABCD_SUCCESS_ANALYSIS_USER_TEMPLATE = """## Successful ABCD Dialogue
+Dialogue ID: {dialogue_id}
+Task context: {scenario}
+
+## Successful Agent Trajectory
+{trajectory}
+
+Distill the lean winning path and Success Memory Items. Preserve only reusable behavior that is supported by this trajectory; do not turn example-specific slot values into rules.
+"""
 
 
 class _RateLimitedChat:
@@ -867,6 +907,123 @@ def _build_ast_failure_cases(
     return failed_cases
 
 
+def _build_ast_success_cases(
+    conversations: list[dict[str, Any]],
+    turn_results: list[dict[str, Any]],
+    ast_scores: list[dict[str, Any]],
+    *,
+    log_dir: Path,
+    hide_scenario_labels: bool = False,
+) -> list[dict[str, Any]]:
+    """Build successful trajectory evidence, mirroring original Trace2Skill."""
+    log_dir = log_dir.resolve()
+    log_dir.mkdir(parents=True, exist_ok=True)
+    by_convo: dict[str, list[dict[str, Any]]] = {}
+    for row in turn_results:
+        by_convo.setdefault(str(row["convo_id"]), []).append(row)
+
+    cases: list[dict[str, Any]] = []
+    for conv, ast in zip(conversations, ast_scores):
+        if ast.get("ast_score", 0.0) < 1.0 or not ast.get("action_total", 0):
+            continue
+        convo_id = str(conv.get("convo_id", "?"))
+        turns = sorted(by_convo.get(convo_id, []), key=lambda row: row["turn_index"])
+        trajectory_lines = []
+        for row in turns:
+            trajectory_lines.extend([
+                f"[Dialogue context before turn {row['turn_index']}]",
+                row.get("context", ""),
+                f"[Selected backend action] {row.get('predicted_action', '')}",
+                f"[Selected ordered slots] {row.get('predicted_slots', [])}",
+                f"[Agent response] {row.get('prediction', '')}",
+                "",
+            ])
+        safe_id = convo_id.replace("/", "_").replace("\\", "_")
+        log_path = log_dir / f"{safe_id}.json"
+        log_path.write_text(json.dumps({
+            "convo_id": convo_id,
+            "ast_score": ast.get("ast_score", 0.0),
+            "turn_results": turns,
+        }, indent=2, ensure_ascii=False), encoding="utf-8")
+        scenario = conv.get("scenario", {})
+        cases.append({
+            "instance_id": f"abcd-{convo_id}",
+            "dialogue_id": f"abcd-{convo_id}",
+            "scenario": (
+                json.dumps(scenario, ensure_ascii=False)
+                if not hide_scenario_labels
+                else "ABCD customer-service dialogue; infer the task only from the trajectory."
+            ),
+            "trajectory": "\n".join(trajectory_lines),
+            "trajectory_log_path": str(log_path),
+        })
+    return cases
+
+
+def _parse_success_items(report: str) -> list[dict[str, Any]]:
+    from analysis.report_parsing import parse_success_items
+    return parse_success_items(report)
+
+
+def _run_success_analysis(
+    success_cases: list[dict[str, Any]],
+    output_dir: Path,
+    model: str,
+    response_logger: ResponseLogger,
+) -> Path:
+    """Run the original success-analysis stage over AST-success trajectories."""
+    output_dir = output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    records: list[dict[str, Any]] = []
+    for index, case in enumerate(success_cases, start=1):
+        instance_id = str(case["instance_id"])
+        case_dir = output_dir / instance_id
+        report_path = case_dir / "success_analysis.md"
+        prompt_path = case_dir / "prompt.md"
+        case_dir.mkdir(parents=True, exist_ok=True)
+        prompt = _ABCD_SUCCESS_ANALYSIS_USER_TEMPLATE.format(**case)
+        prompt_path.write_text(
+            "===== SYSTEM MESSAGE =====\n\n"
+            + _ABCD_SUCCESS_ANALYSIS_SYSTEM.rstrip()
+            + "\n\n===== USER MESSAGE =====\n\n"
+            + prompt.rstrip()
+            + "\n",
+            encoding="utf-8",
+        )
+        raw = chat(
+            [
+                {"role": "system", "content": _ABCD_SUCCESS_ANALYSIS_SYSTEM},
+                {"role": "user", "content": prompt},
+            ],
+            model=model,
+            temperature=0.2,
+            response_logger=response_logger,
+            call_tag="trace2skill_success_analysis",
+        ).strip()
+        report_path.write_text(raw, encoding="utf-8")
+        items = _parse_success_items(raw)
+        (case_dir / "parse.json").write_text(json.dumps({
+            "instance_id": instance_id,
+            "item_count": len(items),
+            "trajectory_log_path": case["trajectory_log_path"],
+            "prompt_path": str(prompt_path),
+        }, indent=2, ensure_ascii=False), encoding="utf-8")
+        if items:
+            records.append({
+                "instance_id": instance_id,
+                "source_file": report_path.name,
+                "items": items,
+                "prompt_path": str(prompt_path),
+            })
+        else:
+            (case_dir / "failed_to_parse.flag").write_text("no_success_memory_items\n", encoding="utf-8")
+            log.warning("Success analysis %d/%d yielded no parseable memory items: %s",
+                        index, len(success_cases), instance_id)
+    parsed_path = output_dir.parent / f"{output_dir.name}_parsed.json"
+    parsed_path.write_text(json.dumps(records, indent=2, ensure_ascii=False), encoding="utf-8")
+    return parsed_path
+
+
 def _run_error_analysis(
     failed_cases: list[dict[str, Any]],
     output_dir: Path,
@@ -922,25 +1079,38 @@ def _run_error_analysis(
 
 
 def _run_skill_evolution(
-    records_path: Path,
+    error_records_path: Path | None,
+    success_records_path: Path | None,
     skill_path: Path,
     output_dir: Path,
     model: str,
     response_logger: ResponseLogger,
     map_batch_size: int = 8,
 ) -> list[str]:
-    from skill_evolver.parallel_evolving_agent import ParallelSkillEvolver
+    from skill_evolver.parallel_success_evolving_agent import (
+        CombinedParallelSkillEvolver,
+        normalize_mixed_records,
+    )
 
-    records_path = records_path.resolve()
     skill_path = skill_path.resolve()
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    records = json.loads(records_path.read_text(encoding="utf-8"))
+    error_records = (
+        json.loads(error_records_path.resolve().read_text(encoding="utf-8"))
+        if error_records_path and error_records_path.exists()
+        else []
+    )
+    success_records = (
+        json.loads(success_records_path.resolve().read_text(encoding="utf-8"))
+        if success_records_path and success_records_path.exists()
+        else []
+    )
+    records = normalize_mixed_records(error_records, success_records)
     if not records:
         return []
 
-    evolver = ParallelSkillEvolver(
+    evolver = CombinedParallelSkillEvolver(
         client=_ChatClientAdapter(model=model, response_logger=response_logger),
         skill_dir=str(skill_path.parent),
         batch_size=map_batch_size,
@@ -956,6 +1126,27 @@ def _run_skill_evolution(
         max_skill_lines=500,
         skip_translation=False,
         patch_pipeline="json",
+    )
+    prompt_spec = output_dir / "prompt_spec.md"
+    prompt_spec.write_text(
+        "# Trace2Skill ABCD Combined Evolution Prompt Spec\n\n"
+        "This run combines AST failure evidence and strict AST-success evidence in "
+        "the same MAP/REDUCE evolution pipeline.\n\n"
+        "## Success Analysis System Prompt\n\n"
+        "```text\n" + _ABCD_SUCCESS_ANALYSIS_SYSTEM.rstrip() + "\n```\n\n"
+        "## Success Analysis User Prompt Template\n\n"
+        "```text\n" + _ABCD_SUCCESS_ANALYSIS_USER_TEMPLATE.rstrip() + "\n```\n\n"
+        "## Combined Evolution MAP System Prompt\n\n"
+        "```text\n" + evolver._map_system_prompt.rstrip() + "\n```\n\n"
+        "## Combined Evolution REDUCE System Prompt\n\n"
+        "```text\n" + evolver._merge_system_prompt.rstrip() + "\n```\n\n"
+        "## Evidence Semantics\n\n"
+        "- `record_source=error`: a verified AST failure analysis record.\n"
+        "- `record_source=success`: a strict AST-success trajectory distilled into a "
+        "reusable success memory.\n"
+        "- The actual per-call prompts and responses are saved under "
+        "`prompt_samples/` by the evolver.\n",
+        encoding="utf-8",
     )
     result = evolver.run(records, input_mode="records")
     return result.get("changelog", [])
@@ -1028,6 +1219,7 @@ def run_pipeline(args) -> PipelineOutputs:
         "map_batch_size": args.map_batch_size,
         "max_evolution_batches": args.max_evolution_batches,
         "skip_seed_test": args.skip_seed_test,
+        "success_analysis_enabled": True,
     }
     if resume_dir and previous_summary.get("config"):
         previous_config = previous_summary["config"]
@@ -1180,6 +1372,7 @@ def run_pipeline(args) -> PipelineOutputs:
         row for row in existing_batch_history if row.get("status", "completed") != "error"
     ]
     total_failed_cases = sum(int(row.get("failed_cases", 0)) for row in batch_history)
+    total_success_cases = sum(int(row.get("successful_cases", 0)) for row in batch_history)
 
     for batch_idx, batch_convs in enumerate(train_batches, start=1):
         label = f"batch_{batch_idx:04d}"
@@ -1233,28 +1426,51 @@ def run_pipeline(args) -> PipelineOutputs:
             hide_scenario_labels=False,
         )
         total_failed_cases += len(batch_failed_cases)
+        batch_success_cases = _build_ast_success_cases(
+            batch_convs,
+            batch_turns,
+            batch_ast_scores,
+            log_dir=batch_dir / "success_logs",
+            hide_scenario_labels=False,
+        )
+        total_success_cases += len(batch_success_cases)
         log.info(
-            "%s AST failures: %d / %d",
+            "%s AST failures: %d / %d; strict AST successes: %d / %d",
             label,
             len(batch_failed_cases),
+            len(batch_convs),
+            len(batch_success_cases),
             len(batch_convs),
         )
 
         batch_changelog: list[str] = []
-        parsed_path: Path | None = None
-        if batch_failed_cases:
+        error_parsed_path: Path | None = None
+        success_parsed_path: Path | None = None
+        if batch_failed_cases or batch_success_cases:
             try:
-                error_dir = out_dir / "error_analysis" / label
-                parsed_path = _run_error_analysis(
-                    batch_failed_cases,
-                    error_dir,
-                    model,
-                    response_logger,
-                )
-                log.info("%s parsed error analysis -> %s", label, parsed_path)
+                if batch_failed_cases:
+                    error_dir = out_dir / "error_analysis" / label
+                    error_parsed_path = _run_error_analysis(
+                        batch_failed_cases,
+                        error_dir,
+                        model,
+                        response_logger,
+                    )
+                    log.info("%s parsed error analysis -> %s", label, error_parsed_path)
+
+                if batch_success_cases:
+                    success_dir = out_dir / "success_analysis" / label
+                    success_parsed_path = _run_success_analysis(
+                        batch_success_cases,
+                        success_dir,
+                        model,
+                        response_logger,
+                    )
+                    log.info("%s parsed success analysis -> %s", label, success_parsed_path)
 
                 batch_changelog = _run_skill_evolution(
-                    parsed_path,
+                    error_parsed_path,
+                    success_parsed_path,
                     evolved_skill_path,
                     out_dir / "intermediates" / label,
                     model,
@@ -1269,8 +1485,10 @@ def run_pipeline(args) -> PipelineOutputs:
                     "status": "error",
                     "num_conversations": len(batch_convs),
                     "failed_cases": len(batch_failed_cases),
+                    "successful_cases": len(batch_success_cases),
                     "eval": batch_eval,
-                    "parsed_error_analysis": str(parsed_path) if parsed_path else None,
+                    "parsed_error_analysis": str(error_parsed_path) if error_parsed_path else None,
+                    "parsed_success_analysis": str(success_parsed_path) if success_parsed_path else None,
                     "changelog": batch_changelog,
                     "pre_skill_lines": pre_skill_lines,
                     "post_skill_lines": len(evolved_skill_path.read_text(encoding="utf-8").splitlines()),
@@ -1287,7 +1505,7 @@ def run_pipeline(args) -> PipelineOutputs:
                     continue
                 raise
         else:
-            log.info("%s has no AST failures; skill unchanged", label)
+            log.info("%s has neither AST failures nor strict AST successes; skill unchanged", label)
 
         post_skill_lines = len(evolved_skill_path.read_text(encoding="utf-8").splitlines())
         batch_record = {
@@ -1295,8 +1513,10 @@ def run_pipeline(args) -> PipelineOutputs:
             "status": "completed",
             "num_conversations": len(batch_convs),
             "failed_cases": len(batch_failed_cases),
+            "successful_cases": len(batch_success_cases),
             "eval": batch_eval,
-            "parsed_error_analysis": str(parsed_path) if parsed_path else None,
+            "parsed_error_analysis": str(error_parsed_path) if error_parsed_path else None,
+            "parsed_success_analysis": str(success_parsed_path) if success_parsed_path else None,
             "changelog": batch_changelog,
             "pre_skill_lines": pre_skill_lines,
             "post_skill_lines": post_skill_lines,
@@ -1312,8 +1532,9 @@ def run_pipeline(args) -> PipelineOutputs:
         encoding="utf-8",
     )
     log.info(
-        "Iterative evolution complete: %d failed cases across %d batches, %d changelog entries",
+        "Iterative evolution complete: %d failed cases, %d strict successes across %d batches, %d changelog entries",
         total_failed_cases,
+        total_success_cases,
         len(train_batches),
         len(changelog),
     )
@@ -1337,6 +1558,7 @@ def run_pipeline(args) -> PipelineOutputs:
                 "evolution_batch_size": args.evolution_batch_size,
                 "resume_dir": str(out_dir) if resume_dir else None,
                 "continue_on_batch_error": args.continue_on_batch_error,
+                "success_analysis_enabled": True,
             },
             "seed_train": train_eval,
             "seed_test": None,
@@ -1344,6 +1566,7 @@ def run_pipeline(args) -> PipelineOutputs:
             "evolved_reference_chars": len(load_trace2skill_references(evolved_skill_path)),
             "seed_failed_train_cases": len(seed_failed_cases),
             "iterative_failed_train_cases": total_failed_cases,
+            "iterative_successful_train_cases": total_success_cases,
             "batch_history": batch_history,
             "changelog": changelog,
         }
@@ -1438,6 +1661,7 @@ def run_pipeline(args) -> PipelineOutputs:
             "max_evolution_batches": args.max_evolution_batches,
             "resume_dir": str(out_dir) if resume_dir else None,
             "continue_on_batch_error": args.continue_on_batch_error,
+            "success_analysis_enabled": True,
         },
         "seed_train": train_eval,
         "seed_test": seed_test_eval,
@@ -1445,6 +1669,7 @@ def run_pipeline(args) -> PipelineOutputs:
         "evolved_reference_chars": len(evolved_reference_text),
         "seed_failed_train_cases": len(seed_failed_cases),
         "iterative_failed_train_cases": total_failed_cases,
+        "iterative_successful_train_cases": total_success_cases,
         "batch_history": batch_history,
         "changelog": changelog,
     }
