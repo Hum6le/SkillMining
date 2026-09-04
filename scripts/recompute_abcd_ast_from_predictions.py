@@ -193,8 +193,10 @@ def recompute_one(
             "ast_joint": result.ast.joint_accuracy,
             "ast_action_name": result.ast.action_name_accuracy,
             "ast_slot_value": result.ast.slot_value_accuracy,
+            "ast_slot_value_given_action": result.ast.slot_accuracy_given_action,
             "cds_overall": result.cds.overall_cds,
             "num_action_turns": result.ast.total_action_turns,
+            "num_action_correct_turns": result.ast.action_correct_turns,
         },
         "test_sessions": len(conversations),
         "summary": (

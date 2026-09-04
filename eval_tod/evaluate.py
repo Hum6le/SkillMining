@@ -267,6 +267,7 @@ def evaluate_all(
                     "ast_slot_value_given_action": abcd_result.ast.slot_accuracy_given_action,
                     "cds_overall": abcd_result.cds.overall_cds,
                     "num_action_turns": abcd_result.ast.total_action_turns,
+                    "num_action_correct_turns": abcd_result.ast.action_correct_turns,
                 }
             except Exception as e:
                 result["ast_cds"] = {"error": str(e)}

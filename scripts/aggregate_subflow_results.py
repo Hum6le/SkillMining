@@ -96,20 +96,23 @@ def _load_run_usage(run_dir: Path) -> dict[str, Any] | None:
 def _has_usage(usage: Any) -> bool:
     if not isinstance(usage, dict):
         return False
-    bucket = usage.get("total") if isinstance(usage.get("total"), dict) else usage
+    bucket = usage
+    while isinstance(bucket.get("total"), dict) and "calls" not in bucket:
+        bucket = bucket["total"]
     return any(int(bucket.get(key, 0) or 0) for key in (
         "calls", "prompt_tokens", "completion_tokens", "total_tokens",
     ))
 
 
-def _estimate_raw_log_usage(run_dir: Path) -> dict[str, Any] | None:
+def _estimate_raw_log_usage(run_dir: Path, *, recursive: bool = True) -> dict[str, Any] | None:
     """Recover usage from saved prompts when an old runner wrote no tracker.
 
     Workflow APIs often omit token metadata, but ResponseLogger still keeps
     every prompt and response. This is intentionally a last-resort estimate
     for existing runs; newly produced ``llm_usage.json`` remains authoritative.
     """
-    prompt_paths = sorted(run_dir.glob("**/*_prompt.json"))
+    pattern = "**/*_prompt.json" if recursive else "*_prompt.json"
+    prompt_paths = sorted(run_dir.glob(pattern))
     if not prompt_paths:
         return None
 
@@ -176,6 +179,39 @@ def _estimate_raw_log_usage(run_dir: Path) -> dict[str, Any] | None:
         "by_call_tag": by_tag,
         "by_provider": {"workflow_or_openai": total},
     }
+
+
+def _phase_usage_from_legacy_artifacts(run_dir: Path, summary_usage: Any) -> dict[str, Any] | None:
+    """Recover generation/testing boundaries from pre-schema full runs.
+
+    The historical full launcher ran mining in the subflow root, then launched
+    unified evaluation below ``eval_shards/shard_*``. Its root tracker is thus
+    generation-only, while each shard's response logs are testing-only. Older
+    summaries dropped this distinction even though the directory layout kept
+    it. A non-sharded historical run has no reliable boundary and remains
+    intentionally marked as legacy rather than inventing a split.
+    """
+    shard_root = run_dir / "eval_shards"
+    shard_dirs = sorted(path for path in shard_root.glob("shard_*") if path.is_dir())
+    if not shard_dirs:
+        return None
+
+    generation = summary_usage if _has_usage(summary_usage) else _load_run_usage(run_dir)
+    testing_parts: list[dict[str, Any]] = []
+    for shard_dir in shard_dirs:
+        shard_usage = _load_run_usage(shard_dir)
+        if not _has_usage(shard_usage):
+            shard_usage = _estimate_raw_log_usage(shard_dir, recursive=True)
+        if _has_usage(shard_usage):
+            # New shard files may themselves be testing-only phase snapshots.
+            if isinstance(shard_usage.get("testing"), dict):
+                shard_usage = shard_usage["testing"]
+            testing_parts.append(shard_usage)
+    if not _has_usage(generation) and not testing_parts:
+        return None
+
+    from scripts.llm_usage_utils import merge_usage_summaries, split_usage_summary
+    return split_usage_summary(generation, merge_usage_summaries(*testing_parts))
 
 
 def _summary_paths(inputs: list[str], recursive: bool) -> list[Path]:
@@ -272,6 +308,9 @@ def _records_from_summary(path: Path) -> list[dict[str, Any]]:
         file_usage = _load_run_usage(run_dir)
         if _has_usage(file_usage):
             summary_usage = file_usage
+    legacy_phase_usage = _phase_usage_from_legacy_artifacts(run_dir, summary_usage)
+    if legacy_phase_usage is not None:
+        summary_usage = legacy_phase_usage
     if not _has_usage(summary_usage):
         raw_usage = _estimate_raw_log_usage(run_dir)
         if _has_usage(raw_usage):
