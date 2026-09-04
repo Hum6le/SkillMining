@@ -71,6 +71,103 @@ def _read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _load_run_usage(run_dir: Path) -> dict[str, Any] | None:
+    """Load usage beside a summary for compatibility with older runners."""
+    path = run_dir / "llm_usage.json"
+    if not path.is_file():
+        return None
+    try:
+        payload = _read_json(path)
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _has_usage(usage: Any) -> bool:
+    if not isinstance(usage, dict):
+        return False
+    bucket = usage.get("total") if isinstance(usage.get("total"), dict) else usage
+    return any(int(bucket.get(key, 0) or 0) for key in (
+        "calls", "prompt_tokens", "completion_tokens", "total_tokens",
+    ))
+
+
+def _estimate_raw_log_usage(run_dir: Path) -> dict[str, Any] | None:
+    """Recover usage from saved prompts when an old runner wrote no tracker.
+
+    Workflow APIs often omit token metadata, but ResponseLogger still keeps
+    every prompt and response. This is intentionally a last-resort estimate
+    for existing runs; newly produced ``llm_usage.json`` remains authoritative.
+    """
+    prompt_paths = sorted(run_dir.glob("**/*_prompt.json"))
+    if not prompt_paths:
+        return None
+
+    def estimate(text: Any) -> int:
+        text = str(text or "")
+        return max(1, (len(text) + 3) // 4) if text else 0
+
+    def bucket(rows: list[dict[str, Any]]) -> dict[str, Any]:
+        out = {
+            "calls": len(rows), "successful_calls": len(rows), "failed_calls": 0,
+            "calls_with_usage": len(rows), "prompt_tokens": 0,
+            "completion_tokens": 0, "total_tokens": 0, "exact_calls": 0,
+            "estimated_calls": len(rows), "usage_available": True,
+            "usage_source": "estimated",
+        }
+        for row in rows:
+            out["prompt_tokens"] += row["prompt_tokens"]
+            out["completion_tokens"] += row["completion_tokens"]
+            out["total_tokens"] += row["total_tokens"]
+        return out
+
+    rows: list[dict[str, Any]] = []
+    for prompt_path in prompt_paths:
+        try:
+            prompt = _read_json(prompt_path)
+        except (OSError, json.JSONDecodeError):
+            continue
+        messages = prompt.get("messages", []) if isinstance(prompt, dict) else []
+        prompt_text = "\n".join(
+            str(message.get("content", ""))
+            for message in messages if isinstance(message, dict)
+        )
+        response_path = prompt_path.with_name(prompt_path.name.replace("_prompt.json", "_response.json"))
+        response_text = ""
+        if response_path.is_file():
+            try:
+                response = _read_json(response_path)
+                choices = response.get("choices", []) if isinstance(response, dict) else []
+                if choices and isinstance(choices[0], dict):
+                    message = choices[0].get("message", {})
+                    response_text = message.get("content", "") if isinstance(message, dict) else ""
+                if not response_text and isinstance(response, dict):
+                    response_text = response.get("content", "")
+            except (OSError, json.JSONDecodeError):
+                pass
+        prompt_tokens = estimate(prompt_text)
+        completion_tokens = estimate(response_text)
+        rows.append({
+            "call_tag": str(prompt.get("call_tag", "chat")) if isinstance(prompt, dict) else "chat",
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+        })
+    if not rows:
+        return None
+    by_tag = {}
+    for tag in sorted({row["call_tag"] for row in rows}):
+        by_tag[tag] = bucket([row for row in rows if row["call_tag"] == tag])
+    total = bucket(rows)
+    return {
+        "schema_version": 1,
+        "generated_at": "recovered-from-response-logs",
+        "total": total,
+        "by_call_tag": by_tag,
+        "by_provider": {"workflow_or_openai": total},
+    }
+
+
 def _summary_paths(inputs: list[str], recursive: bool) -> list[Path]:
     paths: list[Path] = []
     for raw in inputs:
@@ -157,6 +254,15 @@ def _records_from_summary(path: Path) -> list[dict[str, Any]]:
     config = summary.get("config", {})
     subflow = str(config.get("subflow", "unknown"))
     data = summary.get("data", {})
+    summary_usage = summary.get("llm_usage")
+    if not _has_usage(summary_usage):
+        file_usage = _load_run_usage(run_dir)
+        if _has_usage(file_usage):
+            summary_usage = file_usage
+    if not _has_usage(summary_usage):
+        raw_usage = _estimate_raw_log_usage(run_dir)
+        if _has_usage(raw_usage):
+            summary_usage = raw_usage
     records = []
     method = str(config.get("method", "awm"))
     if summary.get("final_test"):
@@ -165,6 +271,11 @@ def _records_from_summary(path: Path) -> list[dict[str, Any]]:
             run_dir=run_dir, payload=summary["final_test"], data=data,
         )
         if record:
+            # Older unified-evaluation summaries kept usage at the summary
+            # level instead of embedding it in final_test. Accept both forms
+            # so existing runs can be aggregated without re-evaluation.
+            if record.get("llm_usage") is None and isinstance(summary_usage, dict):
+                record["llm_usage"] = summary_usage
             records.append(record)
     for phase, key in (("seed", "seed_test"), ("evolved", "evolved_test")):
         if summary.get(key):
@@ -173,6 +284,8 @@ def _records_from_summary(path: Path) -> list[dict[str, Any]]:
                 run_dir=run_dir, payload=summary[key], data=data,
             )
             if record:
+                if record.get("llm_usage") is None and isinstance(summary_usage, dict):
+                    record["llm_usage"] = summary_usage
                 records.append(record)
     return records
 

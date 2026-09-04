@@ -927,6 +927,7 @@ def _run_skill_evolution(
     output_dir: Path,
     model: str,
     response_logger: ResponseLogger,
+    map_batch_size: int = 8,
 ) -> list[str]:
     from skill_evolver.parallel_evolving_agent import ParallelSkillEvolver
 
@@ -942,7 +943,7 @@ def _run_skill_evolution(
     evolver = ParallelSkillEvolver(
         client=_ChatClientAdapter(model=model, response_logger=response_logger),
         skill_dir=str(skill_path.parent),
-        batch_size=1,
+        batch_size=map_batch_size,
         merge_batch_size=5,
         max_workers=3,
         max_merge_levels=5,
@@ -1024,6 +1025,7 @@ def run_pipeline(args) -> PipelineOutputs:
         "max_train": args.max_train,
         "max_test": args.max_test,
         "evolution_batch_size": args.evolution_batch_size,
+        "map_batch_size": args.map_batch_size,
         "max_evolution_batches": args.max_evolution_batches,
         "skip_seed_test": args.skip_seed_test,
     }
@@ -1257,6 +1259,7 @@ def run_pipeline(args) -> PipelineOutputs:
                     out_dir / "intermediates" / label,
                     model,
                     response_logger,
+                    map_batch_size=args.map_batch_size,
                 )
                 changelog.extend(f"{label}: {entry}" for entry in batch_changelog)
                 log.info("%s applied %d evolution changes", label, len(batch_changelog))
@@ -1489,6 +1492,15 @@ def main() -> None:
             "Outer training batch size for iterative skill evolution. "
             "Each batch patches the skill on disk before the next batch runs; "
             "set <=0 to evolve once over all training conversations."
+        ),
+    )
+    parser.add_argument(
+        "--map-batch-size",
+        type=int,
+        default=8,
+        help=(
+            "Number of error-analysis records handled by one internal MAP "
+            "LLM call during skill evolution (default: 8)."
         ),
     )
     parser.add_argument(

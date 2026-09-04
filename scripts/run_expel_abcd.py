@@ -114,11 +114,13 @@ def main():
         json.dumps(batch_records, indent=2, ensure_ascii=False, default=str), encoding="utf-8"
     )
     if args.skip_final_test:
+        usage = get_usage()
         write_usage(out / "llm_usage.json")
         (out / "summary.json").write_text(json.dumps({
             "config": {"method": "expel", "subflow": args.subflow, "skip_final_test": True},
             "data": {"train_sessions": len(train), "test_sessions": len(test)},
             "final_test": None,
+            "llm_usage": usage,
         }, indent=2, ensure_ascii=False), encoding="utf-8")
         print(f"saved resources for unified evaluation: {out}")
         return

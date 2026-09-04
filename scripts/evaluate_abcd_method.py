@@ -23,6 +23,7 @@ from eval_tod.abcd import merge_turn_results, parse_workflow_ids, shard_conversa
 from eval_tod.abcd.agent import ABCDAgent, turn_results_to_abcd_predictions
 from eval_tod.cli import evaluate_abcd_bundle
 from eval_tod.response_logger import ResponseLogger
+from scripts.llm_usage_utils import get_usage, merge_usage_summaries, reset_usage, write_usage
 
 
 def _load_test(path: Path, subflow: str) -> list[dict]:
@@ -89,6 +90,7 @@ def _build_agent(method: str, resource: Path, model: str, logger: ResponseLogger
 
 def _evaluate_rows(method: str, resource: Path, conversations: list[dict], model: str, output: Path) -> None:
     output.mkdir(parents=True, exist_ok=True)
+    reset_usage()
     logger = ResponseLogger(str(output / "llm_responses"))
     agent = _build_agent(method, resource, model, logger)
     turns = agent.generate_all_turn_predictions(conversations, predict_actions=True, verbose=False)
@@ -115,17 +117,50 @@ def _evaluate_rows(method: str, resource: Path, conversations: list[dict], model
         conversations, text_records=text_records, abcd_records=abcd_records,
         text_prediction_key="response_text",
     )
+    usage = get_usage()
+    result["llm_usage"] = usage
     (output / "turn_predictions.json").write_text(json.dumps(turns, ensure_ascii=False, indent=2), encoding="utf-8")
     (output / "abcd_predictions.json").write_text(json.dumps(abcd_records, ensure_ascii=False, indent=2), encoding="utf-8")
     (output / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_usage(output / "llm_usage.json")
 
 
 def _merge(method: str, subflow: str, test_file: Path, shard_root: Path, output: Path) -> None:
     conversations = _load_test(test_file, subflow)
+    # The root usage is training usage only when the resource-producing run
+    # still has its skip-final-test summary. Once a merged evaluation summary
+    # exists, do not count that already-merged usage again on resume.
+    training_usage = None
+    root_summary_path = output / "summary.json"
+    if root_summary_path.is_file():
+        try:
+            root_summary = json.loads(root_summary_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            root_summary = {}
+        if isinstance(root_summary, dict):
+            config = root_summary.get("config", {})
+            if config.get("skip_final_test") is True:
+                training_usage = root_summary.get("llm_usage")
+                if training_usage is None:
+                    usage_path = output / "llm_usage.json"
+                    if usage_path.is_file():
+                        try:
+                            training_usage = json.loads(usage_path.read_text(encoding="utf-8"))
+                        except (OSError, json.JSONDecodeError):
+                            training_usage = None
     shard_results = [
         json.loads(path.read_text(encoding="utf-8"))
         for path in sorted(shard_root.glob("shard_*/turn_predictions.json"))
     ]
+    shard_usage = []
+    for path in sorted(shard_root.glob("shard_*/llm_usage.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict):
+            shard_usage.append(payload)
+    usage = merge_usage_summaries(*( ([training_usage] if isinstance(training_usage, dict) else []) + shard_usage))
     turns = merge_turn_results(conversations, shard_results)
     grouped = turn_results_to_abcd_predictions(turns, conversations)
     abcd_records = [{
@@ -150,14 +185,17 @@ def _merge(method: str, subflow: str, test_file: Path, shard_root: Path, output:
         conversations, text_records=text_records, abcd_records=abcd_records,
         text_prediction_key="response_text",
     )
+    result["llm_usage"] = usage
     output.mkdir(parents=True, exist_ok=True)
     (output / "turn_predictions.json").write_text(json.dumps(turns, ensure_ascii=False, indent=2), encoding="utf-8")
     (output / "abcd_predictions.json").write_text(json.dumps(abcd_records, ensure_ascii=False, indent=2), encoding="utf-8")
     (output / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    (output / "llm_usage.json").write_text(json.dumps(usage, ensure_ascii=False, indent=2), encoding="utf-8")
     (output / "summary.json").write_text(json.dumps({
         "config": {"method": method, "subflow": subflow, "evaluation": "sharded"},
         "data": {"test_sessions": len(conversations)},
         "final_test": result,
+        "llm_usage": usage,
     }, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(result.get("summary", result), ensure_ascii=False))
 
