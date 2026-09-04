@@ -962,7 +962,7 @@ def _run_skill_evolution(
 
 
 def run_pipeline(args) -> PipelineOutputs:
-    from scripts.llm_usage_utils import reset_usage, get_usage, write_usage
+    from scripts.llm_usage_utils import reset_usage, get_usage, write_usage, split_usage_summary
     reset_usage()
     model = args.model
     _install_llm_wrappers(args.llm_qps, args.llm_max_retries, args.llm_retry_base_delay)
@@ -1318,6 +1318,9 @@ def run_pipeline(args) -> PipelineOutputs:
         len(changelog),
     )
 
+    # Freeze generation/mining calls before held-out test rollout.
+    generation_usage = get_usage()
+    reset_usage()
     seed_test_eval = None
     if args.skip_test_eval:
         log.info("Skipping seed/evolved test evaluation; evolved skill is ready for unified evaluation")
@@ -1344,8 +1347,10 @@ def run_pipeline(args) -> PipelineOutputs:
             "batch_history": batch_history,
             "changelog": changelog,
         }
-        summary["llm_usage"] = get_usage()
-        write_usage(out_dir / "llm_usage.json")
+        summary["llm_usage"] = split_usage_summary(generation_usage, get_usage())
+        (out_dir / "llm_usage.json").write_text(
+            json.dumps(summary["llm_usage"], indent=2, ensure_ascii=False), encoding="utf-8"
+        )
         (out_dir / "summary.json").write_text(
             json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
         )
@@ -1443,8 +1448,10 @@ def run_pipeline(args) -> PipelineOutputs:
         "batch_history": batch_history,
         "changelog": changelog,
     }
-    summary["llm_usage"] = get_usage()
-    write_usage(out_dir / "llm_usage.json")
+    summary["llm_usage"] = split_usage_summary(generation_usage, get_usage())
+    (out_dir / "llm_usage.json").write_text(
+        json.dumps(summary["llm_usage"], indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     (out_dir / "summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False),
         encoding="utf-8",

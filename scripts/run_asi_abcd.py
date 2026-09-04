@@ -142,7 +142,7 @@ def main() -> None:
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--skip-final-test", action="store_true")
     args = parser.parse_args()
-    from scripts.llm_usage_utils import reset_usage, get_usage, write_usage
+    from scripts.llm_usage_utils import reset_usage, get_usage, write_usage, split_usage_summary
 
     if args.batch_size < 1 or args.heldout_size < 1:
         parser.error("--batch-size and --heldout-size must be positive")
@@ -306,12 +306,14 @@ def main() -> None:
         completed.add(batch_index)
         _log_progress(log, len(completed), total_batches, progress_started_at)
 
+    generation_usage = get_usage()
+    reset_usage()
     final = None
     if not args.skip_final_test:
         final = _final_test(manager.current_library_path(), test, args.model, output_dir / "final_test")
         log.info("Final test: %s", final.get("summary", final))
-    usage = get_usage()
-    write_usage(output_dir / "llm_usage.json")
+    usage = split_usage_summary(generation_usage, get_usage())
+    (output_dir / "llm_usage.json").write_text(json.dumps(usage, indent=2, ensure_ascii=False), encoding="utf-8")
     _write(output_dir / "summary.json", {
         "config": {
             "method": "asi", "subflow": args.subflow,

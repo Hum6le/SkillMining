@@ -23,7 +23,9 @@ from eval_tod.abcd import merge_turn_results, parse_workflow_ids, shard_conversa
 from eval_tod.abcd.agent import ABCDAgent, turn_results_to_abcd_predictions
 from eval_tod.cli import evaluate_abcd_bundle
 from eval_tod.response_logger import ResponseLogger
-from scripts.llm_usage_utils import get_usage, merge_usage_summaries, reset_usage, write_usage
+from scripts.llm_usage_utils import (
+    get_usage, merge_usage_summaries, reset_usage, split_usage_summary, write_usage,
+)
 
 
 def _load_test(path: Path, subflow: str) -> list[dict]:
@@ -118,11 +120,13 @@ def _evaluate_rows(method: str, resource: Path, conversations: list[dict], model
         text_prediction_key="response_text",
     )
     usage = get_usage()
-    result["llm_usage"] = usage
+    result["llm_usage"] = split_usage_summary(None, usage)
     (output / "turn_predictions.json").write_text(json.dumps(turns, ensure_ascii=False, indent=2), encoding="utf-8")
     (output / "abcd_predictions.json").write_text(json.dumps(abcd_records, ensure_ascii=False, indent=2), encoding="utf-8")
     (output / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-    write_usage(output / "llm_usage.json")
+    (output / "llm_usage.json").write_text(
+        json.dumps(result["llm_usage"], ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
 
 def _merge(method: str, subflow: str, test_file: Path, shard_root: Path, output: Path) -> None:
@@ -160,7 +164,17 @@ def _merge(method: str, subflow: str, test_file: Path, shard_root: Path, output:
             continue
         if isinstance(payload, dict):
             shard_usage.append(payload)
-    usage = merge_usage_summaries(*( ([training_usage] if isinstance(training_usage, dict) else []) + shard_usage))
+    generation_usage = training_usage
+    if isinstance(training_usage, dict) and isinstance(training_usage.get("generation"), dict):
+        generation_usage = training_usage["generation"]
+    # Each shard writes a testing-only phase-split snapshot. Accept legacy
+    # flat tracker summaries as well.
+    shard_testing_usage = [
+        item["testing"] if isinstance(item.get("testing"), dict) else item
+        for item in shard_usage
+    ]
+    testing_usage = merge_usage_summaries(*shard_testing_usage)
+    usage = split_usage_summary(generation_usage, testing_usage)
     turns = merge_turn_results(conversations, shard_results)
     grouped = turn_results_to_abcd_predictions(turns, conversations)
     abcd_records = [{

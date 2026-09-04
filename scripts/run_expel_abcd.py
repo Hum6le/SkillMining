@@ -58,7 +58,7 @@ def main():
     parser.add_argument("--skip-final-test", action="store_true",
                         help="Only induce and save ExpeL rules; leave evaluation to the unified evaluator")
     args = parser.parse_args()
-    from scripts.llm_usage_utils import reset_usage, get_usage, write_usage
+    from scripts.llm_usage_utils import reset_usage, get_usage, write_usage, split_usage_summary
     reset_usage()
     if args.eval_only and not args.eval_from:
         parser.error("--eval-only requires --eval-from")
@@ -114,8 +114,9 @@ def main():
         json.dumps(batch_records, indent=2, ensure_ascii=False, default=str), encoding="utf-8"
     )
     if args.skip_final_test:
-        usage = get_usage()
-        write_usage(out / "llm_usage.json")
+        generation_usage = get_usage()
+        usage = split_usage_summary(generation_usage, None)
+        out.joinpath("llm_usage.json").write_text(json.dumps(usage, indent=2, ensure_ascii=False), encoding="utf-8")
         (out / "summary.json").write_text(json.dumps({
             "config": {"method": "expel", "subflow": args.subflow, "skip_final_test": True},
             "data": {"train_sessions": len(train), "test_sessions": len(test)},
@@ -125,6 +126,8 @@ def main():
         print(f"saved resources for unified evaluation: {out}")
         return
 
+    generation_usage = get_usage()
+    reset_usage()
     test_turns = agent.generate_all_turn_predictions(test, predict_actions=True, verbose=False)
     test_metrics = compute_ast_from_turn_results(test, test_turns)
     abcd_records = _serialize_predictions(test_turns, test)
@@ -142,9 +145,11 @@ def main():
         "config": {"method": "expel", "subflow": args.subflow},
         "data": {"train_sessions": len(train), "test_sessions": len(test)},
         "final_test": result,
-        "llm_usage": get_usage(),
+        "llm_usage": split_usage_summary(generation_usage, get_usage()),
     }
-    write_usage(out / "llm_usage.json")
+    out.joinpath("llm_usage.json").write_text(
+        json.dumps(summary["llm_usage"], indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     (out / "summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False, default=str), encoding="utf-8"
     )

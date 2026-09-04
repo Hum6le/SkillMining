@@ -133,7 +133,7 @@ def main():
         help="Maximum retrieved exemplar characters injected into one inference prompt",
     )
     _args, _unknown = _parser.parse_known_args()
-    from scripts.llm_usage_utils import reset_usage, get_usage, write_usage
+    from scripts.llm_usage_utils import reset_usage, get_usage, write_usage, split_usage_summary
     reset_usage()
 
     if _args.eval_only and not _args.eval_from:
@@ -453,16 +453,20 @@ def main():
     agent.save_memory(str(OUT_DIR / "awm_exemplars.json"))
     (OUT_DIR / "awm_reference.md").write_text(reference_text, encoding="utf-8")
     if _args.skip_final_test:
-        write_usage(OUT_DIR / "llm_usage.json")
+        usage = split_usage_summary(get_usage(), None)
+        (OUT_DIR / "llm_usage.json").write_text(json.dumps(usage, indent=2, ensure_ascii=False), encoding="utf-8")
         (OUT_DIR / "summary.json").write_text(json.dumps({
             "config": {**run_config, "skip_final_test": True},
             "data": {"train": len(train_convs), "dev": len(dev_convs),
                      "test": len(test_convs), "batches": len(batches)},
             "final_test": None,
+            "llm_usage": usage,
         }, indent=2, ensure_ascii=False), encoding="utf-8")
         log.info("Skipping final test; resources saved for unified evaluation: %s", OUT_DIR)
         return {"final_test": None}
     log.info("Final test evaluation")
+    generation_usage = get_usage()
+    reset_usage()
     test_agent = ABCDAgent(
         model=MODEL, workflow=workflow, memory=memory,
         reference_text=reference_text,
@@ -550,8 +554,8 @@ def main():
         json.dumps(skill_generation_usage, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
-    llm_usage = get_usage()
-    write_usage(OUT_DIR / "llm_usage.json")
+    llm_usage = split_usage_summary(generation_usage, get_usage())
+    (OUT_DIR / "llm_usage.json").write_text(json.dumps(llm_usage, indent=2, ensure_ascii=False), encoding="utf-8")
 
     summary = {
         "config": {

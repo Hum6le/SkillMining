@@ -47,9 +47,10 @@ def _empty_usage() -> dict[str, Any]:
 def _add_usage(total: dict[str, Any], usage: dict[str, Any] | None) -> None:
     if not isinstance(usage, dict):
         return
-    # The workflow-aware server llm.py stores the aggregate under `total`,
-    # while older runners emitted the bucket directly. Accept both formats.
-    if isinstance(usage.get("total"), dict):
+    # New phase-split usage has total -> tracker summary -> total -> bucket.
+    # Older runners have either tracker summary -> total -> bucket or a
+    # bucket directly. Unwrap until the numeric bucket is reached.
+    while isinstance(usage.get("total"), dict) and "calls" not in usage:
         usage = usage["total"]
     for key in (
         "calls", "successful_calls", "failed_calls", "calls_with_usage",
@@ -65,6 +66,15 @@ def _add_usage(total: dict[str, Any], usage: dict[str, Any] | None) -> None:
     total["usage_source"] = (
         "mixed" if len(sources) > 1 else next(iter(sources), "unavailable")
     )
+
+
+def _usage_summary(bucket: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "total": bucket,
+        "by_call_tag": {},
+        "by_provider": {},
+    }
 
 
 def _read_json(path: Path) -> Any:
@@ -245,7 +255,10 @@ def _records_from_summary(path: Path) -> list[dict[str, Any]]:
                     run_dir=run_dir, payload=row.get(phase), data=data,
                 )
                 if record:
-                    record["llm_usage"] = row.get("llm_usage")
+                    # One graph run evaluates several controls using the same
+                    # process budget. Attribute it once to the main mined
+                    # result so aggregate usage is not multiplied by phases.
+                    record["llm_usage"] = row.get("llm_usage") if phase == "mined" else None
                     records.append(record)
         return records
 
@@ -284,7 +297,10 @@ def _records_from_summary(path: Path) -> list[dict[str, Any]]:
                 run_dir=run_dir, payload=summary[key], data=data,
             )
             if record:
-                if record.get("llm_usage") is None and isinstance(summary_usage, dict):
+                # Seed and evolved tests share one run-level tracker. Count
+                # it only once, on the evolved/final evaluation record.
+                if (phase == "evolved" and record.get("llm_usage") is None
+                        and isinstance(summary_usage, dict)):
                     record["llm_usage"] = summary_usage
                 records.append(record)
     return records
@@ -346,10 +362,29 @@ def main() -> None:
         "records": records,
         "aggregate": _weighted_average(records),
     }
-    usage_total = _empty_usage()
+    generation_total = _empty_usage()
+    testing_total = _empty_usage()
+    unattributed_total = _empty_usage()
     for record in records:
-        _add_usage(usage_total, record.get("llm_usage"))
-    result["llm_usage"] = usage_total
+        usage = record.get("llm_usage")
+        if isinstance(usage, dict) and (
+            isinstance(usage.get("generation"), dict) or isinstance(usage.get("testing"), dict)
+        ):
+            _add_usage(generation_total, usage.get("generation"))
+            _add_usage(testing_total, usage.get("testing"))
+        else:
+            _add_usage(unattributed_total, usage)
+    total = _empty_usage()
+    _add_usage(total, generation_total)
+    _add_usage(total, testing_total)
+    _add_usage(total, unattributed_total)
+    result["llm_usage"] = {
+        "schema_version": 2,
+        "generation": _usage_summary(generation_total),
+        "testing": _usage_summary(testing_total),
+        "unattributed_legacy": _usage_summary(unattributed_total),
+        "total": _usage_summary(total),
+    }
     output = Path(args.output) if args.output else None
     if output:
         output.parent.mkdir(parents=True, exist_ok=True)

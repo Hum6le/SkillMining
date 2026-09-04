@@ -215,7 +215,7 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     # Keep usage accounting process-local and persist it even when an online
     # batch fails, so partial runs remain auditable and resumable.
-    from scripts.llm_usage_utils import reset_usage, get_usage, write_usage
+    from scripts.llm_usage_utils import reset_usage, get_usage, write_usage, split_usage_summary
     from eval_tod.response_logger import ResponseLogger
     reset_usage()
     usage_fallback = lambda: write_usage(out_dir / "llm_usage.json")
@@ -430,6 +430,10 @@ def main() -> None:
             summary["num_candidate_branches"], summary["blocker_counts"],
         )
 
+    # Freeze all mining/refinement calls before the held-out evaluation so the
+    # two budgets remain auditable in the final artifact.
+    generation_usage = get_usage()
+    reset_usage()
     log.info("Frozen test evaluation on %d held-out sessions", len(test))
     final_agent = _build_agent(args, working_skill, base_reference, action_rules, slot_policies, state,
                                response_logger=response_logger)
@@ -441,10 +445,11 @@ def main() -> None:
     # usage snapshots with the parent process' mining/refinement usage.
     worker_usage = result.pop("_evaluation_worker_usage", [])
     _write(out_dir / "online_refine_result.json", json.dumps(result, indent=2, ensure_ascii=False))
-    usage = get_usage()
+    testing_usage = get_usage()
     if worker_usage:
         from scripts.llm_usage_utils import merge_usage_summaries
-        usage = merge_usage_summaries(usage, *worker_usage)
+        testing_usage = merge_usage_summaries(testing_usage, *worker_usage)
+    usage = split_usage_summary(generation_usage, testing_usage)
     atexit.unregister(usage_fallback)
     (out_dir / "llm_usage.json").write_text(
         json.dumps(usage, indent=2, ensure_ascii=False), encoding="utf-8"

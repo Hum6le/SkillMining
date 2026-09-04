@@ -935,6 +935,10 @@ def main():
         from eval_tod.abcd.agent import ABCDAgent
         from awm import WorkflowStore, MemoryStore
 
+        # Keep mining/compilation usage separate from all test rollouts.
+        generation_usage = get_usage()
+        reset_usage()
+        testing_usage_parts = []
         seed_result = None
         if not args.skip_seed:
             log.info("  Seed baseline...")
@@ -945,6 +949,7 @@ def main():
             seed_result = evaluate_agent_on_subflow(
                 seed_agent, test_convs, "seed", subflow, save_dir=sf_out,
                 eval_workflow_ids=eval_workflow_ids)
+            testing_usage_parts.extend(seed_result.get("_evaluation_worker_usage", []))
             log.info(f"    BERT={seed_result['text']['bert_f1']:.4f}  "
                      f"BLEU-4={seed_result['text']['bleu_4']:.1f}  "
                      f"ROUGE-L={seed_result['text']['rouge_l']:.4f}  "
@@ -982,6 +987,7 @@ def main():
         mined_result = evaluate_agent_on_subflow(
             mined_agent, test_convs, "mined", subflow, save_dir=sf_out,
             eval_workflow_ids=eval_workflow_ids)
+        testing_usage_parts.extend(mined_result.get("_evaluation_worker_usage", []))
         if (args.subflow_discovery or args.mining_method == "semantic_router") and hasattr(mined_agent, "selection_log"):
             (sf_out / "skill_router_selections.json").write_text(
                 json.dumps(mined_agent.selection_log, indent=2, ensure_ascii=False),
@@ -1015,6 +1021,7 @@ def main():
             unordered_result = evaluate_agent_on_subflow(
                 unordered_agent, test_convs, "unordered", subflow, save_dir=sf_out,
                 eval_workflow_ids=eval_workflow_ids)
+            testing_usage_parts.extend(unordered_result.get("_evaluation_worker_usage", []))
             log.info(f"    BERT={unordered_result['text']['bert_f1']:.4f}  "
                      f"BLEU-4={unordered_result['text']['bleu_4']:.1f}  "
                      f"ROUGE-L={unordered_result['text']['rouge_l']:.4f}  "
@@ -1033,6 +1040,12 @@ def main():
             log.info(f"  Δ BERT={delta['bert_f1']:+.4f}  Δ AST={delta['ast']:+.4f}  "
                      f"ΔAction={delta['action']:+.4f}  ΔSlot={delta['slot']:+.4f}")
 
+        from scripts.llm_usage_utils import merge_usage_summaries, split_usage_summary
+        testing_usage = (
+            merge_usage_summaries(*testing_usage_parts)
+            if testing_usage_parts else get_usage()
+        )
+        phase_usage = split_usage_summary(generation_usage, testing_usage)
         all_results[subflow] = {
             "train_sessions": len(train_convs),
             "test_sessions": len(test_convs),
@@ -1047,10 +1060,12 @@ def main():
             "mined": mined_result,
             "unordered": unordered_result,
             "delta": delta,
-            "llm_usage": get_usage(),
+            "llm_usage": phase_usage,
         }
         if write_usage is not None:
-            write_usage(sf_out / "llm_usage.json")
+            (sf_out / "llm_usage.json").write_text(
+                json.dumps(phase_usage, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
         if unordered_result:
             all_results[subflow]["organization_delta"] = {
                 "organized_minus_unordered": {

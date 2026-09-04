@@ -14,6 +14,30 @@ from typing import Any
 from datetime import datetime, timezone
 
 
+def _empty_usage_summary() -> dict[str, Any]:
+    bucket = {
+        "calls": 0,
+        "successful_calls": 0,
+        "failed_calls": 0,
+        "calls_with_usage": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "exact_calls": 0,
+        "estimated_calls": 0,
+        "usage_available": False,
+        "usage_source": "unavailable",
+    }
+    return {
+        "schema_version": 1,
+        "started_at": "",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "total": bucket,
+        "by_call_tag": {},
+        "by_provider": {},
+    }
+
+
 def merge_usage_summaries(*summaries: dict[str, Any]) -> dict[str, Any]:
     """Merge process-local usage snapshots, including parallel workers."""
     valid = [item for item in summaries if isinstance(item, dict)]
@@ -48,6 +72,35 @@ def merge_usage_summaries(*summaries: dict[str, Any]) -> dict[str, Any]:
             for provider in sorted(providers)
         },
     }
+
+
+def split_usage_summary(
+    generation: dict[str, Any] | None,
+    testing: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Build the common generation/testing/total usage schema.
+
+    ``generation`` includes mining, induction, compilation and refinement;
+    ``testing`` includes seed/dev/final test rollouts.  Keeping the snapshots
+    separate prevents a later evaluation pass from obscuring where calls were
+    spent.
+    """
+    generation = generation if isinstance(generation, dict) else _empty_usage_summary()
+    testing = testing if isinstance(testing, dict) else _empty_usage_summary()
+    return {
+        "schema_version": 2,
+        "generation": generation,
+        "testing": testing,
+        "total": merge_usage_summaries(generation, testing),
+    }
+
+
+def usage_total(usage: dict[str, Any] | None) -> dict[str, Any]:
+    """Return the aggregate bucket from either old or phase-split usage."""
+    if not isinstance(usage, dict):
+        return {}
+    value = usage.get("total")
+    return value if isinstance(value, dict) else usage
 
 
 def reset_usage() -> None:
