@@ -488,8 +488,8 @@ run_worker() {
                 SKILLMINING_WORKFLOW_ID="$workflow_id" "$PYTHON_BIN" scripts/run_trace2skill_abcd.py \
                     --subflow "$subflow" --train-file "$SPLITS_DIR/$subflow/train.json" \
                     --test-file "$SPLITS_DIR/$subflow/test.json" --output-dir "$RUN_ROOT/trace2skill/$subflow" \
-                    --evolution-batch-size "$EVOLUTION_BATCH_SIZE" --continue-on-batch-error \
-                    --analysis-batch-size "$ANALYSIS_BATCH_SIZE" \
+                    --evolution-batch-size "$EVOLUTION_BATCH_SIZE" \
+                    --analysis-batch-size "$ANALYSIS_BATCH_SIZE" --continue-on-batch-error \
                     "${trace_extra_args[@]}" \
                     "${trace_resume_args[@]}" || {
                 echo "trace2skill:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }

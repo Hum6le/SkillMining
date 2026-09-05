@@ -14,9 +14,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
+# This script is also invoked by the full-run shell script via an absolute
+# path. In that mode Python puts ``scripts/`` on sys.path, but not the project
+# root, so ``from scripts...`` imports would otherwise fail.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 TEXT_METRICS = (
     "bert_f1", "bert_precision", "bert_recall", "bleu_1", "bleu_4",
