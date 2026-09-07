@@ -77,16 +77,17 @@ the canonical primitive backend action at each marked action turn.
 </causal_checkpoints>
 
 <instruction>
-For every marked action turn, execute or resume the applicable ASI function
-and emit exactly one primitive action for that turn. Preserve the order of
-function steps and bind every slot to a real value grounded in the dialogue
-prefix available at that checkpoint. Do not emit a composite function name,
-slot names, placeholders, or values copied from an example.
+For every marked action turn, choose or resume the applicable ASI function and
+return its 1-based step_index. The parser will recover the primitive action
+name from the function catalog, so do not rewrite the action name. Preserve
+function-step order and bind every slot to a real value grounded in the
+dialogue prefix available at that checkpoint. Do not emit slot names,
+placeholders, or values copied from an example.
 
 Return ONLY valid JSON in this form:
 {{
   "predictions": [
-    {{"turn_index": 3, "action": "canonical-action", "slots": ["value"]}}
+    {{"turn_index": 3, "function": "induced_function", "step_index": 1, "slots": ["value"]}}
   ],
   "responses": [
     {{"turn_index": 2, "response": "brief agent response"}}
@@ -100,15 +101,24 @@ turns. A missing action must be represented as action="" and slots=[].
 </instruction>"""
 
 
-def _original_turn(conversation: dict[str, Any], index: int, turn: dict[str, Any]) -> str:
-    """Return the original text while tolerating the two ABCD storage forms."""
+def _original_turn(
+    conversation: dict[str, Any], index: int, turn: dict[str, Any]
+) -> tuple[str, str]:
+    """Return raw speaker/text while tolerating ABCD storage forms."""
     original = conversation.get("original", [])
     if isinstance(original, list) and index < len(original):
         row = original[index]
         if isinstance(row, dict):
-            return str(row.get("text", "") or "").strip()
-        return str(row or "").strip()
-    return str(turn.get("text", "") or "").strip()
+            return (
+                str(row.get("speaker", turn.get("speaker", "unknown"))),
+                str(row.get("text", "") or "").strip(),
+            )
+        if isinstance(row, (list, tuple)) and len(row) >= 2:
+            return str(row[0]), str(row[1] or "").strip()
+    return (
+        str(turn.get("speaker", "unknown")),
+        str(turn.get("text", "") or "").strip(),
+    )
 
 
 def _is_action_turn(turn: dict[str, Any]) -> bool:
@@ -122,7 +132,8 @@ def _build_causal_checkpoints(conversation: dict[str, Any]) -> tuple[str, list[i
     action_indices = [i for i, turn in enumerate(delexed) if _is_action_turn(turn)]
     response_indices = [
         i for i, turn in enumerate(delexed)
-        if turn.get("speaker") == "agent" and _original_turn(conversation, i, turn)
+        if _original_turn(conversation, i, turn)[0] == "agent"
+        and _original_turn(conversation, i, turn)[1]
     ]
     target_indices = sorted(set(action_indices) | set(response_indices))
     sections: list[str] = []
@@ -130,19 +141,17 @@ def _build_causal_checkpoints(conversation: dict[str, Any]) -> tuple[str, list[i
         prefix: list[str] = []
         for previous_index in range(index):
             previous = delexed[previous_index]
-            text = _original_turn(conversation, previous_index, previous)
+            speaker, text = _original_turn(conversation, previous_index, previous)
             if not text:
                 continue
-            speaker = str(previous.get("speaker", "unknown"))
             label = {"agent": "Agent", "customer": "Customer", "action": "System"}.get(speaker, speaker)
             prefix.append(f"[{label}] {text}")
         turn = delexed[index]
         target_kind = "ACTION" if _is_action_turn(turn) else "RESPONSE"
-        current = _original_turn(conversation, index, turn)
         sections.append(
             f"### turn_index={index} target={target_kind}\n"
             f"Dialogue prefix:\n{chr(10).join(prefix) or '(empty)'}\n"
-            f"Current turn text: {current or '(backend action turn)'}"
+            "Current target text is hidden; predict from the prefix only."
         )
     return "\n\n".join(sections), action_indices, response_indices
 
@@ -164,6 +173,36 @@ def _extract_json_object(raw: str) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def parse_asi_library(skill_library: str) -> dict[str, list[dict[str, Any]]]:
+    """Parse the frozen ASI markdown into a deterministic function catalog."""
+    functions: dict[str, list[dict[str, Any]]] = {}
+    current: str | None = None
+    heading = re.compile(r"^## Induced Action:\s*([a-z][a-z0-9_]*)\(", re.I)
+    step = re.compile(
+        r"^\s*(\d+)\.\s*Primitive action:\s*([^;]+);\s*"
+        r"ordered slot parameters:\s*\[(.*?)\]\s*$", re.I
+    )
+    for line in str(skill_library or "").splitlines():
+        match = heading.match(line)
+        if match:
+            current = match.group(1).strip()
+            functions.setdefault(current, [])
+            continue
+        if current is None:
+            continue
+        match = step.match(line)
+        if not match:
+            continue
+        functions[current].append({
+            "step_index": int(match.group(1)),
+            "action": match.group(2).strip(),
+            "arguments": [
+                value.strip() for value in match.group(3).split(",") if value.strip()
+            ],
+        })
+    return {name: steps for name, steps in functions.items() if steps}
+
+
 def generate_batched_conversation_predictions(
     agent: ABCDAgent,
     conversation: dict[str, Any],
@@ -175,16 +214,25 @@ def generate_batched_conversation_predictions(
     mapper/evaluator reusable while moving ASI's function-step expansion to a
     single conversation-level request.
     """
+
     from llm import chat
 
     checkpoints, action_indices, response_indices = _build_causal_checkpoints(conversation)
     if not checkpoints:
         return []
     workflow = agent.workflow.format_prompt()
+    function_catalog = parse_asi_library(workflow)
+    catalog_lines = ["## Parsed ASI function catalog"]
+    for name, steps in function_catalog.items():
+        rendered_steps = ", ".join(
+            f"{item['step_index']}:{item['action']}({','.join(item['arguments']) or 'none'})"
+            for item in steps
+        )
+        catalog_lines.append(f"- {name}: {rendered_steps}")
     system = (
-        _RUNTIME_POLICY
+        workflow
         + "\n\n"
-        + workflow
+        + "\n".join(catalog_lines)
         + "\n\nThe dialogue prefix attached to each checkpoint is authoritative."
     )
     raw = chat(
@@ -197,22 +245,55 @@ def generate_batched_conversation_predictions(
         base_url=agent.base_url,
         temperature=0.7,
         response_logger=getattr(agent, "_response_logger", None),
+        call_tag="asi_batched_conversation_eval",
     ) or ""
     payload = _extract_json_object(raw)
     by_index: dict[int, dict[str, Any]] = {}
+    expected_indices = set(action_indices)
+    unexpected_indices: list[int] = []
+    invalid_items = 0
+    unresolved_items = 0
     for item in payload.get("predictions", []) if isinstance(payload.get("predictions", []), list) else []:
         if not isinstance(item, dict):
+            invalid_items += 1
             continue
         try:
             index = int(item.get("turn_index"))
         except (TypeError, ValueError):
+            invalid_items += 1
             continue
-        action, suffix_slots = canonicalize_prediction(
-            item.get("action", ""), item.get("slots", []), agent.action_schema
-        )[:2]
+        if index not in expected_indices:
+            unexpected_indices.append(index)
+            continue
+        function_name = str(item.get("function", "")).strip()
+        action_value = item.get("action", "")
+        if function_name:
+            try:
+                step_index = int(item.get("step_index"))
+            except (TypeError, ValueError):
+                unresolved_items += 1
+                continue
+            selected_step = next(
+                (
+                    step for step in function_catalog.get(function_name, [])
+                    if step["step_index"] == step_index
+                ),
+                None,
+            )
+            if selected_step is None:
+                unresolved_items += 1
+                continue
+            action_value = selected_step["action"]
+        action, parsed_slots, validation = canonicalize_prediction(
+            action_value, item.get("slots", []), agent.action_schema
+        )
+        if not validation.get("valid", True):
+            unresolved_items += 1
         by_index[index] = {
             "predicted_action": action,
-            "predicted_slots": list(suffix_slots),
+            "predicted_slots": list(parsed_slots),
+            "function": function_name,
+            "step_index": item.get("step_index"),
         }
     responses = {
         int(item.get("turn_index")): str(item.get("response", "") or "")
@@ -237,4 +318,15 @@ def generate_batched_conversation_predictions(
             row["predicted_action"] = prediction.get("predicted_action")
             row["predicted_slots"] = prediction.get("predicted_slots", [])
         rows.append(row)
+    missing_indices = sorted(expected_indices - set(by_index))
+    for row in rows:
+        row["batched_diagnostics"] = {
+            "missing_action_turns": missing_indices,
+            "unexpected_action_turns": sorted(set(unexpected_indices)),
+            "invalid_prediction_items": invalid_items,
+            "unresolved_function_steps": unresolved_items,
+            "request_granularity": "one_request_per_conversation",
+            "expected_action_turns": len(action_indices),
+            "returned_action_turns": len(by_index),
+        }
     return rows

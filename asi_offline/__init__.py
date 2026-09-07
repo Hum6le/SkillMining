@@ -30,7 +30,13 @@ from .offline_validation import (
     validate_rewritten_trajectory,
 )
 from .library import ASILibrary, render_asi_library
-from .runtime import build_asi_workflow, create_asi_offline_abcd_agent, load_asi_library
+from .runtime import (
+    build_asi_workflow,
+    create_asi_offline_abcd_agent,
+    generate_batched_conversation_predictions,
+    load_asi_library,
+    parse_asi_library,
+)
 from .online import (
     ASIOnlineEpisode,
     build_online_episode,
@@ -76,6 +82,8 @@ __all__ = [
     "render_asi_library",
     "build_asi_workflow",
     "create_asi_offline_abcd_agent",
+    "generate_batched_conversation_predictions",
+    "parse_asi_library",
     "load_asi_library",
     "ASIOnlineEpisode",
     "build_online_episode",

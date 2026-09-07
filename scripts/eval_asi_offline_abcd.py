@@ -12,7 +12,11 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from asi_offline import create_asi_offline_abcd_agent, load_asi_library
+from asi_offline import (
+    create_asi_offline_abcd_agent,
+    generate_batched_conversation_predictions,
+    load_asi_library,
+)
 from eval_tod.abcd.agent import turn_results_to_abcd_predictions
 from eval_tod.cli import evaluate_abcd_bundle
 from eval_tod.response_logger import ResponseLogger
@@ -25,6 +29,11 @@ def main() -> None:
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--max-test", type=int, default=None)
     parser.add_argument("--expected-subflow", required=True)
+    parser.add_argument(
+        "--legacy-per-turn-eval",
+        action="store_true",
+        help="Use the legacy one-LLM-call-per-target-turn evaluator",
+    )
     args = parser.parse_args()
     test_path = Path(args.test_file)
     conversations = json.loads(test_path.read_text(encoding="utf-8"))
@@ -43,7 +52,16 @@ def main() -> None:
         load_asi_library(args.skill_library),
         response_logger=ResponseLogger(str(output_dir / "llm_responses")),
     )
-    turn_results = agent.generate_all_turn_predictions(conversations, predict_actions=True)
+    if args.legacy_per_turn_eval:
+        turn_results = agent.generate_all_turn_predictions(
+            conversations, predict_actions=True
+        )
+    else:
+        turn_results = []
+        for conversation in conversations:
+            turn_results.extend(
+                generate_batched_conversation_predictions(agent, conversation)
+            )
     grouped = turn_results_to_abcd_predictions(turn_results, conversations)
     abcd_records = [{
         "conversation_id": prediction.conversation_id,
@@ -78,6 +96,11 @@ def main() -> None:
             "subflow": args.expected_subflow,
             "scenario_labels_exposed": False,
             "test_time_skill_updates": False,
+            "prediction_protocol": (
+                "legacy_per_target_turn"
+                if args.legacy_per_turn_eval
+                else "one_request_per_conversation_expanded_to_turns"
+            ),
         },
         "data": {"test_sessions": len(conversations)},
         "final_test": result,

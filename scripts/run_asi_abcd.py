@@ -26,6 +26,7 @@ from asi_offline import (
     build_online_episode_batch,
     decide_asi_update,
     evaluate_asi_library,
+    generate_batched_conversation_predictions,
     induce_online_episode,
     select_action_centered_test_suite,
     successful_online_episodes,
@@ -141,6 +142,11 @@ def main() -> None:
     parser.add_argument("--min-ast-delta", type=float, default=0.0)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--skip-final-test", action="store_true")
+    parser.add_argument(
+        "--legacy-per-turn-rollout",
+        action="store_true",
+        help="Use one LLM request per target turn instead of one per conversation",
+    )
     args = parser.parse_args()
     from scripts.llm_usage_utils import reset_usage, get_usage, write_usage, split_usage_summary
 
@@ -190,7 +196,16 @@ def main() -> None:
         library_path = manager.current_library_path()
         log.info("Batch %d/%d: rollout %d conversations", batch_index, len(batches), len(batch))
         agent = _build_agent(library_path, args.model, response_logger)
-        turns = agent.generate_all_turn_predictions(batch, predict_actions=True, verbose=False)
+        if args.legacy_per_turn_rollout:
+            turns = agent.generate_all_turn_predictions(
+                batch, predict_actions=True, verbose=False
+            )
+        else:
+            turns = []
+            for conversation in batch:
+                turns.extend(
+                    generate_batched_conversation_predictions(agent, conversation)
+                )
         ast_results = compute_ast_from_turn_results(batch, turns)
         _write(batch_dir / "turn_predictions.json", turns)
         _write(batch_dir / "ast_results.json", ast_results)
@@ -321,6 +336,11 @@ def main() -> None:
             "heldout_size": args.heldout_size,
             "test_pass_rate": args.test_pass_rate,
             "skip_final_test": bool(args.skip_final_test),
+            "prediction_protocol": (
+                "legacy_per_target_turn"
+                if args.legacy_per_turn_rollout
+                else "one_request_per_conversation_expanded_to_turns"
+            ),
         },
         "data": {"train_conversations": len(train), "test_conversations": len(test)},
         "final_test": final,
