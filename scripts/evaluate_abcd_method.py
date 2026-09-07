@@ -83,9 +83,19 @@ def _build_agent(method: str, resource: Path, model: str, logger: ResponseLogger
         return ABCDAgent(
             model=model,
             workflow=workflow,
+            workflow_max_chars=None,
             reference_text=load_trace2skill_references(skill_path),
             expose_scenario_labels=False,
             response_logger=logger,
+        )
+    if method == "skill_disco":
+        from skill_disco.runtime import create_skill_disco_abcd_agent, load_skill_library
+
+        library = resource / "SKILL.md"
+        if not library.is_file():
+            raise FileNotFoundError(f"no SKILL-DISCO library at {library}")
+        return create_skill_disco_abcd_agent(
+            load_skill_library(library), model=model, response_logger=logger
         )
     raise ValueError(f"unsupported method: {method}")
 
@@ -240,7 +250,7 @@ def _merge(method: str, subflow: str, test_file: Path, shard_root: Path, output:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Unified ABCD method evaluator")
-    parser.add_argument("--method", choices=("awm", "expel", "trace2skill", "asi"), required=True)
+    parser.add_argument("--method", choices=("awm", "expel", "trace2skill", "asi", "skill_disco"), required=True)
     parser.add_argument("--resource-dir", type=Path, required=True)
     parser.add_argument("--test-file", type=Path, required=True)
     parser.add_argument("--subflow", required=True)

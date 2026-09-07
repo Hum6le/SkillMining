@@ -13,7 +13,11 @@ from eval_tod.abcd.data import extract_ground_truth
 from eval_tod.abcd.metrics import compute_ast
 from eval_tod.cli import evaluate_abcd_bundle
 
-from .runtime import create_asi_offline_abcd_agent, load_asi_library
+from .runtime import (
+    create_asi_offline_abcd_agent,
+    generate_batched_conversation_predictions,
+    load_asi_library,
+)
 
 
 @dataclass(frozen=True)
@@ -58,8 +62,16 @@ def evaluate_asi_library(
     *,
     model: str = "deepseek-chat",
     output_dir: str | Path | None = None,
+    batched_conversations: bool = True,
 ) -> dict[str, Any]:
-    """Run a real ABCD rollout and evaluate one ASI library version."""
+    """Run an ABCD rollout and evaluate one ASI library version.
+
+    ASI evaluation defaults to one structured request per conversation. The
+    response is expanded into the existing flat turn-result format before AST
+    computation, so metric granularity remains identical to other methods.
+    Set ``batched_conversations=False`` for the legacy one-request-per-target
+    turn behavior.
+    """
     output_path = Path(output_dir) if output_dir is not None else None
     response_logger = None
     if output_path is not None:
@@ -72,11 +84,18 @@ def evaluate_asi_library(
         model=model,
         response_logger=response_logger,
     )
-    turn_results = agent.generate_all_turn_predictions(
-        conversations,
-        predict_actions=True,
-        verbose=False,
-    )
+    if batched_conversations:
+        turn_results: list[dict[str, Any]] = []
+        for conversation in conversations:
+            turn_results.extend(
+                generate_batched_conversation_predictions(agent, conversation)
+            )
+    else:
+        turn_results = agent.generate_all_turn_predictions(
+            conversations,
+            predict_actions=True,
+            verbose=False,
+        )
     grouped = turn_results_to_abcd_predictions(turn_results, conversations)
     abcd_records = [
         {

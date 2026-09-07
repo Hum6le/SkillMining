@@ -15,6 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from eval_tod.abcd.agent import turn_results_to_abcd_predictions
 from eval_tod.cli import evaluate_abcd_bundle
 from eval_tod.response_logger import ResponseLogger
+from scripts.llm_usage_utils import get_usage, reset_usage, split_usage_summary
 from skill_disco.runtime import create_skill_disco_abcd_agent, load_skill_library
 
 
@@ -31,6 +32,7 @@ def main() -> None:
         help="Fail unless every test conversation belongs to this ABCD subflow",
     )
     args = parser.parse_args()
+    reset_usage()
 
     conversations = json.loads(Path(args.test_file).read_text(encoding="utf-8"))
     if not isinstance(conversations, list):
@@ -74,9 +76,13 @@ def main() -> None:
     result = evaluate_abcd_bundle(
         conversations, text_records=text_records, abcd_records=abcd_records, text_prediction_key="response_text"
     )
+    result["llm_usage"] = split_usage_summary(None, get_usage())
     (output_dir / "turn_predictions.json").write_text(json.dumps(turn_results, ensure_ascii=False, indent=2), encoding="utf-8")
     (output_dir / "abcd_predictions.json").write_text(json.dumps(abcd_records, ensure_ascii=False, indent=2), encoding="utf-8")
     (output_dir / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    (output_dir / "llm_usage.json").write_text(
+        json.dumps(result["llm_usage"], ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     print(result["summary"])
 
 

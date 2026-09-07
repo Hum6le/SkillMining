@@ -82,6 +82,7 @@ def _agent(method: str, resource: Path, model: str, logger: ResponseLogger):
         return ABCDAgent(
             model=model,
             workflow=workflow,
+            workflow_max_chars=None,
             reference_text=load_trace2skill_references(skill_path),
             expose_scenario_labels=False,
             response_logger=logger,

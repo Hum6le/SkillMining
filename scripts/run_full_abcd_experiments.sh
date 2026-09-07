@@ -37,6 +37,8 @@ ASI_TEST_PASS_RATE="0.5"
 ASI_MAX_INDUCTION_EPISODES=8
 ASI_MIN_AST_DELTA="0.0"
 ASI_SKIP_FINAL_TEST=0
+SKILL_DISCO_BATCH_SIZE=20
+SKILL_DISCO_MIN_SUPPORT=2
 CONTINUE_ON_ERROR=1
 PYTHON_BIN="python"
 REBUILD_SPLITS=1
@@ -81,7 +83,7 @@ usage() {
 Usage: bash scripts/run_full_abcd_experiments.sh [options]
 
 Options:
-  --method NAME              all, awm, expel, trace2skill, asi, or graph (default: all)
+  --method NAME              all, awm, expel, trace2skill, asi, skill_disco, or graph (default: all)
   --subflow NAME             Run one subflow instead of all complete split directories
   --workflow-ids IDS         Comma-separated workflow IDs. One balanced, serial worker is
                              started per ID; workers run in parallel. Example: id_a,id_b,id_c
@@ -110,6 +112,8 @@ Options:
   --asi-max-induction-episodes N  Maximum successful episodes used per ASI batch (default: 8)
   --asi-min-ast-delta N      Minimum AST joint gain required for ASI promotion (default: 0.0)
   --asi-skip-final-test      Skip ASI final test evaluation
+  --skill-disco-batch-size N SKILL-DISCO operation grouping batch size (default: 20)
+  --skill-disco-min-support N  Minimum supporting conversations per SKILL-DISCO skill (default: 2)
   --stop-on-error            Stop the affected worker at its first failed subflow
   --no-rebuild-splits        Reuse existing subflow session splits
   -h, --help                 Show this help
@@ -118,7 +122,7 @@ Worker load is balanced by train+test non-empty agent utterance turns, not
 conversation count. The selected workflow ID is exported as
 SKILLMINING_WORKFLOW_ID; the workflow-aware llm.py must honor this override.
 When --eval-workflow-ids is supplied for one subflow, AWM, ExpeL, Trace2Skill,
-and ASI are evaluated in independent shard processes and merged back into the
+ASI, and SKILL-DISCO are evaluated in independent shard processes and merged back into the
 method summary; Graph keeps its native sharded evaluator.
 Without --workflow-ids, one serial worker uses config.py unchanged.
 Resume does not require a manifest. If the old run has no load plan, a new
@@ -154,6 +158,8 @@ while [[ $# -gt 0 ]]; do
         --asi-max-induction-episodes) ASI_MAX_INDUCTION_EPISODES="$2"; shift 2 ;;
         --asi-min-ast-delta) ASI_MIN_AST_DELTA="$2"; shift 2 ;;
         --asi-skip-final-test) ASI_SKIP_FINAL_TEST=1; shift ;;
+        --skill-disco-batch-size) SKILL_DISCO_BATCH_SIZE="$2"; shift 2 ;;
+        --skill-disco-min-support) SKILL_DISCO_MIN_SUPPORT="$2"; shift 2 ;;
         --stop-on-error) CONTINUE_ON_ERROR=0; shift ;;
         --no-rebuild-splits) REBUILD_SPLITS=0; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -166,7 +172,7 @@ if [[ -n "${EVAL_WORKFLOW_IDS_RAW:-}" && -z "$ONE_SUBFLOW" ]]; then
     exit 2
 fi
 
-case "$METHOD" in all|awm|expel|trace2skill|asi|graph) ;; *) echo "Invalid --method: $METHOD" >&2; exit 2 ;; esac
+case "$METHOD" in all|awm|expel|trace2skill|asi|skill_disco|graph) ;; *) echo "Invalid --method: $METHOD" >&2; exit 2 ;; esac
 case "$AWM_INDUCTION_MODE" in online|offline) ;; *) echo "Invalid --awm-induction-mode: $AWM_INDUCTION_MODE" >&2; exit 2 ;; esac
 case "$GRAPH_MINING_METHOD" in legacy|sequence|backbone|backbone_coverage|semantic_router) ;; *) echo "Invalid --graph-mining-method: $GRAPH_MINING_METHOD" >&2; exit 2 ;; esac
 case "$BACKBONE_COMPILER" in organized|unordered|compare) ;; *) echo "Invalid --backbone-compiler: $BACKBONE_COMPILER" >&2; exit 2 ;; esac
@@ -175,6 +181,8 @@ case "$BACKBONE_COMPILER" in organized|unordered|compare) ;; *) echo "Invalid --
 [[ "$ASI_HELDOUT_SIZE" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --asi-heldout-size: $ASI_HELDOUT_SIZE" >&2; exit 2; }
 python -c 'import sys; value=float(sys.argv[1]); sys.exit(0 if 0.0 <= value <= 1.0 else 1)' "$ASI_TEST_PASS_RATE" || { echo "Invalid --asi-test-pass-rate: $ASI_TEST_PASS_RATE" >&2; exit 2; }
 [[ "$ASI_MAX_INDUCTION_EPISODES" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --asi-max-induction-episodes: $ASI_MAX_INDUCTION_EPISODES" >&2; exit 2; }
+[[ "$SKILL_DISCO_BATCH_SIZE" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --skill-disco-batch-size: $SKILL_DISCO_BATCH_SIZE" >&2; exit 2; }
+[[ "$SKILL_DISCO_MIN_SUPPORT" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --skill-disco-min-support: $SKILL_DISCO_MIN_SUPPORT" >&2; exit 2; }
 if [[ "$BACKBONE_ABLATION_ONLY" -eq 1 ]]; then
     [[ "$BACKBONE_COMPILER" != "compare" ]] || { echo "--backbone-ablation-only cannot be combined with --backbone-compiler compare" >&2; exit 2; }
     BACKBONE_COMPILER="unordered"
@@ -336,6 +344,7 @@ echo "Compiler:    $BACKBONE_COMPILER"
 [[ "$METHOD" == "all" || "$METHOD" == "awm" ]] && echo "AWM mode:    $AWM_INDUCTION_MODE"
 [[ "$METHOD" == "all" || "$METHOD" == "asi" ]] && echo "ASI config:  batch=$ASI_BATCH_SIZE suite_size=$ASI_HELDOUT_SIZE pass_rate=$ASI_TEST_PASS_RATE max_induction=$ASI_MAX_INDUCTION_EPISODES min_ast_delta=$ASI_MIN_AST_DELTA"
 [[ "$METHOD" == "all" || "$METHOD" == "trace2skill" ]] && echo "Trace2Skill analysis batch: $ANALYSIS_BATCH_SIZE"
+[[ "$METHOD" == "all" || "$METHOD" == "skill_disco" ]] && echo "SKILL-DISCO config: grouping_batch=$SKILL_DISCO_BATCH_SIZE min_support=$SKILL_DISCO_MIN_SUPPORT"
 [[ "$BACKBONE_ABLATION_ONLY" -eq 1 ]] && echo "Ablation:    unordered only (organized compiler skipped)"
 [[ "$SUBFLOW_DISCOVERY" -eq 1 ]] && echo "Discovery:   latent session subflows before graph mining"
 [[ -n "$RESUME_RUN" ]] && echo "Resume:      enabled (completed subflows will be skipped)"
@@ -405,7 +414,7 @@ for path in paths:
             or summary.get("config", {}).get("skip_test_eval") is True
         ):
             raise SystemExit(0)
-        if method in {"awm", "expel", "asi"} and (
+        if method in {"awm", "expel", "asi", "skill_disco"} and (
             isinstance(summary.get("final_test"), dict)
             or summary.get("config", {}).get("skip_final_test") is True
         ):
@@ -515,6 +524,18 @@ run_worker() {
             run_or_resume_task "$worker_index" "$workflow_id" asi "$subflow" "${asi_args[@]}" || {
                 echo "asi:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
         fi
+        if [[ "$METHOD" == "all" || "$METHOD" == "skill_disco" ]]; then
+            skill_disco_args=(scripts/run_skill_disco_abcd_full.py
+                --subflow "$subflow"
+                --train-file "$SPLITS_DIR/$subflow/train.json"
+                --test-file "$SPLITS_DIR/$subflow/test.json"
+                --output-dir "$RUN_ROOT/skill_disco/$subflow"
+                --batch-size "$SKILL_DISCO_BATCH_SIZE"
+                --min-support "$SKILL_DISCO_MIN_SUPPORT")
+            [[ -n "$EVAL_WORKFLOW_IDS_RAW" ]] && skill_disco_args+=(--skip-final-test)
+            run_or_resume_task "$worker_index" "$workflow_id" skill_disco "$subflow" "${skill_disco_args[@]}" || {
+                echo "skill_disco:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
+        fi
         if [[ "$METHOD" == "all" || "$METHOD" == "graph" ]]; then
             train_sessions="$(train_session_count "$subflow")"
             if [[ "$train_sessions" -lt "$MIN_SESSIONS" ]]; then
@@ -544,6 +565,12 @@ run_worker() {
             if [[ -n "$EVAL_WORKFLOW_IDS_RAW" ]]; then
                 run_sharded_eval asi "$workflow_id" "$subflow" || {
                     echo "asi_eval:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
+            fi
+        fi
+        if [[ "$METHOD" == "all" || "$METHOD" == "skill_disco" ]]; then
+            if [[ -n "$EVAL_WORKFLOW_IDS_RAW" ]]; then
+                run_sharded_eval skill_disco "$workflow_id" "$subflow" || {
+                    echo "skill_disco_eval:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
             fi
         fi
     done
@@ -584,6 +611,7 @@ aggregate_method() {
 [[ "$METHOD" == "all" || "$METHOD" == "expel" ]] && aggregate_method expel
 [[ "$METHOD" == "all" || "$METHOD" == "trace2skill" ]] && aggregate_method trace2skill
 [[ "$METHOD" == "all" || "$METHOD" == "asi" ]] && aggregate_method asi
+[[ "$METHOD" == "all" || "$METHOD" == "skill_disco" ]] && aggregate_method skill_disco
 [[ "$METHOD" == "all" || "$METHOD" == "graph" ]] && aggregate_method graph
 
 FINAL_SUMMARY="$RUN_ROOT/final_summary.json"

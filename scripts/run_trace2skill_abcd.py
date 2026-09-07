@@ -329,6 +329,7 @@ def _build_agent(
     return ABCDAgent(
         model=model,
         workflow=workflow,
+        workflow_max_chars=None,
         memory=MemoryStore(),
         reference_text=reference_text,
         expose_scenario_labels=expose_scenario_labels,

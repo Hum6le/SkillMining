@@ -374,7 +374,7 @@ class ABCDAgent(AbstractTodAgent):
         reference_max_chars: int = 1800,
         action_rules_text: str | None = None,
         slot_policies_text: str | None = None,
-        workflow_max_chars: int = 8000,
+        workflow_max_chars: int | None = 8000,
         exemplar_max_chars: int = 3000,
         delay: float = 0.3,
         response_logger=None,
@@ -396,7 +396,9 @@ class ABCDAgent(AbstractTodAgent):
         self.action_cards = self._build_action_cards()
         self.reference_top_k = max(0, reference_top_k)
         self.reference_max_chars = max(200, reference_max_chars)
-        self.workflow_max_chars = max(1000, workflow_max_chars)
+        self.workflow_max_chars = (
+            None if workflow_max_chars is None else max(1000, workflow_max_chars)
+        )
         self.exemplar_max_chars = max(500, exemplar_max_chars)
         self._response_logger = response_logger
         self.expose_scenario_labels = expose_scenario_labels

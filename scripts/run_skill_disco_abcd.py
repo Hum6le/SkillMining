@@ -13,6 +13,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from llm import chat
+from eval_tod.response_logger import ResponseLogger
+from scripts.llm_usage_utils import get_usage, reset_usage, split_usage_summary
 from skill_disco.pipeline import run_offline_pseudocode_pipeline
 
 
@@ -31,6 +33,7 @@ def main() -> None:
         help="Fail unless every input conversation belongs to this ABCD subflow",
     )
     args = parser.parse_args()
+    reset_usage()
     conversations = json.loads(Path(args.input).read_text(encoding="utf-8"))
     if not isinstance(conversations, list):
         raise ValueError("--input must be a JSON array of ABCD conversations")
@@ -46,15 +49,28 @@ def main() -> None:
             )
     if args.limit is not None:
         conversations = conversations[:args.limit]
-    artifact = run_offline_pseudocode_pipeline(
-        conversations, chat, model=args.model, grouping_batch_size=args.batch_size, min_support=args.min_support
-    )
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
+    response_logger = ResponseLogger(str(output.parent / "llm_responses"))
+
+    def tracked_chat(messages, **kwargs):
+        return chat(
+            messages, response_logger=response_logger,
+            call_tag="skill_disco_generation", **kwargs,
+        )
+
+    artifact = run_offline_pseudocode_pipeline(
+        conversations, tracked_chat, model=args.model,
+        grouping_batch_size=args.batch_size, min_support=args.min_support,
+    )
     output.write_text(json.dumps(artifact, ensure_ascii=False, indent=2), encoding="utf-8")
     library = Path(args.library_output)
     library.parent.mkdir(parents=True, exist_ok=True)
     library.write_text(artifact["skill_library"], encoding="utf-8")
+    usage = split_usage_summary(get_usage(), None)
+    (output.parent / "llm_usage_generation.json").write_text(
+        json.dumps(usage, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     print(f"Generated {len(artifact['contracts'])} pseudocode skills -> {library}")
 
 
