@@ -4,6 +4,8 @@ Success-oriented prompt helpers for skill evolution.
 
 from __future__ import annotations
 
+import json
+
 from skill_evolver.prompt_loader import load_prompt_template
 from skill_evolver.skill_evolving_agent import SYSTEM_PROMPT_BASE
 
@@ -214,6 +216,15 @@ def format_success_records_for_prompt(
         source_file = record.get("source_file", "")
         if source_file:
             parts.append(f"Source File: {source_file}")
+        ast_evidence = record.get("ast_evidence", [])
+        if ast_evidence:
+            parts.append(
+                "Verified AST evidence (authoritative for action/ordered-slot "
+                "correction; do not copy private values into the skill):"
+            )
+            parts.append("```json")
+            parts.append(json.dumps(ast_evidence, ensure_ascii=False, indent=2))
+            parts.append("```")
         for item in record.get("items", []):
             parts.extend(_format_item(item))
     return "\n".join(parts)
@@ -238,6 +249,15 @@ def format_mixed_records_for_prompt(
         source_file = record.get("source_file", "")
         if source_file:
             parts.append(f"Source File: {source_file}")
+        ast_evidence = record.get("ast_evidence", [])
+        if ast_evidence:
+            parts.append(
+                "Verified AST evidence (authoritative for exact action and "
+                "ordered-slot correction; do not copy private values into the skill):"
+            )
+            parts.append("```json")
+            parts.append(json.dumps(ast_evidence, ensure_ascii=False, indent=2))
+            parts.append("```")
         for item in record.get("items", []):
             parts.extend(_format_item(item))
     return "\n".join(parts)

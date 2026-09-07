@@ -54,6 +54,7 @@ def normalize_mixed_records(
                 "instance_id": record["instance_id"],
                 "source_file": record.get("source_file", ""),
                 "items": record.get("items", []),
+                "ast_evidence": record.get("ast_evidence", []),
             }
         )
     for record in success_records:
@@ -99,6 +100,15 @@ def _build_success_merge_user_message(
     for i, patch in enumerate(patches):
         parts.append(f"### Patch {i + 1}")
         parts.append(f"**Reasoning**: {patch.reasoning}")
+        evidence = (patch.raw_json or {}).get("ast_evidence", [])
+        if evidence:
+            parts.append(
+                "**Verified AST evidence carried by this patch** "
+                "(consistency evidence only; do not hard-code private values):"
+            )
+            parts.append("```json")
+            parts.append(json.dumps(evidence, ensure_ascii=False, indent=2))
+            parts.append("```")
         parts.append(f"**Edits** ({len(patch.edits)}):")
         for edit in patch.edits:
             edit_dict = {
@@ -185,6 +195,15 @@ def _build_combined_merge_user_message(
     for i, patch in enumerate(patches):
         parts.append(f"### Patch {i + 1}")
         parts.append(f"**Reasoning**: {patch.reasoning}")
+        evidence = (patch.raw_json or {}).get("ast_evidence", [])
+        if evidence:
+            parts.append(
+                "**Verified AST evidence carried by this patch** "
+                "(consistency evidence only; do not hard-code private values):"
+            )
+            parts.append("```json")
+            parts.append(json.dumps(evidence, ensure_ascii=False, indent=2))
+            parts.append("```")
         parts.append(f"**Edits** ({len(patch.edits)}):")
         for edit in patch.edits:
             edit_dict = {
@@ -438,6 +457,11 @@ evidence and current skill supplied in the user message. Do not hard-code
 customer-specific slot values, invent hidden state, or optimize response style
 unless it directly supports the action/slot behavior described by the records.
 
+Verified AST evidence is authoritative for correcting the action name and the
+ordered slot list. Use it to distinguish action errors from slot errors and to
+preserve slot ordering. Generalize the rule rather than copying a private
+customer value into SKILL.md or a reference file.
+
 ## Edit Policy
 
 Prefer the smallest compatible change that prevents the observed failure while
@@ -463,6 +487,31 @@ unlinked resources. Every edit must have a concrete evidence-based rationale.
         # record-mode inputs; only the user-message evidence representation
         # differs. Do not reintroduce the upstream spreadsheet prompt here.
         return self._build_map_system_prompt()
+
+    def _run_single_map(self, skill_state, batch, batch_idx, total_batches):
+        patches = super()._run_single_map(skill_state, batch, batch_idx, total_batches)
+        evidence = [
+            item
+            for record in batch
+            if record.get("record_source") == "error"
+            for item in record.get("ast_evidence", [])
+        ]
+        if evidence:
+            for patch in patches:
+                patch.raw_json.setdefault("ast_evidence", evidence)
+        return patches
+
+    def _run_single_merge(self, skill_state, patches, level, merge_idx):
+        merged = super()._run_single_merge(skill_state, patches, level, merge_idx)
+        evidence = [
+            item
+            for source_patch in patches
+            for item in (source_patch.raw_json or {}).get("ast_evidence", [])
+        ]
+        if evidence:
+            for patch in merged:
+                patch.raw_json.setdefault("ast_evidence", evidence)
+        return merged
 
     def _build_map_user_message(
         self,

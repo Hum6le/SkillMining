@@ -1346,6 +1346,29 @@ def _run_error_analysis(
         check=True,
     )
     records = json.loads(parsed_path.read_text(encoding="utf-8"))
+    # The legacy parser intentionally keeps only generalized memory items.
+    # Reattach the verified turn-level labels so MAP/REDUCE can reason about
+    # exact ordered slots without requiring the full raw trajectory again.
+    evidence_by_id = {
+        str(case.get("dialogue_id")): [
+            {
+                "turn_index": mismatch.get("action_turn_index"),
+                "predicted_action": mismatch.get("predicted_action"),
+                "predicted_slots": mismatch.get("predicted_slots", []),
+                "gold_action": mismatch.get("gold_action"),
+                "gold_slots": mismatch.get("gold_slots", []),
+                "action_match": mismatch.get("action_match"),
+                "slots_match": mismatch.get("slots_match"),
+            }
+            for mismatch in case.get("ast_mismatches", [])
+        ]
+        for case in failed_cases
+    }
+    for record in records:
+        record["ast_evidence"] = evidence_by_id.get(str(record.get("instance_id")), [])
+    parsed_path.write_text(
+        json.dumps(records, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     if not records:
         report_count = len(list(output_dir.glob("*/analysis_report.md")))
         passed_count = len(list(output_dir.glob("*/evaluate_passed.flag")))
