@@ -315,7 +315,13 @@ def _actions(conversation: dict[str, Any]) -> list[str]:
 
 
 def session_signature(conversation: dict[str, Any]) -> frozenset[str]:
-    """Complete node + directed-transition signature used by the scheduler."""
+    """Complete structural node + directed-transition signature.
+
+    User utterances are intentionally excluded from this key. They remain in
+    the rollout evidence shown to the refinement model, while this signature
+    answers only the graph-structural question: which actions and transitions
+    occur in the session?
+    """
     actions = _actions(conversation)
     return frozenset(
         {f"node:{action}" for action in actions}
@@ -331,6 +337,11 @@ def _weighted_jaccard(left: frozenset[str], right: frozenset[str]) -> float:
         return 0.0
     weight = lambda feature: 1.5 if "=>" in feature else 1.0
     return sum(weight(feature) for feature in left & right) / sum(weight(feature) for feature in union)
+
+
+def _signature_distance(left: frozenset[str], right: frozenset[str]) -> int:
+    """Structural edit distance used to find near-neighbor trajectories."""
+    return len(left ^ right)
 
 
 def initialize_skill_dag(subgraph: dict[str, Any], subflow: str) -> dict[str, Any]:
@@ -435,23 +446,62 @@ def _source_target_session_index(conversations: list[dict[str, Any]]) -> dict[tu
     return index
 
 
+def _representative_groups(
+    conversations: list[dict[str, Any]], limit: int,
+) -> list[list[dict[str, Any]]]:
+    """Select structural groups without discarding same-signature sessions.
+
+    A previous version collapsed every exact signature to one conversation.
+    That made the online optimizer blind to wording, slot values, and
+    success/failure variation inside the same graph structure.  We now retain
+    all members of a selected signature group contiguously. ``limit`` remains
+    the sampling budget, so a very large group may be split at the budget
+    boundary, but it is never silently reduced to one representative.
+    """
+    if limit <= 0 or not conversations:
+        return []
+    grouped: dict[frozenset[str], list[dict[str, Any]]] = defaultdict(list)
+    for conversation in conversations:
+        grouped[session_signature(conversation)].append(conversation)
+    candidates = list(grouped.items())
+    if sum(len(members) for _, members in candidates) <= limit:
+        return [members for _, members in candidates]
+
+    signatures = [signature for signature, _ in candidates]
+    first_index = max(
+        range(len(candidates)),
+        key=lambda index: sum(_weighted_jaccard(signatures[index], other) for other in signatures),
+    )
+    selected_indices = [first_index]
+    while len(selected_indices) < len(candidates):
+        remaining = [index for index in range(len(candidates)) if index not in selected_indices]
+        if not remaining:
+            break
+        next_index = max(
+            remaining,
+            key=lambda index: min(
+                _signature_distance(signatures[index], signatures[chosen])
+                for chosen in selected_indices
+            ),
+        )
+        selected_indices.append(next_index)
+
+    result: list[list[dict[str, Any]]] = []
+    remaining_budget = limit
+    for index in selected_indices:
+        if remaining_budget <= 0:
+            break
+        members = candidates[index][1]
+        selected_members = members[:remaining_budget]
+        if selected_members:
+            result.append(selected_members)
+            remaining_budget -= len(selected_members)
+    return result
+
+
 def _representatives(conversations: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
-    """Keep a medoid plus diverse sessions; discard redundant duplicates."""
-    signatures = [(conversation, session_signature(conversation)) for conversation in conversations]
-    unique: dict[frozenset[str], dict[str, Any]] = {}
-    for conversation, signature in signatures:
-        key = signature
-        old = unique.get(key)
-        if old is None or str(conversation.get("convo_id", "")) < str(old.get("convo_id", "")):
-            unique[key] = conversation
-    candidates = [(conversation, signature) for signature, conversation in unique.items()]
-    if len(candidates) <= limit:
-        return [conversation for conversation, _ in candidates]
-    selected = [max(candidates, key=lambda item: sum(_weighted_jaccard(item[1], other[1]) for other in candidates))]
-    while len(selected) < limit:
-        remaining = [item for item in candidates if item not in selected]
-        selected.append(max(remaining, key=lambda item: min(1.0 - _weighted_jaccard(item[1], chosen[1]) for chosen in selected)))
-    return [conversation for conversation, _ in selected]
+    """Flatten grouped representatives while preserving group contiguity."""
+    return [conversation for group in _representative_groups(conversations, limit) for conversation in group]
 
 
 def schedule_contrastive_batches(
@@ -462,11 +512,10 @@ def schedule_contrastive_batches(
     """Create graph-structured rollout batches without using class labels.
 
     A batch preferentially pairs distinct targets leaving the same source
-    action. Within any one transition motif it keeps only a few structurally
-    non-redundant representative sessions. This is intentionally a budgeted
-    sampler: unselected sessions are not appended merely for full coverage.
-    Full training-set rollout would erase the efficiency benefit of selecting
-    contrastive representatives in the first place.
+    action. Exact structural signatures are grouped and retained together;
+    nearby signatures are ordered together so the LLM sees a minimal graph
+    contrast. This is intentionally a budgeted sampler: unselected sessions
+    are not appended merely for full coverage.
     """
     if batch_size < 2:
         raise ValueError("batch_size must be at least 2")
@@ -495,13 +544,34 @@ def schedule_contrastive_batches(
     for source, options in sorted(by_source.items()):
         if len(options) < 2:
             continue
-        representatives_by_target = []
+        representative_groups_by_target = []
         for _, members, _ in sorted(options, key=lambda item: (item[2], -len(item[1]), item[0])):
-            representatives_by_target.append(_representatives(members, representative_cap))
-        if sum(bool(items) for items in representatives_by_target) >= 2:
+            representative_groups_by_target.append(
+                _representative_groups(members, representative_cap)
+            )
+        if sum(bool(items) for items in representative_groups_by_target) >= 2:
+            # Align each alternative with the closest structural neighbor of
+            # the first target. This makes the context explain the smallest
+            # graph difference available, instead of comparing arbitrary
+            # trajectories that merely share the source action.
+            anchor_groups = next(
+                (groups for groups in representative_groups_by_target if groups), []
+            )
+            anchor_signature = session_signature(anchor_groups[0][0]) if anchor_groups else frozenset()
+            for groups in representative_groups_by_target[1:]:
+                groups.sort(
+                    key=lambda group: _signature_distance(
+                        session_signature(group[0]), anchor_signature
+                    )
+                )
             source_rounds = []
-            for round_index in range(max(len(items) for items in representatives_by_target)):
-                source_round = [items[round_index] for items in representatives_by_target if round_index < len(items)]
+            for round_index in range(max(len(items) for items in representative_groups_by_target)):
+                source_round = [
+                    conversation
+                    for groups in representative_groups_by_target
+                    if round_index < len(groups)
+                    for conversation in groups[round_index]
+                ]
                 if len(source_round) >= 2:
                     source_rounds.append(source_round)
             if source_rounds:
@@ -535,11 +605,11 @@ def schedule_contrastive_batches(
                 # high-degree source that would materially overshoot it.
                 if len(contrast_batch) > remaining + 1:
                     contrast_batch = contrast_batch[:max(2, remaining)]
-                used.update(str(conversation.get("convo_id", "?")) for conversation in contrast_batch)
                 for index in range(0, len(contrast_batch), batch_size):
                     chunk = contrast_batch[index:index + batch_size]
                     if len(chunk) >= 2:
                         batches.append(chunk)
+                        used.update(str(conversation.get("convo_id", "?")) for conversation in chunk)
         if len(used) >= target_sessions:
             break
 

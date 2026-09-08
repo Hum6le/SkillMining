@@ -150,6 +150,67 @@ class OnlineRefinementTest(unittest.TestCase):
         self.assertGreaterEqual(len(selected), 6)
         self.assertLessEqual(len(selected), 7)
 
+    def test_session_signature_uses_graph_structure_only(self):
+        forgot_password = {
+            "convo_id": "password",
+            "delexed": [
+                {"speaker": "customer", "text": "I forgot my password and cannot log in to my account.",
+                 "targets": ["", "customer", "", []]},
+                {"speaker": "action", "text": "", "targets": ["", "take_action", "verify-identity", []]},
+                {"speaker": "action", "text": "", "targets": ["", "take_action", "send-link", []]},
+            ],
+        }
+        cancel_order = {
+            "convo_id": "cancel",
+            "delexed": [
+                {"speaker": "customer", "text": "I need to cancel my order.",
+                 "targets": ["", "customer", "", []]},
+                {"speaker": "action", "text": "", "targets": ["", "take_action", "verify-identity", []]},
+                {"speaker": "action", "text": "", "targets": ["", "take_action", "send-link", []]},
+            ],
+        }
+        from skill_mining.online_refinement import session_signature
+        self.assertEqual(session_signature(forgot_password), session_signature(cancel_order))
+
+    def test_session_signature_collapses_paraphrased_user_triggers(self):
+        first = {
+            "convo_id": "one",
+            "delexed": [
+                {"speaker": "customer", "text": "I forgot my password and cannot log in to my account.",
+                 "targets": ["", "customer", "", []]},
+                {"speaker": "action", "text": "", "targets": ["", "take_action", "verify-identity", []]},
+            ],
+        }
+        second = {
+            "convo_id": "two",
+            "delexed": [
+                {"speaker": "customer", "text": "Unable to access my account because I forgot the passcode.",
+                 "targets": ["", "customer", "", []]},
+                {"speaker": "action", "text": "", "targets": ["", "take_action", "verify-identity", []]},
+            ],
+        }
+        from skill_mining.online_refinement import session_signature
+        self.assertEqual(session_signature(first), session_signature(second))
+
+    def test_same_signature_members_are_retained_as_one_group(self):
+        from skill_mining.online_refinement import _representative_groups
+
+        conversations = [
+            {
+                "convo_id": f"case-{index}",
+                "delexed": [
+                    {"speaker": "customer", "text": text,
+                     "targets": ["", "customer", "", []]},
+                    {"speaker": "action", "text": "",
+                     "targets": ["", "take_action", "verify-identity", []]},
+                ],
+            }
+            for index, text in enumerate(("forgot password", "cannot log in", "account access issue"))
+        ]
+        groups = _representative_groups(conversations, limit=3)
+        self.assertEqual(len(groups), 1)
+        self.assertEqual({item["convo_id"] for item in groups[0]}, {"case-0", "case-1", "case-2"})
+
     def test_promotion_requires_resolved_guard_and_deferred_resource_is_rendered(self):
         state = initialize_skill_dag(_subgraph(), "account_access")
         edge = state["edges"]["a=>c"]

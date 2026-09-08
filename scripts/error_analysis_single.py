@@ -25,8 +25,6 @@ from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from config import LLM_CONFIG_GPT
-
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) in sys.path:
     sys.path.remove(str(_PROJECT_ROOT))
@@ -96,6 +94,26 @@ def _find_agent_turn_row(turn_results: list[dict[str, Any]], cid: str, action_tu
     return best
 
 
+def _find_action_evidence_row(
+    turn_results: list[dict[str, Any]], cid: str, action_turn: int,
+) -> dict[str, Any]:
+    """Prefer the direct action row, then fall back to the preceding agent row.
+
+    New ABCD runs emit a prediction at the exact ``take_action`` turn. Legacy
+    runs sometimes attached the action prediction to the preceding agent
+    utterance, so retain that fallback for old artifacts.
+    """
+    exact = [
+        row for row in turn_results
+        if str(row.get("convo_id", "")) == cid
+        and int(row.get("turn_index", -1)) == action_turn
+        and row.get("target_type") == "action"
+    ]
+    if exact:
+        return exact[-1]
+    return _find_agent_turn_row(turn_results, cid, action_turn)
+
+
 def _find_turn_response(turn_results: list[dict[str, Any]], cid: str, action_turn: int) -> str:
     row = _find_agent_turn_row(turn_results, cid, action_turn)
     return row.get("response_text") or row.get("prediction") or ""
@@ -162,6 +180,7 @@ def classify_single_method(
     total_action_turns = 0
     action_correct = 0
     slot_correct = 0
+    action_correct_slot_correct = 0
     joint_correct = 0
     per_dialogue = []
 
@@ -189,8 +208,9 @@ def classify_single_method(
             joint_ok = action_ok and slot_ok
             action_correct += int(action_ok)
             slot_correct += int(slot_ok)
+            action_correct_slot_correct += int(action_ok and slot_ok)
             joint_correct += int(joint_ok)
-            agent_row = _find_agent_turn_row(rows, cid, gt.turn_index)
+            agent_row = _find_action_evidence_row(rows, cid, gt.turn_index)
             agent_turn = agent_row.get("turn_index")
             trace_row = {}
             if agent_turn is not None:
@@ -215,6 +235,8 @@ def classify_single_method(
                 "prediction": _find_turn_response(rows, cid, gt.turn_index)[:500],
                 "react_trace": react_trace,
                 "reference_lookup": agent_row.get("reference_lookup", {}),
+                "action_card_lookup": agent_row.get("action_card_lookup", {}),
+                "action_schema_validation": agent_row.get("action_schema_validation", {}),
                 "context": _extract_context(conv, gt.turn_index),
             }
 
@@ -254,6 +276,10 @@ def classify_single_method(
         "ast_joint": round(joint_correct / max(total_action_turns, 1), 4),
         "ast_action_name": round(action_correct / max(total_action_turns, 1), 4),
         "ast_slot_value": round(slot_correct / max(total_action_turns, 1), 4),
+        "ast_slot_value_given_action": round(
+            action_correct_slot_correct / max(action_correct, 1), 4
+        ),
+        "action_correct_turns": action_correct,
         "counts": {k: len(v) for k, v in categories.items()},
         "react_trace_available_failures": sum(
             1 for row in categories["joint_fail"] if row.get("react_trace")
@@ -269,6 +295,7 @@ def analyze_case(
     method_name: str,
     skill_text: str,
     reference_text: str,
+    action_card_text: str,
     model: str,
 ) -> str:
     prompt = f"""Analyze one ABCD action-turn error for a single method.
@@ -310,6 +337,37 @@ Reference lookup metadata on that agent turn:
 {_compact_react_trace(entry.get('reference_lookup'), max_chars=1800)}
 ```
 
+Action-card lookup metadata on that agent turn:
+```json
+{_compact_react_trace(entry.get('action_card_lookup'), max_chars=1400)}
+```
+
+Action/slot parser validation:
+```json
+{_compact_react_trace(entry.get('action_schema_validation'), max_chars=1400)}
+```
+
+Action rules and slot-policy resources used to build action cards:
+{action_card_text[:5000] if action_card_text else '(none)'}
+
+Classify the primary cause using exactly one of these labels:
+- `mining_missing`: the saved skill/action-card/reference artifacts do not contain
+  a usable rule for this action's slot binding.
+- `retrieval_miss`: a relevant rule exists in the artifacts, but the runtime
+  action-card/reference lookup did not select or expose it.
+- `retrieval_truncated`: the relevant card was selected but was cut or omitted
+  because of runtime prompt/resource limits.
+- `model_binding_error`: the relevant card was visible, but the model failed to
+  bind the current dialogue value, order, reuse rule, or missing-value behavior.
+- `parser_or_evaluation_mismatch`: the raw output contained the intended value,
+  but canonicalization, filtering, ordering, or exact-match evaluation changed
+  the scored slots.
+- `insufficient_evidence`: the artifact and trace do not establish a reliable
+  diagnosis.
+
+Do not call something a retrieval miss merely because reference.md has no slot
+rule: slot policy is primarily expected in the action card.
+
 Respond in Chinese. Use this markdown format:
 
 ### {entry['convo_id']} action@{entry['action_turn']}
@@ -317,6 +375,8 @@ Respond in Chinese. Use this markdown format:
 **Prediction**: `...` / slots `...`
 
 **错误类型**: action wrong / slot wrong / both wrong / missing prediction
+
+**根因标签**: one label from the list above.
 
 **根因**: one or two sentences.
 
@@ -335,7 +395,7 @@ Respond in Chinese. Use this markdown format:
 def _chat_nonempty(prompt: str, model: str, *, purpose: str) -> str:
     from llm import chat
 
-    response = chat(prompt, model=model, temperature=0.0, config=LLM_CONFIG_GPT).strip()
+    response = chat(prompt, model=model, temperature=0.0).strip()
     if not response:
         raise RuntimeError(f"LLM returned an empty response during {purpose}")
     return response
@@ -387,6 +447,7 @@ Overall metrics:
 - AST joint: {stats['ast_joint']}
 - Action-name accuracy: {stats['ast_action_name']}
 - Slot-value accuracy: {stats['ast_slot_value']}
+- Slot-value accuracy given correct action: {stats.get('ast_slot_value_given_action', 0.0)}
 
 Chunk {idx}/{len(chunks)} case analyses:
 {chunk}
@@ -479,6 +540,7 @@ def _fallback_report(method_name: str, subflow: str, stats: dict[str, Any]) -> s
         f"- AST joint: {stats['ast_joint']:.4f}",
         f"- Action-name accuracy: {stats['ast_action_name']:.4f}",
         f"- Slot-value accuracy: {stats['ast_slot_value']:.4f}",
+        f"- Slot-value accuracy given correct action: {stats.get('ast_slot_value_given_action', 0.0):.4f}",
         f"- Failed turns with ReAct trace: {stats.get('react_trace_available_failures', 0)}",
         "",
         "## Counts",
@@ -540,6 +602,14 @@ def main() -> None:
     parser.add_argument("--test-data", required=True, help="ABCD test conversations JSON")
     parser.add_argument("--skill", default="", help="Optional skill/workflow text file")
     parser.add_argument("--reference", default="", help="Optional reference markdown/text file")
+    parser.add_argument(
+        "--action-rules", default="",
+        help="Optional action_rules.md used to diagnose action-card coverage",
+    )
+    parser.add_argument(
+        "--slot-policies", default="",
+        help="Optional slot_policies.md used to diagnose slot-card coverage",
+    )
     parser.add_argument("--method-name", default="method")
     parser.add_argument("--subflow", default="unknown")
     parser.add_argument("--model", default="deepseek-chat")
@@ -555,6 +625,10 @@ def main() -> None:
         type=int,
         default=None,
         help="Analyze at most this many AST joint-failure cases, in deterministic dataset order",
+    )
+    parser.add_argument(
+        "--action-ok-slot-wrong-only", action="store_true",
+        help="Analyze only cases where the action is correct but the ordered slots are wrong",
     )
     parser.add_argument("--output-dir", default="", help="Optional explicit output directory")
     parser.add_argument(
@@ -598,6 +672,9 @@ def main() -> None:
     test_convs = _load_json(args.test_data)
     skill_text = _load_text(args.skill)
     reference_text = _load_text(args.reference)
+    action_card_text = "\n\n".join(
+        item for item in (_load_text(args.action_rules), _load_text(args.slot_policies)) if item
+    )
 
     has_actions = any("predicted_action" in row for row in preds[:20])
     log.info("Pred rows: %d (has predicted_action: %s)", len(preds), has_actions)
@@ -630,12 +707,15 @@ def main() -> None:
 
     analyses: list[str] = []
     if not args.no_llm:
-        cases_to_analyze = (
-            categories["action_ok_slot_wrong"]
-            + categories["action_wrong_slot_ok"]
-            + categories["both_wrong"]
-            + categories["missing_prediction"]
-        )
+        if args.action_ok_slot_wrong_only:
+            cases_to_analyze = list(categories["action_ok_slot_wrong"])
+        else:
+            cases_to_analyze = (
+                categories["action_ok_slot_wrong"]
+                + categories["action_wrong_slot_ok"]
+                + categories["both_wrong"]
+                + categories["missing_prediction"]
+            )
         if args.max_fail_cases is not None:
             if args.max_fail_cases < 1:
                 parser.error("--max-fail-cases must be at least 1")
@@ -649,7 +729,9 @@ def main() -> None:
         log.info(
             "LLM cases: %d selected (%s), %d cached, %d pending",
             len(cases_to_analyze),
-            "all failures" if args.max_fail_cases is None else f"first {args.max_fail_cases} failures",
+            "action-correct/slot-wrong cases" if args.action_ok_slot_wrong_only
+            else "all failures" if args.max_fail_cases is None
+            else f"first {args.max_fail_cases} failures",
             len(cases_to_analyze) - len(pending),
             len(pending),
         )
@@ -664,7 +746,8 @@ def main() -> None:
                 entry["pred_action"],
             )
             analysis = analyze_case(
-                entry, args.method_name, skill_text, reference_text, args.model
+                entry, args.method_name, skill_text, reference_text,
+                action_card_text, args.model,
             )
             if analysis.lstrip().startswith("*") and "LLM error" in analysis[:120]:
                 log.warning("Case analysis failed; leaving it pending for resume: %s", _case_key(entry))
