@@ -584,6 +584,92 @@ def _save_analysis_cache(path: Path, cache: dict[str, str]) -> None:
     temporary.replace(path)
 
 
+def _slot_difference_kind(entry: dict[str, Any]) -> str:
+    """Classify exact-match slot failures without an LLM judgment."""
+    gold = [str(value) for value in entry.get("gt_slots", [])]
+    predicted = [str(value) for value in entry.get("pred_slots", [])]
+    folded_gold = [value.casefold().strip() for value in gold]
+    folded_predicted = [value.casefold().strip() for value in predicted]
+    if folded_gold == folded_predicted:
+        return "case_or_whitespace_only"
+    if sorted(folded_gold) == sorted(folded_predicted):
+        return "order_only"
+    if not gold and predicted:
+        return "unexpected_slots_for_zero_slot_action"
+    if gold and not predicted:
+        return "missing_all_slots"
+    if len(predicted) > len(gold):
+        return "extra_slots"
+    if len(predicted) < len(gold):
+        return "missing_slots"
+    return "wrong_slot_values"
+
+
+def _resource_has_action_section(text: str, action: str) -> bool:
+    return bool(re.search(
+        rf"(?m)^####\s+`{re.escape(str(action).strip())}`\s*$", text or ""
+    ))
+
+
+def build_slot_retrieval_audit(
+    cases: list[dict[str, Any]], action_rules_text: str, slot_policies_text: str,
+) -> dict[str, Any]:
+    """Summarize observed card retrieval and parser evidence for slot failures."""
+    totals: Counter[str] = Counter()
+    per_action: dict[str, Counter[str]] = defaultdict(Counter)
+    examples: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for entry in cases:
+        action = str(entry.get("gt_action", ""))
+        lookup = entry.get("action_card_lookup") or {}
+        selected = {str(value) for value in lookup.get("selected_actions", [])}
+        validation = entry.get("action_schema_validation") or {}
+        reference_status = str((entry.get("reference_lookup") or {}).get("status", "unknown"))
+        action_card_present = _resource_has_action_section(action_rules_text, action) or _resource_has_action_section(
+            slot_policies_text, action
+        )
+        if action in selected:
+            retrieval = "gold_action_card_selected"
+        elif not action_card_present:
+            retrieval = "no_saved_action_card"
+        elif lookup.get("executed"):
+            retrieval = "gold_action_card_not_selected"
+        else:
+            retrieval = "action_card_lookup_not_executed"
+        difference = _slot_difference_kind(entry)
+        rejected = list(validation.get("rejected_slots", []) or [])
+        parser = "parser_rejected_slot_values" if rejected else "parser_kept_slots"
+        labels = {
+            f"retrieval:{retrieval}",
+            f"difference:{difference}",
+            f"parser:{parser}",
+            f"reference:{reference_status}",
+        }
+        for label in labels:
+            totals[label] += 1
+            per_action[action][label] += 1
+        example_key = f"{retrieval}|{difference}|{parser}"
+        if len(examples[example_key]) < 3:
+            examples[example_key].append({
+                "convo_id": entry.get("convo_id"),
+                "action_turn": entry.get("action_turn"),
+                "gold_action": action,
+                "gold_slots": entry.get("gt_slots", []),
+                "predicted_slots": entry.get("pred_slots", []),
+                "selected_actions": sorted(selected),
+                "reference_status": reference_status,
+                "rejected_slots": rejected,
+            })
+    return {
+        "num_action_correct_slot_wrong_cases": len(cases),
+        "overall": dict(sorted(totals.items())),
+        "per_action": {
+            action: dict(sorted(counts.items()))
+            for action, counts in sorted(per_action.items())
+        },
+        "examples": dict(sorted(examples.items())),
+    }
+
+
 def main() -> None:
     import argparse
 
@@ -696,6 +782,22 @@ def main() -> None:
             encoding="utf-8",
         )
         log.info("Saved %s: %d cases", name, len(cases))
+    slot_audit = build_slot_retrieval_audit(
+        categories["action_ok_slot_wrong"],
+        _load_text(args.action_rules),
+        _load_text(args.slot_policies),
+    )
+    (out_dir / "slot_retrieval_audit.json").write_text(
+        json.dumps(slot_audit, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    log.info(
+        "Slot retrieval audit: action-correct/slot-wrong=%d; gold card selected=%d; "
+        "card not selected=%d; no saved card=%d",
+        slot_audit["num_action_correct_slot_wrong_cases"],
+        slot_audit["overall"].get("retrieval:gold_action_card_selected", 0),
+        slot_audit["overall"].get("retrieval:gold_action_card_not_selected", 0),
+        slot_audit["overall"].get("retrieval:no_saved_action_card", 0),
+    )
     (out_dir / "stats.json").write_text(
         json.dumps({
             "method_name": args.method_name,
