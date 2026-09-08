@@ -237,6 +237,55 @@ key=value. If no action is needed, use an empty action and an empty slots list.
 </instruction>"""
 
 
+_ACTION_SELECTION_PROMPT = """<dialogue_context>
+{context}
+</dialogue_context>
+
+<retrieved_reference tool="retrieve_reference">
+{reference}
+</retrieved_reference>
+
+<instruction>
+This is stage 1 of a two-stage backend decision. Select ONLY the one canonical
+ABCD backend action needed at the current turn. Do not emit slot values, a
+customer response, an explanation, or a second candidate action. The next
+stage will retrieve the exact action card and bind values under that action's
+slot contract.
+
+Return only valid JSON:
+{{"action":"canonical-action-name"}}
+
+If no backend action is needed, return {{"action":""}}.
+</instruction>"""
+
+
+_FIXED_ACTION_GROUNDING_PROMPT = """<dialogue_context>
+{context}
+</dialogue_context>
+
+<retrieved_reference tool="retrieve_reference">
+{reference}
+</retrieved_reference>
+
+<fixed_action>
+The backend action was selected in stage 1 and is immutable for this stage:
+`{action}`.
+{slot_contract}
+</fixed_action>
+
+<instruction>
+This is stage 2 of a two-stage backend decision. Do NOT select, rename, or
+replace the backend action. Use the exact retrieved action card in the system
+message to bind only the ordered slot values for `{action}`, then write the
+customer-facing response.
+
+The dialogue is the only source of current customer-specific values. Never
+copy an example value from the skill or reference. Do not add related visible
+entities that are not required by the fixed action. Return only valid JSON:
+{{"action":"{action}","slots":[...],"response":"..."}}
+</instruction>"""
+
+
 def _tokenize_for_lookup(text: str) -> set[str]:
     return {
         tok.lower()
@@ -492,6 +541,58 @@ class ABCDAgent(AbstractTodAgent):
         parts.append("</retrieved_action_card>")
         return "\n".join(parts) if self._last_action_card_lookup["selected_actions"] else ""
 
+    def _select_action_for_grounding(
+        self, scenario: dict[str, Any], context: str, reference: str,
+    ) -> tuple[str, str, dict[str, Any]]:
+        """Run stage 1 and return one canonical action for exact-card lookup."""
+        from llm import chat
+
+        system = self._build_system_prompt(scenario, context, candidate_actions=[])
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": _ACTION_SELECTION_PROMPT.format(
+                context=context, reference=reference,
+            )},
+        ]
+        raw_output = ""
+        try:
+            raw_output = chat(
+                messages, model=self.model, api_key=self.api_key,
+                base_url=self.base_url, temperature=0.0,
+                response_logger=self._response_logger,
+                call_tag="action_selection",
+            ).strip()
+        except Exception:
+            raw_output = ""
+
+        selected = ""
+        payload = raw_output.strip()
+        if payload.startswith("```"):
+            payload = re.sub(r"^```(?:json)?\s*|\s*```$", "", payload,
+                             flags=re.IGNORECASE | re.DOTALL).strip()
+        try:
+            parsed = json.loads(payload)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            parsed = {}
+        if isinstance(parsed, dict):
+            selected, _ = canonical_action_name(
+                parsed.get("action", ""), self.action_schema.get("actions"),
+            )
+        if selected not in self.action_schema.get("actions", set()):
+            selected = ""
+        return selected, raw_output, {"messages": messages, "system": system}
+
+    def _fixed_action_slot_contract(self, action: str) -> str:
+        """Give stage 2 a deterministic count guard alongside its action card."""
+        allowed = sorted(self.action_schema.get("slot_counts", {}).get(action, set()))
+        if allowed == [0]:
+            return "Return `slots: []` exactly. This action accepts no slot values."
+        if len(allowed) == 1:
+            return f"Return exactly {allowed[0]} ordered real slot value(s); no more and no fewer."
+        if allowed:
+            return "Allowed ordered slot counts: " + ", ".join(map(str, allowed)) + "."
+        return "Follow the exact ordered slot contract in the retrieved action card."
+
     # ── AbstractTodAgent interface ─────────────────────────
 
     def generate_predictions(
@@ -650,12 +751,7 @@ class ABCDAgent(AbstractTodAgent):
             if not context or not reference:
                 continue
 
-            system = self._build_system_prompt(scenario, context)
             reference_plan = self._plan_reference_lookup(context, scenario, verbose=verbose)
-            system = self._build_system_prompt(
-                scenario, context,
-                candidate_actions=reference_plan.get("candidate_actions", []),
-            )
             reference_lookup = self._lookup_reference(
                 reference_plan.get("query_text", ""),
                 context,
@@ -668,24 +764,135 @@ class ABCDAgent(AbstractTodAgent):
             )
 
             from llm import chat
-            messages = [
-                {"role": "system", "content": system},
-                {"role": "user", "content": task_template.format(
-                    context=context,
-                    reference=reference_observation,
-                )},
-            ]
-
             raw_output = ""
+            action_selection_raw = ""
+            action_selection_meta: dict[str, Any] = {}
+            selected_action = ""
+            use_two_stage_grounding = (
+                predict_actions
+                and turn_idx in action_indices
+                and bool(self.action_cards)
+            )
+
+            if use_two_stage_grounding:
+                selected_action, action_selection_raw, action_selection_meta = (
+                    self._select_action_for_grounding(
+                        scenario, context, reference_observation,
+                    )
+                )
+                # A selected action without a mined card cannot benefit from
+                # grounded binding. Preserve the established one-stage path.
+                use_two_stage_grounding = selected_action in self.action_cards
+
+            if use_two_stage_grounding:
+                system = self._build_system_prompt(
+                    scenario, context, candidate_actions=[selected_action],
+                )
+                messages = [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": _FIXED_ACTION_GROUNDING_PROMPT.format(
+                        context=context,
+                        reference=reference_observation,
+                        action=selected_action,
+                        slot_contract=self._fixed_action_slot_contract(selected_action),
+                    )},
+                ]
+                call_tag = "action_slot_grounding"
+                temperature = 0.0
+            else:
+                system = self._build_system_prompt(
+                    scenario, context,
+                    candidate_actions=reference_plan.get("candidate_actions", []),
+                )
+                messages = [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": task_template.format(
+                        context=context,
+                        reference=reference_observation,
+                    )},
+                ]
+                call_tag = None
+                temperature = 0.7
+
             try:
-                raw_output = chat(
-                    messages, model=self.model, api_key=self.api_key,
-                    base_url=self.base_url, temperature=0.7,
-                    response_logger=self._response_logger,
-                ).strip()
+                chat_kwargs: dict[str, Any] = {
+                    "model": self.model,
+                    "api_key": self.api_key,
+                    "base_url": self.base_url,
+                    "temperature": temperature,
+                    "response_logger": self._response_logger,
+                }
+                if call_tag:
+                    chat_kwargs["call_tag"] = call_tag
+                raw_output = chat(messages, **chat_kwargs).strip()
             except Exception as exc:
                 if verbose:
                     print(f"    LLM error convo={convo_id} turn={turn_idx}: {exc}")
+
+            react_trace = [
+                {
+                    "turn": 1,
+                    "thought": "Use the runtime's domain-overlap exemplar lookup as procedural evidence.",
+                    "action": "retrieve_exemplar",
+                    "action_input": self._last_exemplar_lookup.get("query", {}),
+                    "executed": self._last_exemplar_lookup.get("executed", False),
+                    "status": self._last_exemplar_lookup.get("status", "unknown"),
+                    "selected_exemplars": self._last_exemplar_lookup.get("selected_exemplars", []),
+                },
+                {
+                    "turn": 2,
+                    "thought": "Plan a concise MCP retrieve_reference query for the current dialogue state.",
+                    "action": "llm_plan_reference_query",
+                    "action_input": {"messages": reference_plan.get("messages", [])},
+                    "observation": reference_plan.get("raw_output", ""),
+                    "parsed_tool_call": reference_plan.get("tool_call", {}),
+                    "fallback_used": reference_plan.get("fallback_used", False),
+                },
+                {
+                    "turn": 3,
+                    "thought": reference_plan.get("thought", ""),
+                    "action": "retrieve_reference",
+                    "action_input": reference_lookup["query"],
+                    "executed": reference_lookup.get("executed", False),
+                    "status": reference_lookup.get("status", "unknown"),
+                    "observation": reference_lookup["observation"],
+                    "selected_sections": reference_lookup["selected_sections"],
+                },
+                {
+                    "turn": 4,
+                    "thought": "Retrieve the complete action card for the action used to bind slots.",
+                    "action": "retrieve_action_card",
+                    "action_input": getattr(self, "_last_action_card_lookup", {}).get("query", []),
+                    "executed": getattr(self, "_last_action_card_lookup", {}).get("executed", False),
+                    "selected_actions": getattr(self, "_last_action_card_lookup", {}).get("selected_actions", []),
+                },
+            ]
+            if use_two_stage_grounding:
+                react_trace.extend([
+                    {
+                        "turn": 5,
+                        "thought": "Select one canonical backend action before slot grounding.",
+                        "action": "llm_select_action",
+                        "action_input": {"messages": action_selection_meta.get("messages", [])},
+                        "observation": action_selection_raw,
+                        "selected_action": selected_action,
+                    },
+                    {
+                        "turn": 6,
+                        "thought": "Bind ordered values and write a response under the fixed action card.",
+                        "action": "llm_ground_slots_and_response",
+                        "action_input": {"messages": messages},
+                        "observation": raw_output,
+                    },
+                ])
+            else:
+                react_trace.append({
+                    "turn": 5,
+                    "thought": "Predict the backend action, ordered slots, and response using the workflow, scenario, dialogue context, and retrieved snippets.",
+                    "action": "llm_generate",
+                    "action_input": {"messages": messages},
+                    "observation": raw_output,
+                })
 
             entry = {
                 "convo_id": convo_id,
@@ -709,55 +916,7 @@ class ABCDAgent(AbstractTodAgent):
                 "reference_lookup": reference_lookup,
                 "action_card_lookup": getattr(self, "_last_action_card_lookup", {}),
                 "exemplar_lookup": getattr(self, "_last_exemplar_lookup", {}),
-                "react_trace": [
-                    {
-                        "turn": 1,
-                        "thought": "Use the runtime's domain-overlap exemplar lookup as procedural evidence.",
-                        "action": "retrieve_exemplar",
-                        "action_input": self._last_exemplar_lookup.get("query", {}),
-                        "executed": self._last_exemplar_lookup.get("executed", False),
-                        "status": self._last_exemplar_lookup.get("status", "unknown"),
-                        "selected_exemplars": self._last_exemplar_lookup.get("selected_exemplars", []),
-                    },
-                    {
-                        "turn": 2,
-                        "thought": "Plan a concise MCP retrieve_reference query for the current dialogue state.",
-                        "action": "llm_plan_reference_query",
-                        "action_input": {
-                            "messages": reference_plan.get("messages", []),
-                        },
-                        "observation": reference_plan.get("raw_output", ""),
-                        "parsed_tool_call": reference_plan.get("tool_call", {}),
-                        "fallback_used": reference_plan.get("fallback_used", False),
-                    },
-                    {
-                        "turn": 3,
-                        "thought": reference_plan.get("thought", ""),
-                        "action": "retrieve_reference",
-                        "action_input": reference_lookup["query"],
-                        "executed": reference_lookup.get("executed", False),
-                        "status": reference_lookup.get("status", "unknown"),
-                        "observation": reference_lookup["observation"],
-                        "selected_sections": reference_lookup["selected_sections"],
-                    },
-                    {
-                        "turn": 4,
-                        "thought": "Retrieve the complete action card for the planner's candidate actions.",
-                        "action": "retrieve_action_card",
-                        "action_input": getattr(self, "_last_action_card_lookup", {}).get("query", []),
-                        "executed": getattr(self, "_last_action_card_lookup", {}).get("executed", False),
-                        "selected_actions": getattr(self, "_last_action_card_lookup", {}).get("selected_actions", []),
-                    },
-                    {
-                        "turn": 5,
-                        "thought": "Predict the backend action, ordered slots, and response using the workflow, scenario, dialogue context, and retrieved snippets.",
-                        "action": "llm_generate",
-                        "action_input": {
-                            "messages": messages,
-                        },
-                        "observation": raw_output,
-                    },
-                ],
+                "react_trace": react_trace,
                 "reference": reference,
                 "reference_original": reference_original,
                 "prediction": raw_output,
@@ -765,8 +924,9 @@ class ABCDAgent(AbstractTodAgent):
 
             if predict_actions:
                 raw_action, raw_slots, resp = _parse_action_response(raw_output)
+                action_source = selected_action if use_two_stage_grounding else raw_action
                 action, slots, validation = canonicalize_prediction(
-                    raw_action, raw_slots, self.action_schema
+                    action_source, raw_slots, self.action_schema
                 )
                 # Debug: log first few parses
                 if target_num == 1 and len(results) == 0:
@@ -775,6 +935,16 @@ class ABCDAgent(AbstractTodAgent):
                 entry["predicted_action"] = action
                 entry["predicted_slots"] = slots
                 entry["action_schema_validation"] = validation
+                entry["action_selection"] = {
+                    "two_stage_applied": use_two_stage_grounding,
+                    "selected_action": selected_action,
+                    "stage2_reported_action": raw_action if use_two_stage_grounding else "",
+                    "action_locked": bool(
+                        use_two_stage_grounding and action == selected_action
+                    ),
+                    "raw_output": action_selection_raw,
+                    "messages": action_selection_meta.get("messages", []),
+                }
                 entry["prediction"] = resp
             else:
                 entry["prediction"] = raw_output.strip().strip('"').strip("'")

@@ -215,11 +215,66 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     # Keep usage accounting process-local and persist it even when an online
     # batch fails, so partial runs remain auditable and resumable.
-    from scripts.llm_usage_utils import reset_usage, get_usage, write_usage, split_usage_summary
+    from scripts.llm_usage_utils import (
+        get_usage,
+        merge_usage_summaries,
+        reset_usage,
+        split_usage_summary,
+    )
     from eval_tod.response_logger import ResponseLogger
+
+    usage_path = out_dir / "llm_usage.json"
+
+    def _load_previous_generation_usage() -> dict:
+        """Recover generation usage from a partial/completed run on resume.
+
+        A resumed run must not discard calls already made by completed online
+        batches. Testing usage is deliberately excluded because a failed test
+        phase may be rerun from scratch.
+        """
+        if not args.resume or not usage_path.exists():
+            return split_usage_summary(None, None)["generation"]
+        try:
+            payload = json.loads(usage_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return split_usage_summary(None, None)["generation"]
+        generation = payload.get("generation") if isinstance(payload, dict) else None
+        if isinstance(generation, dict):
+            return generation
+        # Compatibility with a pre-phase-split usage file from an interrupted
+        # legacy run: treat its calls as generation, never as testing.
+        if isinstance(payload, dict) and "total" in payload:
+            return payload
+        return split_usage_summary(None, None)["generation"]
+
+    previous_generation_usage = _load_previous_generation_usage()
     reset_usage()
-    usage_fallback = lambda: write_usage(out_dir / "llm_usage.json")
+
+    usage_phase = "generation"
+    generation_usage_snapshot = previous_generation_usage
+
+    def _persist_usage_snapshot() -> None:
+        """Persist a phase-split snapshot even on interruption or API failure."""
+        if usage_phase == "generation":
+            generation = merge_usage_summaries(
+                previous_generation_usage, get_usage(),
+            )
+            testing = split_usage_summary(None, None)["testing"]
+        else:
+            generation = generation_usage_snapshot
+            testing = get_usage()
+        usage_path.write_text(
+            json.dumps(
+                split_usage_summary(generation, testing),
+                indent=2,
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+    usage_fallback = _persist_usage_snapshot
     atexit.register(usage_fallback)
+    _persist_usage_snapshot()
     response_logger = ResponseLogger(out_dir / "llm_responses")
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
@@ -417,6 +472,7 @@ def main() -> None:
                     reflection.get("model_no_update_reason", "")[:180], reflection.get("prompt_chars", 0),
                 )
         _checkpoint(out_dir, state, working_skill, base_reference, policy, slot_policies, action_rules)
+        _persist_usage_snapshot()
         _write(out_dir / "batch_diagnostics" / f"batch_{batch_index:04d}.json", json.dumps({
             "batch_index": batch_index,
             "conversation_ids": [str(item.get("convo_id", "?")) for item in batch],
@@ -433,8 +489,13 @@ def main() -> None:
 
     # Freeze all mining/refinement calls before the held-out evaluation so the
     # two budgets remain auditable in the final artifact.
-    generation_usage = get_usage()
+    generation_usage = merge_usage_summaries(
+        previous_generation_usage, get_usage(),
+    )
+    generation_usage_snapshot = generation_usage
     reset_usage()
+    usage_phase = "testing"
+    _persist_usage_snapshot()
     log.info("Frozen test evaluation on %d held-out sessions", len(test))
     final_agent = _build_agent(args, working_skill, base_reference, action_rules, slot_policies, state,
                                response_logger=response_logger)
@@ -452,7 +513,7 @@ def main() -> None:
         testing_usage = merge_usage_summaries(testing_usage, *worker_usage)
     usage = split_usage_summary(generation_usage, testing_usage)
     atexit.unregister(usage_fallback)
-    (out_dir / "llm_usage.json").write_text(
+    usage_path.write_text(
         json.dumps(usage, indent=2, ensure_ascii=False), encoding="utf-8"
     )
     result["llm_usage"] = usage
