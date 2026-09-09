@@ -1042,6 +1042,8 @@ def main() -> None:
         datefmt="%H:%M:%S",
         handlers=[logging.FileHandler(out_dir / "analysis.log", encoding="utf-8"), logging.StreamHandler(sys.stdout)],
     )
+    LOG.info("Running error_analysis_full_skills.py from %s", Path(__file__).resolve())
+    LOG.info("Parsed --methods=%r, --skills-root=%s", args.methods, args.skills_root)
 
     if args.manifest:
         manifest_entries = discover_skill_entries_from_experiment_manifest(args.manifest)

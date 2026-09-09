@@ -153,6 +153,8 @@ fi
 mkdir -p "$OUTPUT_DIR"
 
 echo "Skill error analysis"
+echo "Script directory:   $SCRIPT_DIR"
+echo "Working directory:  $(pwd)"
 echo "Manifest:          ${MANIFEST:-<none>}"
 echo "Skills root:       ${SKILLS_ROOT:-<none>}"
 echo "Test root:         $TEST_ROOT"
