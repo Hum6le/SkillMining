@@ -18,6 +18,8 @@ from skill_mining.online_refinement import (
     localize_rollout_batch,
     propose_refinement_patches,
     render_online_resources,
+    render_online_skill_additions,
+    merge_online_skill_additions,
     render_online_slot_policies,
     schedule_contrastive_batches,
     summarize_refinement_state,
@@ -91,6 +93,46 @@ class OnlineRefinementTest(unittest.TestCase):
         self.assertEqual(state["edges"]["a=>b"]["visibility"], "skill")
         self.assertEqual(state["edges"]["a=>c"]["kind"], "candidate_branch")
         self.assertEqual(state["edges"]["b=>b"]["kind"], "retry")
+
+    def test_action_node_promotion_is_rendered_as_an_executable_branch(self):
+        state = initialize_skill_dag(_subgraph(), "account_access")
+        reflection = {
+            "updates": [{
+                "resource": "action_node", "action": "make-password",
+                "edge_id": "a=>c", "op": "upsert", "status": "resolved",
+                "content": "Use this branch after the customer asks to create or reset a password.",
+                "rationale": "The contrasting rollout evidence identifies a distinct target action.",
+            }],
+            "skill_operations": [],
+        }
+        with patch("llm.resolve_config", return_value={"model": "test", "api_key": "", "base_url": ""}), \
+             patch("llm.chat", side_effect=[
+                 '{"lookups":[]}',
+                 json.dumps(reflection),
+             ]):
+            result = autonomous_resource_reflection(
+                state, [{"gold": {"gold_action": "make-password"}}],
+                "# Skill", "", "", "", "test",
+            )
+        self.assertEqual(state["edges"]["a=>c"]["visibility"], "skill")
+        self.assertEqual(state["edges"]["a=>c"]["kind"], "promoted_branch")
+        self.assertTrue(result["accepted"])
+        rendered = render_online_skill_additions(state)
+        self.assertIn("make-password", rendered)
+        self.assertIn("create or reset", rendered)
+
+        compiled = '''# Skill
+## Workflow
+### Routing Policies
+<!-- ROUTING_SECTION_START -->
+<!-- ROUTING_SECTION_END -->
+### Action Rules
+<!-- ACTION_RULES_START -->
+<!-- ACTION_RULES_END -->
+'''
+        merged = merge_online_skill_additions(compiled, state)
+        self.assertIn("<!-- ROUTE_EDGE:a=>c -->", merged)
+        self.assertIn("Continue to `make-password`", merged)
 
     @patch("skill_mining.online_refinement._actions")
     def test_scheduler_pairs_competing_targets_without_full_dataset_backfill(self, actions):

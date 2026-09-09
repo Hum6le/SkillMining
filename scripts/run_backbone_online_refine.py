@@ -36,6 +36,7 @@ from skill_mining.online_refinement import (
     propose_refinement_patches,
     render_online_resources,
     render_online_action_rules,
+    merge_online_skill_additions,
     render_online_slot_policies,
     save_skill_dag,
     schedule_contrastive_batches,
@@ -152,7 +153,8 @@ def _build_agent(args, working_skill: str, base_reference: str, action_rules: st
 def _checkpoint(
     out_dir: Path, state: dict, working_skill: str, base_reference: str,
     policy: RefinementPolicy | None = None, base_slot_policies: str = "", base_action_rules: str = "",
-) -> None:
+) -> str:
+    working_skill = merge_online_skill_additions(working_skill, state)
     online_skill, online_reference = render_online_resources(state)
     save_skill_dag(state, out_dir / "skill_dag_state.json")
     _write(out_dir / "online_transition_guards.md", online_skill)
@@ -169,6 +171,7 @@ def _checkpoint(
             out_dir / "refinement_summary.json",
             json.dumps(summarize_refinement_state(state, policy), indent=2, ensure_ascii=False),
         )
+    return working_skill
 
 
 def main() -> None:
@@ -318,6 +321,12 @@ def main() -> None:
                 "Resume repaired %d historical skill operations across %d batches (%d still failed)",
                 repaired_count, len(repaired_operations), failed_count,
             )
+        # Re-materialize state-level promotions before the next rollout. This
+        # also repairs runs produced before promoted branches were rendered
+        # into the executable skill file.
+        working_skill = merge_online_skill_additions(working_skill, state)
+        _write(out_dir / "working_skill.md", working_skill)
+        _write(out_dir / "skill.md", working_skill)
     else:
         offline_dir = Path(args.offline_dir) if args.offline_dir else None
         if offline_dir is not None:
@@ -353,7 +362,10 @@ def main() -> None:
         _write(out_dir / "base_reference.md", base_reference)
         _write(out_dir / "action_rules.md", action_rules)
         _write(out_dir / "slot_policies.md", slot_policies)
-        _checkpoint(out_dir, state, working_skill, base_reference, base_slot_policies=slot_policies, base_action_rules=action_rules)
+        working_skill = _checkpoint(
+            out_dir, state, working_skill, base_reference,
+            base_slot_policies=slot_policies, base_action_rules=action_rules,
+        )
 
     if args.resume:
         if not schedule_path.exists():
@@ -433,7 +445,45 @@ def main() -> None:
             working_skill, skill_operations = apply_dynamic_skill_operations(
                 working_skill, proposed_skill_operations,
             )
+            materialized = {
+                (
+                    str(item.get("resource", "")),
+                    str(item.get("edge_id", "")),
+                    str(item.get("action", "")),
+                )
+                for item in skill_operations
+                if item.get("applied")
+            }
+            semantic_fallbacks = []
+            for update in reflection.get("accepted", []):
+                resource = str(update.get("resource", ""))
+                if resource not in {"transition_guard", "action_node", "action_rule"}:
+                    continue
+                materialized_resource = "action_rule" if resource == "action_node" else resource
+                key = (
+                    materialized_resource,
+                    str(update.get("edge_id", "")),
+                    str(update.get("action", "")),
+                )
+                edge_was_materialized = (
+                    resource == "transition_guard"
+                    and any(item[1] == key[1] for item in materialized if item[1])
+                )
+                if key not in materialized and not edge_was_materialized:
+                    fallback = dict(update)
+                    if resource == "action_node":
+                        # The existing editor stores node placement/role in the
+                        # action-card region. Keep the semantic decision in
+                        # the ledger while materializing it through that API.
+                        fallback["resource"] = "action_rule"
+                    semantic_fallbacks.append(fallback)
+            if semantic_fallbacks:
+                working_skill, fallback_operations = apply_working_skill_operations(
+                    working_skill, state, semantic_fallbacks,
+                )
+                skill_operations.extend(fallback_operations)
             reflection["requested_skill_operations"] = proposed_skill_operations
+            reflection["semantic_fallback_updates"] = semantic_fallbacks
             reflection["skill_operations"] = skill_operations
             reflection["working_skill_before_sha256"] = skill_before_sha256
             reflection["working_skill_after_sha256"] = hashlib.sha256(working_skill.encode("utf-8")).hexdigest()
@@ -471,7 +521,10 @@ def main() -> None:
                     reflection.get("model_decision", "missing"),
                     reflection.get("model_no_update_reason", "")[:180], reflection.get("prompt_chars", 0),
                 )
-        _checkpoint(out_dir, state, working_skill, base_reference, policy, slot_policies, action_rules)
+        working_skill = _checkpoint(
+            out_dir, state, working_skill, base_reference, policy,
+            slot_policies, action_rules,
+        )
         _persist_usage_snapshot()
         _write(out_dir / "batch_diagnostics" / f"batch_{batch_index:04d}.json", json.dumps({
             "batch_index": batch_index,
@@ -518,7 +571,10 @@ def main() -> None:
     )
     result["llm_usage"] = usage
     _write(out_dir / "online_refine_result.json", json.dumps(result, indent=2, ensure_ascii=False))
-    _checkpoint(out_dir, state, working_skill, base_reference, policy, slot_policies, action_rules)
+    working_skill = _checkpoint(
+        out_dir, state, working_skill, base_reference, policy,
+        slot_policies, action_rules,
+    )
     log.info("Final AST=%.4f action=%.4f slot=%.4f", result["ast_cds"]["ast_joint"], result["ast_cds"]["ast_action_name"], result["ast_cds"]["ast_slot_value"])
 
 

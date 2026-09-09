@@ -870,16 +870,20 @@ def _extract_batch_analysis_payload(raw: str) -> dict[str, Any] | None:
 
 
 def _render_batch_case_report(
-    case: dict[str, Any], analysis: dict[str, Any] | None, reason: str = ""
+    case: dict[str, Any], analysis: dict[str, Any] | None, reason: str = "",
+    *, self_verify: bool = False,
 ) -> tuple[str, list[dict[str, Any]], bool]:
     """Turn one entry of a batch response into the legacy per-case report."""
     analysis = analysis if isinstance(analysis, dict) else {}
     corrections = analysis.get("corrections", [])
     if not isinstance(corrections, list):
         corrections = []
-    verified, feedback = _verify_corrected_actions(
-        case.get("ast_mismatches", []), corrections
-    )
+    if self_verify:
+        verified, feedback = _verify_corrected_actions(
+            case.get("ast_mismatches", []), corrections
+        )
+    else:
+        verified, feedback = True, "Self-verification disabled."
     cause = analysis.get("failure_cause") or {}
     memory = analysis.get("failure_memory") or {}
     if not isinstance(cause, dict):
@@ -911,7 +915,7 @@ def _render_batch_case_report(
         "## Skill Reflection",
         str(memory.get("skill_reflection") or "Encode this as reusable guidance without hard-coding customer-specific values."),
     ])
-    if not verified:
+    if self_verify and not verified:
         report += "\n\n<!-- Batch AST verification failed: " + (reason or feedback) + " -->"
     return report, corrections, verified
 
@@ -961,6 +965,8 @@ def _save_verified_report(
     verified: bool,
     parseable: bool,
     parse_repaired: bool,
+    *,
+    self_verify: bool = False,
 ) -> str:
     did = case.get("dialogue_id", "unknown").replace("/", "_").replace("\\", "_")
     case_dir = output_dir / did
@@ -969,6 +975,7 @@ def _save_verified_report(
     (case_dir / "verification.json").write_text(
         json.dumps({
             "verified": verified,
+            "self_verification_enabled": self_verify,
             "parseable": parseable,
             "parse_repaired": parse_repaired,
             "failure_log_path": case.get("failure_log_path"),
@@ -976,7 +983,9 @@ def _save_verified_report(
         }, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
-    if verified and parseable:
+    # This flag means that the report is parser-compatible. It must not imply
+    # that the optional engineering self-verifier was executed.
+    if parseable:
         (case_dir / "evaluate_passed.flag").write_text("passed\n", encoding="utf-8")
     return str(case_dir)
 
@@ -989,6 +998,7 @@ def _run_verified_abcd_error_analysis(
     *,
     max_rounds: int = 2,
     batch_size: int = ABCD_ERROR_ANALYSIS_BATCH_SIZE,
+    self_verify: bool = False,
 ) -> list[str]:
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -997,13 +1007,15 @@ def _run_verified_abcd_error_analysis(
     batch_size = max(1, int(batch_size))
     for batch_index, batch in enumerate(_chunk_list(failed_cases, batch_size), start=1):
         print(
-            f"  Verified ABCD error-analysis batch {batch_index}/"
+            f"  ABCD error-analysis batch {batch_index}/"
             f"{(len(failed_cases) + batch_size - 1) // batch_size}: {len(batch)} cases"
         )
         raw = ""
         payload: dict[str, Any] | None = None
         feedback: str | None = None
-        for _ in range(max_rounds + 1):
+        # Self-verification adds a second engineering-side loop. Keep it off
+        # by default; the explicit opt-in preserves reproducibility studies.
+        for _ in range(max_rounds + 1 if self_verify else 1):
             prompt = _build_verified_analysis_batch_prompt(batch, feedback)
             raw = chat(
                 [
@@ -1025,7 +1037,7 @@ def _run_verified_abcd_error_analysis(
             missing = sorted(expected - actual)
             invalid: list[str] = []
             invalid_feedback: list[str] = []
-            if payload is not None and not missing:
+            if self_verify and payload is not None and not missing:
                 by_id = {
                     str(item.get("dialogue_id")): item
                     for item in payload.get("analyses", [])
@@ -1048,11 +1060,12 @@ def _run_verified_abcd_error_analysis(
             feedback = (
                 "The response was incomplete or invalid. Missing dialogue_id entries: "
                 + repr(missing)
-                + ". Cases whose corrections failed local AST verification: "
-                + repr(invalid)
-                + ". Return valid JSON with exactly one analysis per supplied case, "
-                "and make every correction exactly match that case's verified gold "
-                "action and ordered slots.\n"
+                + (". Cases whose corrections failed local AST verification: "
+                   + repr(invalid)
+                   + ". Return valid JSON with exactly one analysis per supplied case, "
+                   "and make every correction exactly match that case's verified gold "
+                   "action and ordered slots.\n" if self_verify else
+                   ". Return valid JSON with exactly one analysis per supplied case.\n")
                 + "\n".join(invalid_feedback)
             )
 
@@ -1064,7 +1077,8 @@ def _run_verified_abcd_error_analysis(
         for case in batch:
             analysis = by_id.get(str(case.get("dialogue_id")))
             report, corrections, verified = _render_batch_case_report(
-                case, analysis, feedback or "No valid batch response was returned."
+                case, analysis, feedback or "No valid batch response was returned.",
+                self_verify=self_verify,
             )
             parseable = _has_parseable_failure_items(report)
             if not analysis:
@@ -1073,7 +1087,8 @@ def _run_verified_abcd_error_analysis(
                 )
                 parseable = _has_parseable_failure_items(report)
             output_paths.append(_save_verified_report(
-                output_dir, case, report, verified, parseable, False
+                output_dir, case, report, verified, parseable, False,
+                self_verify=self_verify,
             ))
 
     return output_paths
@@ -1323,6 +1338,7 @@ def _run_error_analysis(
     response_logger: ResponseLogger,
     *,
     batch_size: int = ABCD_ERROR_ANALYSIS_BATCH_SIZE,
+    self_verify: bool = False,
 ) -> Path:
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1333,6 +1349,7 @@ def _run_error_analysis(
         model,
         response_logger,
         batch_size=batch_size,
+        self_verify=self_verify,
     )
 
     parsed_path = (output_dir.parent / f"{output_dir.name}_parsed.json").resolve()
@@ -1775,6 +1792,7 @@ def run_pipeline(args) -> PipelineOutputs:
                         model,
                         response_logger,
                         batch_size=args.analysis_batch_size,
+                        self_verify=getattr(args, "enable_self_verifier", False),
                     )
                     log.info("%s parsed error analysis -> %s", label, error_parsed_path)
 
@@ -1879,7 +1897,8 @@ def run_pipeline(args) -> PipelineOutputs:
                 "evolution_batch_size": args.evolution_batch_size,
                 "resume_dir": str(out_dir) if resume_dir else None,
                 "continue_on_batch_error": args.continue_on_batch_error,
-                "success_analysis_enabled": True,
+        "success_analysis_enabled": True,
+        "self_verifier_enabled": getattr(args, "enable_self_verifier", False),
             },
             "seed_train": train_eval,
             "seed_test": None,
@@ -2109,6 +2128,14 @@ def main() -> None:
         "--skip-seed-test",
         action="store_true",
         help="Skip seed baseline evaluation on the test set",
+    )
+    parser.add_argument(
+        "--enable-self-verifier",
+        action="store_true",
+        help=(
+            "Opt into the extra local correction verifier and retry loop in "
+            "Trace2Skill error analysis; disabled by default."
+        ),
     )
     parser.add_argument(
         "--skip-test-eval", action="store_true",

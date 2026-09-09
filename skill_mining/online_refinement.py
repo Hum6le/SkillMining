@@ -160,11 +160,16 @@ ambiguous, retain the old logic and revise its local wording to include the
 new condition, uncertainty, or retrieval guidance instead. Never trade away a
 previously supported route to fix one isolated failure.
 
-You may promote a useful transition from reference into skill, revise an
-existing action/transition explanation, move a confusing or mostly harmful
-skill rule back to reference, refine an action rule or slot policy, add a
-retrieval instruction where a deferred transition should be consulted, or make
-no change. Do not assume every observed error requires a skill edit. When
+You may promote a useful transition and its target action branch from
+reference into skill, revise an existing action/transition explanation, move a
+confusing or mostly harmful skill rule back to reference, refine an action rule
+or slot policy, add a retrieval instruction where a deferred transition should
+be consulted, or make no change. A promotion is not complete if it only adds a
+sentence to a routing-policy resource: the executable skill must also make the
+target action reachable from the source and preserve or add the target action's
+role/placement description. Use the `action_node` update for that case and
+provide a compatible skill edit when the existing action card needs to be
+clarified. Do not assume every observed error requires a skill edit. When
 information belongs in reference, ensure the relevant skill rule explains when
 to retrieve it instead of flattening all exceptional logic into skill.md.
 
@@ -229,14 +234,16 @@ record.
 
 Return valid JSON only:
 {{"decision":"update|no_update","no_update_reason":"required only for no_update",
-"updates":[{{"resource":"transition_guard|action_rule|slot_policy|reference",
+"updates":[{{"resource":"transition_guard|action_node|action_rule|slot_policy|reference",
 "edge_id":"required for transition_guard; optional but recommended for edge-scoped reference",
-"action":"required only for action_rule/slot_policy",
+"action":"required for action_node/action_rule/slot_policy",
 "op":"upsert|delete",
 "content":"concise natural-language replacement or addition; empty only for delete", "status":"resolved|uncertain",
 "rationale":"grounded in specific rollout-vs-gold evidence"}}],
 "skill_operations":[{{"op":"upsert|delete",
+"resource":"optional transition_guard|action_rule; identifies the semantic update being materialized",
 "edge_id":"optional graph edge ID; required when applying a transition_guard",
+"action":"optional action name; recommended when materializing an action rule",
 "match_text":"an exact, unique excerpt copied from current_skill",
 "new_text":"complete, compatibility-preserving replacement for match_text; empty only for delete",
 "occurrence":"optional 1-based occurrence number, only when match_text is repeated",
@@ -347,9 +354,9 @@ def _signature_distance(left: frozenset[str], right: frozenset[str]) -> int:
 def initialize_skill_dag(subgraph: dict[str, Any], subflow: str) -> dict[str, Any]:
     """Create the online state from an offline backbone mining artifact.
 
-    The offline tree remains immutable in the first online-refinement version.
-    Any non-backbone edge begins as reference-only until sufficient online
-    evidence and a resolved guard justify promotion.
+    The offline tree remains immutable. Any non-backbone edge begins as
+    reference-only; the online optimizer may later promote a supported branch
+    and its target action placement into the working skill.
     """
     nodes = {str(node["id"]): str(node.get("label") or node["id"]) for node in subgraph.get("nodes", [])}
     order = list(subgraph.get("backbone", {}).get("compilation_order", []))
@@ -1254,6 +1261,12 @@ def autonomous_resource_reflection(
     graph_edges = [{
         "edge_id": edge_id, "source_action": edge["source_action"],
         "target_action": edge["target_action"], "kind": edge["kind"],
+        "visibility": edge.get("visibility", "reference"),
+        "offline_support": int(edge.get("offline_support", 0) or 0),
+        "gold_support": int(edge.get("gold_support", 0) or 0),
+        "rollout_success": int(edge.get("rollout_success", 0) or 0),
+        "rollout_failure": int(edge.get("rollout_failure", 0) or 0),
+        "guard_status": edge.get("guard_status", "pending"),
     } for edge_id, edge in state.get("edges", {}).items()]
     resources = {"reference": reference, "action_rules": action_rules, "slot_policies": slot_policies}
     lookups, planner_prompt, planner_raw, planner_error = _plan_resource_lookups(
@@ -1319,27 +1332,25 @@ def autonomous_resource_reflection(
             })
             continue
         proposed_skill_operations.append({
-            "op": op, "edge_id": str(item.get("edge_id", "")).strip(),
+            "op": op, "resource": str(item.get("resource", "")).strip(),
+            "edge_id": str(item.get("edge_id", "")).strip(),
+            "action": str(item.get("action", "")).strip(),
             "match_text": match_text, "new_text": new_text,
             "occurrence": occurrence, "rationale": rationale,
         })
 
     valid_actions = {str(node["label"]) for node in state.get("nodes", [])}
     accepted, rejected = [], []
-    executable_transition_edges = {
-        str(item.get("edge_id", "")) for item in proposed_skill_operations
-        if str(item.get("edge_id", ""))
-    }
     for update in payload.get("updates", []):
         if not isinstance(update, dict):
             continue
         resource, content = str(update.get("resource", "")), str(update.get("content", "")).strip()
         operation = str(update.get("op", "upsert")).strip().lower()
         status = str(update.get("status", "uncertain")).lower()
-        if resource not in {"transition_guard", "action_rule", "slot_policy", "reference"} or operation not in {"upsert", "delete"}:
+        if resource not in {"transition_guard", "action_node", "action_rule", "slot_policy", "reference"} or operation not in {"upsert", "delete"}:
             rejected.append({"update": update, "reason": "unsupported_resource_or_empty_content"})
             continue
-        if operation == "delete" and resource not in {"transition_guard", "action_rule"}:
+        if operation == "delete" and resource not in {"transition_guard", "action_node", "action_rule"}:
             rejected.append({"update": update, "reason": "delete_not_supported_for_resource"})
             continue
         if operation == "upsert" and not content:
@@ -1349,12 +1360,6 @@ def autonomous_resource_reflection(
             edge_id = str(update.get("edge_id", ""))
             if edge_id not in state.get("edges", {}):
                 rejected.append({"update": update, "reason": "unknown_edge"})
-                continue
-            if operation == "upsert" and status == "resolved" and edge_id not in executable_transition_edges:
-                rejected.append({
-                    "update": update,
-                    "reason": "resolved_transition_guard_missing_executable_skill_edit",
-                })
                 continue
             edge = state["edges"][edge_id]
             edge["guard"] = content if operation == "upsert" else ""
@@ -1367,6 +1372,48 @@ def autonomous_resource_reflection(
                 edge["visibility"] = "skill"
             else:
                 edge["visibility"] = "reference"
+        elif resource == "action_node":
+            action = str(update.get("action", "")).strip()
+            edge_id = str(update.get("edge_id", "")).strip()
+            if action not in valid_actions:
+                rejected.append({"update": update, "reason": "unknown_action"})
+                continue
+            if edge_id and edge_id not in state.get("edges", {}):
+                rejected.append({"update": update, "reason": "unknown_edge"})
+                continue
+            node = next((item for item in state.get("nodes", []) if str(item.get("label")) == action), None)
+            if node is None:
+                rejected.append({"update": update, "reason": "unknown_action_node"})
+                continue
+            promotions = node.setdefault("online_promotions", [])
+            if operation == "upsert":
+                record = {
+                    "action": action, "edge_id": edge_id, "content": content,
+                    "status": "resolved" if status == "resolved" else "uncertain",
+                    "rationale": update.get("rationale", ""),
+                }
+                promotions[:] = [item for item in promotions if item.get("edge_id") != edge_id]
+                promotions.append(record)
+                state["node_promotions"] = [
+                    item for item in state.get("node_promotions", [])
+                    if not (item.get("action") == action and item.get("edge_id") == edge_id)
+                ]
+                state["node_promotions"].append(record)
+                if edge_id and status == "resolved":
+                    edge = state["edges"][edge_id]
+                    if edge.get("kind") == "candidate_branch":
+                        edge["kind"] = "promoted_branch"
+                    edge["visibility"] = "skill"
+            else:
+                promotions[:] = [item for item in promotions if item.get("edge_id") != edge_id]
+                state["node_promotions"] = [
+                    item for item in state.get("node_promotions", [])
+                    if not (item.get("action") == action and item.get("edge_id") == edge_id)
+                ]
+                if edge_id and edge_id in state.get("edges", {}):
+                    edge = state["edges"][edge_id]
+                    if edge.get("kind") != "backbone":
+                        edge["visibility"] = "reference"
         elif resource in {"action_rule", "slot_policy"}:
             action = str(update.get("action", ""))
             if action not in valid_actions:
@@ -1427,7 +1474,9 @@ def apply_dynamic_skill_operations(
         occurrence = operation.get("occurrence")
         record = {
             "op": op,
+            "resource": str(operation.get("resource", "")),
             "edge_id": str(operation.get("edge_id", "")),
+            "action": str(operation.get("action", "")),
             "match_text": match_text,
             "new_text": new_text,
             "occurrence": occurrence,
@@ -1571,6 +1620,17 @@ def render_online_resources(state: dict[str, Any]) -> tuple[str, str]:
                 *([f"- Guard candidate: {guard}"] if guard else []),
                 "",
             ])
+            # The edge title alone is not enough for lexical retrieval: the
+            # runtime query is usually phrased in dialogue language. Retain a
+            # small bounded set of rollout contexts as evidence, never as
+            # executable policy.
+            evidence = edge.get("evidence", []) or []
+            for item in evidence[:3]:
+                snippet = str(item.get("context", "")).strip().replace("\n", " ")
+                if snippet:
+                    reference_lines.append(f"- Dialogue evidence: {snippet[:900]}")
+            if evidence:
+                reference_lines.append("")
     for note in state.get("reference_notes", []):
         if str(note.get("content", "")).strip():
             edge = state.get("edges", {}).get(str(note.get("edge_id", "")), {})
@@ -1582,6 +1642,70 @@ def render_online_resources(state: dict[str, Any]) -> tuple[str, str]:
     if len(skill_lines) == 2:
         skill_lines.append("- No non-backbone transition has met the online promotion criteria yet.")
     return "\n".join(skill_lines).rstrip() + "\n", "\n".join(reference_lines).rstrip() + "\n"
+
+
+def _replace_generated_markdown_section(skill: str, heading: str, body: str) -> str:
+    """Replace one generated level-2 section without touching user-authored text."""
+    section = f"{heading}\n\n{body.strip()}\n"
+    pattern = rf"(?ms)^{re.escape(heading)}\s*$.*?(?=^##\s+|\Z)"
+    if re.search(pattern, skill):
+        return re.sub(pattern, section + "\n", skill, count=1)
+    return skill.rstrip() + "\n\n" + section
+
+
+def render_online_skill_additions(state: dict[str, Any]) -> str:
+    """Render executable online branches, including their target node role."""
+    rows = []
+    for edge_id, edge in sorted(state.get("edges", {}).items()):
+        if edge.get("kind") == "backbone" or edge.get("visibility") != "skill":
+            continue
+        source = edge.get("source_action", edge.get("source"))
+        target = edge.get("target_action", edge.get("target"))
+        guard = str(edge.get("guard", "")).strip() or "when the current dialogue matches the supported evidence"
+        rows.append(f"- From `{source}`, the executable workflow may branch to `{target}` when {guard}.")
+        node = next((item for item in state.get("nodes", []) if item.get("label") == target), None)
+        promotions = (node or {}).get("online_promotions", [])
+        promotion = next((item for item in promotions if item.get("edge_id") == edge_id), None)
+        if promotion and str(promotion.get("content", "")).strip():
+            rows.append(f"  - Target action role and placement: {str(promotion['content']).strip()}")
+        else:
+            rows.append(f"  - Target action `{target}` is an executable branch attached after `{source}`; follow its existing action rule and slot discipline.")
+    if not rows:
+        return ""
+    return "\n".join(rows)
+
+
+def merge_online_skill_additions(skill: str, state: dict[str, Any]) -> str:
+    """Make state-level branch promotions visible in the executable skill.
+
+    Promoted edges are first materialized in the compiler-owned routing region
+    when that region exists. The small prose section is deliberately retained
+    as a readable node-placement index; it is not a second routing contract.
+    """
+    body = render_online_skill_additions(state)
+    if not body:
+        return skill
+    current = skill
+    try:
+        from skill_mining.skill_writer import _upsert_routing_transition_rule
+        for edge_id, edge in sorted(state.get("edges", {}).items()):
+            if edge.get("kind") == "backbone" or edge.get("visibility") != "skill":
+                continue
+            source = str(edge.get("source", ""))
+            target = str(edge.get("target", ""))
+            if not source or not target:
+                continue
+            guard = str(edge.get("guard", "")).strip() or "the current dialogue matches the supported branch evidence"
+            current = _upsert_routing_transition_rule(
+                current, source, target,
+                str(edge.get("source_action", source)),
+                str(edge.get("target_action", target)), guard,
+            )
+    except (ImportError, ValueError):
+        # Legacy/non-compiled skills may not have routing anchors. The
+        # generated branch section below remains a usable fallback.
+        pass
+    return _replace_generated_markdown_section(current, "## Online-promoted graph branches", body)
 
 
 def apply_refinement_patches(state: dict[str, Any], patches: list[dict[str, Any]]) -> None:
