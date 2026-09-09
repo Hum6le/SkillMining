@@ -1066,7 +1066,23 @@ def main() -> None:
     if args.subflow:
         manifest_entries = [row for row in manifest_entries if row["subflow"] in set(args.subflow)]
     if args.methods:
-        manifest_entries = [row for row in manifest_entries if row["method"] in set(args.methods)]
+        requested_methods = set(args.methods)
+        # ``--skills-root`` is inherently single-method input.  Keep the
+        # entries when an older/generated discovery record still carries the
+        # legacy ``unknown`` label; otherwise a valid root is silently reduced
+        # to zero entries before any analysis starts.
+        if not args.manifest and len(requested_methods) == 1:
+            requested_method = next(iter(requested_methods))
+            manifest_entries = [
+                {**row, "method": requested_method}
+                if row.get("method") in {None, "", "unknown"}
+                else row
+                for row in manifest_entries
+                if row.get("method") in requested_methods
+                or row.get("method") in {None, "", "unknown"}
+            ]
+        else:
+            manifest_entries = [row for row in manifest_entries if row["method"] in requested_methods]
     LOG.info("Discovered %d method/subflow entries", len(manifest_entries))
     if args.expected_subflows is not None:
         discovered_subflows = {row["subflow"] for row in manifest_entries}

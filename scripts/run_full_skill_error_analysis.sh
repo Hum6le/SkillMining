@@ -164,6 +164,11 @@ echo "HF_ENDPOINT:       $HF_ENDPOINT"
 echo "Batch size:        $BATCH_SIZE"
 echo "Sample errors:     $SAMPLE_ERRORS"
 echo "Expected subflows: $EXPECTED_SUBFLOWS"
+if [[ ${#METHODS[@]} -gt 0 ]]; then
+    echo "Methods:            ${METHODS[*]}"
+else
+    echo "Methods:            <all discovered>"
+fi
 
 CMD=("$PYTHON_BIN" scripts/error_analysis_full_skills.py
     --test-root "$TEST_ROOT"
@@ -193,6 +198,10 @@ if [[ ${#SUBFLOWS[@]} -gt 0 ]]; then
         CMD+=(--subflow "$subflow")
     done
 fi
+
+printf 'Executing:'
+printf ' %q' "${CMD[@]}"
+printf '\n'
 
 "${CMD[@]}"
 status=$?
