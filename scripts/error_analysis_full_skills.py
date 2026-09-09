@@ -63,6 +63,11 @@ PREDICTION_NAMES = (
     "test_abcd_predictions.json",
     "evolved_test_abcd_predictions.json",
     "mined_test_abcd_predictions.json",
+    # ``evaluate_agent_on_subflow(..., label="online_refined")`` writes this
+    # derived artifact next to online_refine_result.json.  Prefer it over the
+    # result envelope because it contains the actual conversation turn rows.
+    "online_refined_abcd_predictions.json",
+    "online_refine_abcd_predictions.json",
     # Graph online-refinement stores the final held-out evaluation as one
     # result envelope rather than a standalone predictions file.
     "online_refine_result.json",
@@ -201,7 +206,10 @@ def as_prediction_rows(value: Any) -> list[dict[str, Any]]:
     if isinstance(value, list):
         return value
     if isinstance(value, dict):
-        for key in ("predictions", "turn_results", "rows", "results", "abcd_predictions"):
+        # Prefer the AST prediction payload.  In result envelopes, a generic
+        # ``predictions`` list may contain text-generation records rather than
+        # action turns and would otherwise mask the usable abcd_predictions.
+        for key in ("abcd_predictions", "turn_results", "predictions", "rows", "results"):
             if isinstance(value.get(key), list):
                 return value[key]
     return []
@@ -221,7 +229,9 @@ def flatten_prediction_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if isinstance(record.get("turns"), list):
             conversation_id = str(record.get("conversation_id") or record.get("convo_id") or "")
             for turn in record["turns"]:
-                if not isinstance(turn, dict) or turn.get("turn_type") != "action":
+                if not isinstance(turn, dict):
+                    continue
+                if turn.get("turn_type") not in (None, "action"):
                     continue
                 flattened.append({**turn, "convo_id": conversation_id, "target_type": "action"})
         else:
@@ -993,8 +1003,13 @@ def analyze_subflow(
         })
         return base
 
-    predictions = flatten_prediction_rows(as_prediction_rows(load_json(prediction_path)))
-    LOG.info("%s prediction rows after normalization: %d", subflow, len(predictions))
+    prediction_payload = load_json(prediction_path)
+    predictions = flatten_prediction_rows(as_prediction_rows(prediction_payload))
+    LOG.info(
+        "%s prediction artifact=%s raw_rows=%d normalized_rows=%d",
+        subflow, prediction_path.name,
+        len(as_prediction_rows(prediction_payload)), len(predictions),
+    )
     test_convs = load_json(test_path)
     react_path = find_react_file(prediction_path)
     react_traces = as_prediction_rows(load_json(react_path)) if react_path else []
