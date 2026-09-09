@@ -1048,11 +1048,21 @@ def main() -> None:
         LOG.info("Loaded %d method/subflow skill entries from manifest %s", len(manifest_entries), args.manifest)
     else:
         discovered = discover_skill_dirs(args.skills_root)
+        # A skills-root invocation already scopes the input to one method, but
+        # historically these entries were labelled ``unknown``. Consequently
+        # a perfectly reasonable ``--skills-root .../graph --methods graph``
+        # filtered every discovered entry out. Use the sole requested method
+        # as the method identity in this unambiguous mode.
+        root_method = args.methods[0] if args.methods and len(args.methods) == 1 else "unknown"
         manifest_entries = [
-            {"method": "unknown", "subflow": subflow, "skill_path": skill_dir, "run_dir": None}
+            {"method": root_method, "subflow": subflow, "skill_path": skill_dir, "run_dir": None}
             for subflow, skill_dir in discovered.items()
         ]
-        LOG.info("Discovered %d subflows under %s", len(manifest_entries), args.skills_root)
+        LOG.info(
+            "Discovered %d subflows under %s%s",
+            len(manifest_entries), args.skills_root,
+            f" (method={root_method})" if root_method != "unknown" else "",
+        )
     if args.subflow:
         manifest_entries = [row for row in manifest_entries if row["subflow"] in set(args.subflow)]
     if args.methods:
