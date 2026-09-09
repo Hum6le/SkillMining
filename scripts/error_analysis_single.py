@@ -69,7 +69,26 @@ def _build_react_lookup(react_traces: list[dict[str, Any]] | None) -> dict[tuple
 
 
 def _normalise_turn_results(turn_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    rows = [dict(r) for r in turn_results]
+    # ``online_refine_result.json`` and the evaluator's *_abcd_predictions
+    # artifact store one record per conversation with a nested ``turns`` list.
+    # The single-flow analyzer historically expected raw turn rows, which
+    # silently produced 0 parsed actions for this perfectly valid format.
+    rows: list[dict[str, Any]] = []
+    for record in turn_results:
+        if not isinstance(record, dict):
+            continue
+        if isinstance(record.get("turns"), list):
+            conversation_id = str(record.get("conversation_id") or record.get("convo_id") or "")
+            for turn in record["turns"]:
+                if not isinstance(turn, dict) or turn.get("turn_type") != "action":
+                    continue
+                rows.append({
+                    **turn,
+                    "convo_id": conversation_id,
+                    "target_type": "action",
+                })
+        else:
+            rows.append(dict(record))
     for row in rows:
         row["convo_id"] = str(row.get("convo_id", ""))
         if "predicted_action" not in row and "prediction" in row:

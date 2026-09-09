@@ -207,6 +207,28 @@ def as_prediction_rows(value: Any) -> list[dict[str, Any]]:
     return []
 
 
+def flatten_prediction_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalize raw turn rows and conversation-wrapped ABCD predictions.
+
+    The latter is the format emitted by ``online_refine_result.json`` and by
+    ``*_abcd_predictions.json``.  Keeping this conversion here makes the full
+    analyzer use the same input contract as the working single-flow analyzer.
+    """
+    flattened: list[dict[str, Any]] = []
+    for record in rows:
+        if not isinstance(record, dict):
+            continue
+        if isinstance(record.get("turns"), list):
+            conversation_id = str(record.get("conversation_id") or record.get("convo_id") or "")
+            for turn in record["turns"]:
+                if not isinstance(turn, dict) or turn.get("turn_type") != "action":
+                    continue
+                flattened.append({**turn, "convo_id": conversation_id, "target_type": "action"})
+        else:
+            flattened.append(dict(record))
+    return flattened
+
+
 def discover_skill_dirs(root: Path) -> dict[str, Path]:
     """Find one skill artifact per subflow.
 
@@ -971,7 +993,8 @@ def analyze_subflow(
         })
         return base
 
-    predictions = as_prediction_rows(load_json(prediction_path))
+    predictions = flatten_prediction_rows(as_prediction_rows(load_json(prediction_path)))
+    LOG.info("%s prediction rows after normalization: %d", subflow, len(predictions))
     test_convs = load_json(test_path)
     react_path = find_react_file(prediction_path)
     react_traces = as_prediction_rows(load_json(react_path)) if react_path else []
