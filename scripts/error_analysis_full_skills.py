@@ -63,6 +63,9 @@ PREDICTION_NAMES = (
     "test_abcd_predictions.json",
     "evolved_test_abcd_predictions.json",
     "mined_test_abcd_predictions.json",
+    # Graph online-refinement stores the final held-out evaluation as one
+    # result envelope rather than a standalone predictions file.
+    "online_refine_result.json",
 )
 
 
@@ -198,7 +201,7 @@ def as_prediction_rows(value: Any) -> list[dict[str, Any]]:
     if isinstance(value, list):
         return value
     if isinstance(value, dict):
-        for key in ("predictions", "turn_results", "rows", "results"):
+        for key in ("predictions", "turn_results", "rows", "results", "abcd_predictions"):
             if isinstance(value.get(key), list):
                 return value[key]
     return []
@@ -910,6 +913,7 @@ def analyze_subflow(
         skill_path
         and prediction_path
         and prediction_path.stat().st_mtime < skill_path.stat().st_mtime
+        and prediction_path.name != "online_refine_result.json"
     )
 
     base = {
