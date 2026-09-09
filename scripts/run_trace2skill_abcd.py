@@ -2124,10 +2124,19 @@ def main() -> None:
         action="store_true",
         help="Record a failed training batch and continue with the next batch",
     )
-    parser.add_argument(
+    seed_test_group = parser.add_mutually_exclusive_group()
+    seed_test_group.add_argument(
         "--skip-seed-test",
+        dest="skip_seed_test",
         action="store_true",
-        help="Skip seed baseline evaluation on the test set",
+        default=True,
+        help="Skip seed baseline evaluation on the test set (default)",
+    )
+    seed_test_group.add_argument(
+        "--run-seed-test",
+        dest="skip_seed_test",
+        action="store_false",
+        help="Opt in to the pre-evolution seed test evaluation for comparison",
     )
     parser.add_argument(
         "--enable-self-verifier",
