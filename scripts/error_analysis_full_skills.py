@@ -73,6 +73,16 @@ PREDICTION_NAMES = (
     "online_refine_result.json",
 )
 
+# Online refinement evaluates with the current skill and only then writes the
+# final skill checkpoint.  Therefore its prediction artifact is expected to
+# have an older mtime than skill.md; mtime-based stale rejection is invalid for
+# these files.
+ONLINE_PREDICTION_NAMES = {
+    "online_refined_abcd_predictions.json",
+    "online_refine_abcd_predictions.json",
+    "online_refine_result.json",
+}
+
 
 def _checkpoint_filename(method: str, subflow: str) -> str:
     safe_method = "".join(char if char.isalnum() or char in "-_" else "_" for char in method)
@@ -945,7 +955,7 @@ def analyze_subflow(
         skill_path
         and prediction_path
         and prediction_path.stat().st_mtime < skill_path.stat().st_mtime
-        and prediction_path.name != "online_refine_result.json"
+        and prediction_path.name not in ONLINE_PREDICTION_NAMES
     )
 
     base = {
