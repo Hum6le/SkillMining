@@ -173,6 +173,12 @@ clarified. Do not assume every observed error requires a skill edit. When
 information belongs in reference, ensure the relevant skill rule explains when
 to retrieve it instead of flattening all exceptional logic into skill.md.
 
+When a promotion is accepted, the compiler materializes the promoted
+transition as a skill-visible backbone/DAG edge and refreshes the Backbone
+Tree, Backbone Edges, Routing Policies, and any missing target Action Rule
+together. Reference-only transitions remain retrievable and must not be
+presented as backbone edges.
+
 Use only listed action names and graph edges. Learn general rules from the
 gold/prediction contrast: never hard-code literal customer values or invent
 hidden state, slot names, actions, or edges.
@@ -1584,6 +1590,111 @@ def apply_working_skill_operations(
     return current, applied
 
 
+def _materialize_promoted_graph_structure(skill: str, state: dict[str, Any]) -> str:
+    """Synchronize promoted graph edges with the executable skill structure.
+
+    A promoted transition is a structural update, not merely extra routing
+    prose.  Keep the state graph authoritative, then refresh the compact tree
+    and edge table and add an action rule for any newly exposed target node.
+    The operation is deliberately deterministic; the LLM only decides which
+    evidence-backed transition should be promoted and supplies its prose.
+    """
+    from skill_mining.skill_writer import (
+        _action_rule_labels,
+        _ensure_action_rules_region,
+        _render_backbone_edge_table,
+        _render_backbone_tree,
+        _upsert_action_rule,
+    )
+
+    nodes = {str(item.get("id")): item for item in state.get("nodes", [])}
+    promoted = [
+        edge for edge in state.get("edges", {}).values()
+        if edge.get("visibility") == "skill"
+        and edge.get("kind") in {"promoted_branch", "backbone"}
+    ]
+    if not promoted:
+        return skill
+
+    # The online skill is a DAG-compatible backbone: preserve every original
+    # backbone edge and add accepted promoted edges.  Do not silently add an
+    # unknown edge or node that was not present in the offline full graph.
+    backbone_edges = []
+    seen_edges: set[tuple[str, str]] = set()
+    for edge in state.get("edges", {}).values():
+        if edge.get("kind") not in {"backbone", "promoted_branch"} or edge.get("visibility") != "skill":
+            continue
+        source, target = str(edge.get("source", "")), str(edge.get("target", ""))
+        if source not in nodes or target not in nodes or (source, target) in seen_edges:
+            continue
+        seen_edges.add((source, target))
+        backbone_edges.append({
+            "source": source,
+            "target": target,
+            "support": edge.get("offline_support", 0),
+            "score": edge.get("score", edge.get("offline_support", 0)),
+        })
+
+    order = list(state.get("backbone_order", []))
+    for edge in promoted:
+        for node_id in (str(edge.get("source", "")), str(edge.get("target", ""))):
+            if node_id in nodes and node_id not in order:
+                order.append(node_id)
+    state["backbone_order"] = order
+    for item in state.get("nodes", []):
+        item["topological_order"] = order.index(item["id"]) if item.get("id") in order else None
+
+    subgraph = {
+        "nodes": list(nodes.values()),
+        "backbone": {"root": state.get("root", ROOT), "compilation_order": order, "edges": backbone_edges},
+    }
+    current = skill
+
+    # Keep the structural sections synchronized when the organized compiler
+    # format is present. Legacy skills simply retain their existing layout.
+    tree = _render_backbone_tree(subgraph)
+    edge_table = _render_backbone_edge_table(subgraph)
+    current, tree_count = re.subn(
+        r"(?ms)(^### Backbone Tree\s*\n).*?(?=^### Backbone Edges\s*$)",
+        lambda match: match.group(1) + tree + "\n\n",
+        current,
+        count=1,
+    )
+    current, edge_count = re.subn(
+        r"(?ms)(^### Backbone Edges\s*\n).*?(?=^### Routing Policies\s*$)",
+        lambda match: match.group(1) + edge_table + "\n\n",
+        current,
+        count=1,
+    )
+
+    existing_actions = _action_rule_labels(current)
+    for edge in promoted:
+        target = str(edge.get("target", ""))
+        target_label = str(edge.get("target_action", nodes.get(target, {}).get("label", target)))
+        if target_label in existing_actions:
+            continue
+        action_record = state.get("action_rules", {}).get(target_label, {})
+        content = str(action_record.get("rule", "")).strip()
+        if not content:
+            node = nodes.get(target, {})
+            promotions = node.get("online_promotions", []) if isinstance(node, dict) else []
+            content = next(
+                (str(item.get("content", "")).strip() for item in promotions if str(item.get("content", "")).strip()),
+                "",
+            )
+        if not content:
+            content = (
+                f"- Role: Execute `{target_label}` when the promoted transition reaches this action.\n"
+                "- Use only values explicitly grounded in the current dialogue; "
+                "retrieve deferred transition details from the reference when needed."
+            )
+        current = _ensure_action_rules_region(current)
+        current = _upsert_action_rule(current, target_label, f"#### `{target_label}`\n{content}")
+        existing_actions.add(target_label)
+
+    return current
+
+
 def render_online_slot_policies(state: dict[str, Any]) -> str:
     """Render resolved online refinements in the agent's policy-resource format."""
     lines = ["# Online Slot Policy Refinements", ""]
@@ -1685,7 +1796,7 @@ def merge_online_skill_additions(skill: str, state: dict[str, Any]) -> str:
     body = render_online_skill_additions(state)
     if not body:
         return skill
-    current = skill
+    current = _materialize_promoted_graph_structure(skill, state)
     try:
         from skill_mining.skill_writer import _upsert_routing_transition_rule
         for edge_id, edge in sorted(state.get("edges", {}).items()):

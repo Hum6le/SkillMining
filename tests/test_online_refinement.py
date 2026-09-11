@@ -412,6 +412,37 @@ Old action rule.
         self.assertIn("<!-- ACTION_RULES_START -->", updated)
         self.assertIn("Collect only details supplied in the dialogue.", updated)
 
+    def test_promoted_transition_updates_backbone_and_target_action_rule(self):
+        state = initialize_skill_dag(_subgraph(), "account_access")
+        edge = state["edges"]["a=>c"]
+        edge["visibility"] = "skill"
+        edge["kind"] = "promoted_branch"
+        edge["guard"] = "the customer wants to create or reset a password"
+        edge["guard_status"] = "resolved"
+        skill = '''# Skill
+## Workflow
+### Backbone Tree
+ROOT
+`-- `enter-details`
+
+### Backbone Edges
+- `enter-details` -> `send-link`
+
+### Routing Policies
+<!-- ROUTING_SECTION_START -->
+<!-- ROUTING_SECTION_END -->
+
+### Action Rules
+<!-- ACTION_RULES_START -->
+#### `enter-details`
+- Gather details.
+<!-- ACTION_RULES_END -->
+'''
+        merged = merge_online_skill_additions(skill, state)
+        self.assertIn("`enter-details` -> `make-password`", merged)
+        self.assertIn("#### `make-password`", merged)
+        self.assertIn("<!-- ROUTE_EDGE:a=>c -->", merged)
+
     @patch("llm.resolve_config", return_value={"model": "test", "api_key": "", "base_url": ""})
     @patch("llm.chat")
     def test_threshold_diagnostics_do_not_revert_autonomous_skill_edit(self, chat, _config):
