@@ -25,8 +25,14 @@ if [[ "$SUBFLOW_COUNT" -ne 1 ]]; then
     exit 2
 fi
 
+: > "$LOG_PATH"
+{
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] launcher started"
+    printf 'command='; printf '%q ' bash "$SCRIPT_DIR/evaluate_trace2skill_subflow_parallel.sh" "$@"; echo
+} >> "$LOG_PATH"
+
 nohup env PYTHONUNBUFFERED=1 bash "$SCRIPT_DIR/evaluate_trace2skill_subflow_parallel.sh" "$@" \
-    > "$LOG_PATH" 2>&1 &
+    >> "$LOG_PATH" 2>&1 &
 PID=$!
 PID_FILE="$OUTPUT_DIR/trace2skill_parallel_eval_${LAUNCH_ID}.pid"
 echo "$PID" > "$PID_FILE"
