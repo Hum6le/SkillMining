@@ -4,7 +4,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-OUTPUT_ROOT="${4:-$ROOT_DIR/outputs/trace2skill_module_ablation_$(date +%Y-%m-%d_%H-%M-%S)}"
+OUTPUT_ROOT="$ROOT_DIR/outputs/trace2skill_module_ablation_$(date +%Y-%m-%d_%H-%M-%S)"
+for ((index=1; index<=$#; index++)); do
+  arg="${!index}"
+  next_index=$((index + 1))
+  if [[ "$arg" == "--output-dir" && $next_index -le $# ]]; then
+    OUTPUT_ROOT="${!next_index}"
+  fi
+done
 LOG_DIR="$OUTPUT_ROOT/launcher_logs"
 mkdir -p "$LOG_DIR"
 LOG_PATH="$LOG_DIR/launch_$(date +%Y-%m-%d_%H-%M-%S).log"

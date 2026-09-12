@@ -4,20 +4,58 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
-SUBFLOW="${1:?usage: $0 SUBFLOW TRAIN_JSON TEST_JSON OUTPUT_ROOT [WORKFLOW_IDS] [REUSE_ROLLOUT_DIR] [EXISTING_FULL_DIR]}"
-TRAIN_FILE="${2:?missing TRAIN_JSON}"
-TEST_FILE="${3:?missing TEST_JSON}"
-OUTPUT_ROOT="${4:?missing OUTPUT_ROOT}"
-WORKFLOW_IDS_RAW="${5:-${SKILLMINING_WORKFLOW_IDS:-${SKILLMINING_WORKFLOW_ID:-}}}"
-REUSE_ROLLOUT_DIR="${6:-${TRACE2SKILL_REUSE_ROLLOUT_DIR:-}}"
-EXISTING_FULL_DIR="${7:-${TRACE2SKILL_EXISTING_FULL_DIR:-}}"
+SUBFLOW=""
+TRAIN_FILE=""
+TEST_FILE=""
+OUTPUT_ROOT=""
+WORKFLOW_IDS_RAW="${SKILLMINING_WORKFLOW_IDS:-${SKILLMINING_WORKFLOW_ID:-}}"
+REUSE_ROLLOUT_DIR="${TRACE2SKILL_REUSE_ROLLOUT_DIR:-}"
+EXISTING_FULL_DIR="${TRACE2SKILL_EXISTING_FULL_DIR:-}"
+
+usage() {
+  cat <<'EOF'
+Usage: bash scripts/run_trace2skill_module_ablation.sh [options]
+
+Required:
+  --subflow NAME
+  --train-file PATH
+  --test-file PATH
+  --output-dir PATH
+
+Optional:
+  --workflow-ids ID1,ID2,...
+  --reuse-rollout-dir PATH
+  --existing-full-dir PATH
+  --force-full
+EOF
+}
+
+FORCE_FULL="${FORCE_FULL:-0}"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --subflow) SUBFLOW="${2:?missing value for --subflow}"; shift 2 ;;
+    --train-file) TRAIN_FILE="${2:?missing value for --train-file}"; shift 2 ;;
+    --test-file) TEST_FILE="${2:?missing value for --test-file}"; shift 2 ;;
+    --output-dir) OUTPUT_ROOT="${2:?missing value for --output-dir}"; shift 2 ;;
+    --workflow-ids) WORKFLOW_IDS_RAW="${2:?missing value for --workflow-ids}"; shift 2 ;;
+    --reuse-rollout-dir) REUSE_ROLLOUT_DIR="${2:?missing value for --reuse-rollout-dir}"; shift 2 ;;
+    --existing-full-dir) EXISTING_FULL_DIR="${2:?missing value for --existing-full-dir}"; shift 2 ;;
+    --force-full) FORCE_FULL=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+[[ -n "$SUBFLOW" && -n "$TRAIN_FILE" && -n "$TEST_FILE" && -n "$OUTPUT_ROOT" ]] || {
+  echo "--subflow, --train-file, --test-file and --output-dir are required" >&2
+  usage >&2
+  exit 2
+}
 
 CONDA_ENV="${CONDA_ENV:-skillmining310}"
 ANALYSIS_BATCH_SIZE="${ANALYSIS_BATCH_SIZE:-8}"
 EVOLUTION_BATCH_SIZE="${EVOLUTION_BATCH_SIZE:-25}"
 MAP_BATCH_SIZE="${MAP_BATCH_SIZE:-8}"
-FORCE_FULL="${FORCE_FULL:-0}"
-
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate "$CONDA_ENV"
 export HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}"
