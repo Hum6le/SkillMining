@@ -314,6 +314,29 @@ def _chunk_list(items: list[Any], batch_size: int) -> list[list[Any]]:
     return [items[i:i + batch_size] for i in range(0, len(items), batch_size)]
 
 
+def _load_replayed_rollout_turns(
+    rollout_dir: Path, batch_index: int, one_shot: bool,
+) -> list[dict[str, Any]]:
+    """Load fixed training rollout evidence for controlled module ablations."""
+    if one_shot:
+        paths = sorted((rollout_dir / "train_batches").glob("batch_*/turns.json"))
+        if not paths:
+            raise FileNotFoundError(f"No train batch rollout files under {rollout_dir / 'train_batches'}")
+    else:
+        paths = [rollout_dir / "train_batches" / f"batch_{batch_index:04d}" / "turns.json"]
+    rows: list[dict[str, Any]] = []
+    for path in paths:
+        if not path.exists():
+            raise FileNotFoundError(f"Missing replay rollout: {path}")
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, list):
+            raise ValueError(f"Replay rollout must be a JSON list: {path}")
+        rows.extend(item for item in payload if isinstance(item, dict))
+    if not rows:
+        raise ValueError(f"Replay rollout is empty: {rollout_dir}")
+    return rows
+
+
 def _build_agent(
     model: str,
     workflow_text: str,
@@ -1554,8 +1577,12 @@ def run_pipeline(args) -> PipelineOutputs:
         "map_batch_size": args.map_batch_size,
         "analysis_batch_size": args.analysis_batch_size,
         "max_evolution_batches": args.max_evolution_batches,
+        "one_shot_update": args.one_shot_update,
         "skip_seed_test": args.skip_seed_test,
-        "success_analysis_enabled": True,
+        "success_analysis_enabled": args.enable_success_analysis,
+        "failure_analysis_enabled": args.enable_failure_analysis,
+        "skip_evolution": args.skip_evolution,
+        "reuse_rollout_dir": str(Path(args.reuse_rollout_dir).resolve()) if args.reuse_rollout_dir else None,
     }
     if resume_dir and previous_summary.get("config"):
         previous_config = previous_summary["config"]
@@ -1616,6 +1643,10 @@ def run_pipeline(args) -> PipelineOutputs:
     # Stage 1: seed run on training set to mine failures
     seed_train_turns_path = out_dir / "seed_train_turns.json"
     seed_train_eval_path = out_dir / "seed_train_eval.json"
+    replay_seed_path = (
+        Path(args.reuse_rollout_dir) / "seed_train_turns.json"
+        if args.reuse_rollout_dir else None
+    )
     if resume_dir and seed_train_turns_path.exists():
         log.info("Stage 1: reusing existing seed train turns (no rollout calls)")
         seed_train_turns = json.loads(seed_train_turns_path.read_text(encoding="utf-8"))
@@ -1623,15 +1654,15 @@ def run_pipeline(args) -> PipelineOutputs:
         if seed_train_eval_path.exists():
             train_eval = json.loads(seed_train_eval_path.read_text(encoding="utf-8"))
         else:
-            # A previous run may have crashed after saving turns but before
-            # writing the local evaluation file. Recompute it without calling
-            # the LLM, then continue from the saved rollout artifact.
-            log.info("Stage 1: rebuilding missing seed train evaluation locally")
             train_eval = _evaluate_turn_results(train_convs, seed_train_turns, "seed_train")
-            seed_train_eval_path.write_text(
-                json.dumps(train_eval, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
+            seed_train_eval_path.write_text(json.dumps(train_eval, indent=2, ensure_ascii=False), encoding="utf-8")
+    elif replay_seed_path and replay_seed_path.exists():
+        log.info("Stage 1: replaying seed train turns from %s (no rollout calls)", replay_seed_path)
+        seed_train_turns = json.loads(replay_seed_path.read_text(encoding="utf-8"))
+        seed_train_turns_path.write_text(json.dumps(seed_train_turns, indent=2, ensure_ascii=False), encoding="utf-8")
+        train_ast_scores = compute_ast_from_turn_results(train_convs, seed_train_turns)
+        train_eval = _evaluate_turn_results(train_convs, seed_train_turns, "seed_train")
+        seed_train_eval_path.write_text(json.dumps(train_eval, indent=2, ensure_ascii=False), encoding="utf-8")
     else:
         log.info("Stage 1: seed run on training set")
         seed_train_agent = _build_agent(
@@ -1667,7 +1698,7 @@ def run_pipeline(args) -> PipelineOutputs:
     # ParallelSkillEvolver, these outer batches update the skill on disk after
     # each batch.  The next batch therefore reads and patches the already
     # evolved skill, matching the official Trace2Skill training loop.
-    train_batches = _chunk_list(train_convs, args.evolution_batch_size)
+    train_batches = [train_convs] if args.one_shot_update else _chunk_list(train_convs, args.evolution_batch_size)
     if args.max_evolution_batches:
         train_batches = train_batches[:args.max_evolution_batches]
     log.info(
@@ -1737,10 +1768,16 @@ def run_pipeline(args) -> PipelineOutputs:
             current_reference_text,
             expose_scenario_labels=False,
         )
-        batch_turns = batch_agent.generate_all_turn_predictions(
-            batch_convs,
-            predict_actions=True,
-        )
+        if args.reuse_rollout_dir:
+            batch_turns = _load_replayed_rollout_turns(
+                Path(args.reuse_rollout_dir), batch_idx, args.one_shot_update,
+            )
+            log.info("%s reusing fixed rollout evidence: %d turn rows", label, len(batch_turns))
+        else:
+            batch_turns = batch_agent.generate_all_turn_predictions(
+                batch_convs,
+                predict_actions=True,
+            )
         (batch_dir / "turns.json").write_text(
             json.dumps(batch_turns, indent=2, ensure_ascii=False),
             encoding="utf-8",
@@ -1760,7 +1797,7 @@ def run_pipeline(args) -> PipelineOutputs:
             batch_ast_scores,
             log_dir=batch_dir / "failure_logs",
             hide_scenario_labels=False,
-        )
+        ) if args.enable_failure_analysis and not args.skip_evolution else []
         total_failed_cases += len(batch_failed_cases)
         batch_success_cases = _build_ast_success_cases(
             batch_convs,
@@ -1768,7 +1805,7 @@ def run_pipeline(args) -> PipelineOutputs:
             batch_ast_scores,
             log_dir=batch_dir / "success_logs",
             hide_scenario_labels=False,
-        )
+        ) if args.enable_success_analysis and not args.skip_evolution else []
         total_success_cases += len(batch_success_cases)
         log.info(
             "%s AST failures: %d / %d; strict AST successes: %d / %d",
@@ -1807,17 +1844,18 @@ def run_pipeline(args) -> PipelineOutputs:
                     )
                     log.info("%s parsed success analysis -> %s", label, success_parsed_path)
 
-                batch_changelog = _run_skill_evolution(
-                    error_parsed_path,
-                    success_parsed_path,
-                    evolved_skill_path,
-                    out_dir / "intermediates" / label,
-                    model,
-                    response_logger,
-                    map_batch_size=args.map_batch_size,
-                )
-                changelog.extend(f"{label}: {entry}" for entry in batch_changelog)
-                log.info("%s applied %d evolution changes", label, len(batch_changelog))
+                if not args.skip_evolution:
+                    batch_changelog = _run_skill_evolution(
+                        error_parsed_path,
+                        success_parsed_path,
+                        evolved_skill_path,
+                        out_dir / "intermediates" / label,
+                        model,
+                        response_logger,
+                        map_batch_size=args.map_batch_size,
+                    )
+                    changelog.extend(f"{label}: {entry}" for entry in batch_changelog)
+                    log.info("%s applied %d evolution changes", label, len(batch_changelog))
             except Exception as exc:
                 error_record = {
                     "batch": label,
@@ -1897,7 +1935,9 @@ def run_pipeline(args) -> PipelineOutputs:
                 "evolution_batch_size": args.evolution_batch_size,
                 "resume_dir": str(out_dir) if resume_dir else None,
                 "continue_on_batch_error": args.continue_on_batch_error,
-        "success_analysis_enabled": True,
+        "success_analysis_enabled": args.enable_success_analysis,
+        "failure_analysis_enabled": args.enable_failure_analysis,
+        "skip_evolution": args.skip_evolution,
         "self_verifier_enabled": getattr(args, "enable_self_verifier", False),
             },
             "seed_train": train_eval,
@@ -2001,7 +2041,9 @@ def run_pipeline(args) -> PipelineOutputs:
             "max_evolution_batches": args.max_evolution_batches,
             "resume_dir": str(out_dir) if resume_dir else None,
             "continue_on_batch_error": args.continue_on_batch_error,
-            "success_analysis_enabled": True,
+            "success_analysis_enabled": args.enable_success_analysis,
+            "failure_analysis_enabled": args.enable_failure_analysis,
+            "skip_evolution": args.skip_evolution,
         },
         "seed_train": train_eval,
         "seed_test": seed_test_eval,
@@ -2089,6 +2131,32 @@ def main() -> None:
         type=int,
         default=None,
         help="Optional cap on outer evolution batches for debugging",
+    )
+    parser.add_argument(
+        "--disable-success-analysis", dest="enable_success_analysis", action="store_false", default=True,
+        help="Ablation: omit AST-correct trajectory distillation from MAP/REDUCE evolution.",
+    )
+    parser.add_argument(
+        "--disable-failure-analysis", dest="enable_failure_analysis", action="store_false", default=True,
+        help="Ablation: omit AST-failure analysis from MAP/REDUCE evolution.",
+    )
+    parser.add_argument(
+        "--skip-evolution", action="store_true",
+        help="Ablation: evaluate the unevolved seed skill; skip all analysis and MAP/REDUCE calls.",
+    )
+    parser.add_argument(
+        "--one-shot-update", action="store_true",
+        help=(
+            "Ablation: aggregate all training conversations into one analysis and "
+            "MAP/REDUCE update, instead of iteratively updating after each outer batch."
+        ),
+    )
+    parser.add_argument(
+        "--reuse-rollout-dir", default=None,
+        help=(
+            "Replay saved training rollout turns from an existing Trace2Skill run. "
+            "Expected train_batches/batch_*/turns.json; useful for matched ablations."
+        ),
     )
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument(
