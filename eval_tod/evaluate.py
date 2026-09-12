@@ -230,7 +230,11 @@ def evaluate_all(
         if refs and len(refs) == len(resp_texts):
             from .text_eval import evaluate_responses
             try:
-                text_result = evaluate_responses(resp_texts, refs)
+                text_result = evaluate_responses(
+                    resp_texts,
+                    refs,
+                    compute_bert_score=False,
+                )
                 result["text"] = {
                     "bert_f1": text_result.bert_f1,
                     "bert_precision": text_result.bert_precision,

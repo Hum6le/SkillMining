@@ -176,6 +176,7 @@ def evaluate_responses(
     bert_model: str = "",
     batch_size: int = 32,
     use_idf: bool = False,
+    compute_bert_score: bool = False,
 ) -> TextEvalResult:
     """Evaluate generated responses against ground-truth references.
 
@@ -202,21 +203,24 @@ def evaluate_responses(
         )
 
     # ── BERTScore ───────────────────────────────────────────────
-    bs = _get_bert_score()
-    score_kwargs: dict[str, Any] = dict(
-        lang="en",
-        batch_size=batch_size,
-        idf=use_idf,
-        verbose=False,
-    )
-    # Only pass model_type if explicitly set (overrides lang default)
-    if bert_model:
-        score_kwargs["model_type"] = bert_model
-    P, R, F1 = bs.score(predictions, references, **score_kwargs)
-    bert_p = float(P.mean().item())
-    bert_r = float(R.mean().item())
-    bert_f = float(F1.mean().item())
-    bert_f_per = F1.tolist()
+    # BERTScore is opt-in because it loads a large transformer model.
+    bert_p = bert_r = bert_f = 0.0
+    bert_f_per = [0.0] * n
+    if compute_bert_score:
+        bs = _get_bert_score()
+        score_kwargs: dict[str, Any] = dict(
+            lang="en",
+            batch_size=batch_size,
+            idf=use_idf,
+            verbose=False,
+        )
+        if bert_model:
+            score_kwargs["model_type"] = bert_model
+        P, R, F1 = bs.score(predictions, references, **score_kwargs)
+        bert_p = float(P.mean().item())
+        bert_r = float(R.mean().item())
+        bert_f = float(F1.mean().item())
+        bert_f_per = F1.tolist()
 
     # ── BLEU ─────────────────────────────────────────────────────
     # sacrebleu expects list[str] preds and list[list[str]] refs

@@ -337,6 +337,20 @@ def _load_replayed_rollout_turns(
     return rows
 
 
+def _validate_replay_rollout_dir(rollout_dir: Path) -> None:
+    """Fail fast instead of silently regenerating a supposedly fixed replay."""
+    if not rollout_dir.is_dir():
+        raise FileNotFoundError(f"Replay rollout directory does not exist: {rollout_dir}")
+    seed_path = rollout_dir / "seed_train_turns.json"
+    batches_dir = rollout_dir / "train_batches"
+    if not seed_path.is_file():
+        raise FileNotFoundError(f"Replay rollout is missing: {seed_path}")
+    if not batches_dir.is_dir() or not any(batches_dir.glob("batch_*/turns.json")):
+        raise FileNotFoundError(
+            f"Replay rollout is missing train_batches/batch_*/turns.json under {rollout_dir}"
+        )
+
+
 def _build_agent(
     model: str,
     workflow_text: str,
@@ -364,13 +378,15 @@ def _evaluate_turn_results(
     conversations: list[dict[str, Any]],
     turn_results: list[dict[str, Any]],
     label: str,
+    *,
+    skip_text_eval: bool = False,
 ) -> dict[str, Any]:
     text_turns = [
         r for r in turn_results if r.get("target_type", "utterance") == "utterance"
     ]
     preds = [r["prediction"] for r in text_turns]
     refs = [r["reference"] for r in text_turns]
-    text_eval = evaluate_text_records(preds, refs)
+    text_eval = None if skip_text_eval else evaluate_text_records(preds, refs)
 
     abcd_preds = turn_results_to_abcd_predictions(turn_results, conversations)
     all_gt = [extract_ground_truth(conv) for conv in conversations]
@@ -414,13 +430,13 @@ def _evaluate_turn_results(
         "num_conversations": len(conversations),
         "num_turns": len(turn_results),
         "text": {
-            "bert_f1": round(text_eval["bert_f1"], 4),
-            "bleu_1": round(text_eval["bleu_1"], 1),
-            "bleu_4": round(text_eval["bleu_4"], 1),
-            "rouge_1": round(text_eval["rouge_1"], 4),
-            "rouge_2": round(text_eval["rouge_2"], 4),
-            "rouge_l": round(text_eval["rouge_l"], 4),
-            "meteor": round(text_eval["meteor"], 4),
+            "bert_f1": None if skip_text_eval else round(text_eval["bert_f1"], 4),
+            "bleu_1": None if skip_text_eval else round(text_eval["bleu_1"], 1),
+            "bleu_4": None if skip_text_eval else round(text_eval["bleu_4"], 1),
+            "rouge_1": None if skip_text_eval else round(text_eval["rouge_1"], 4),
+            "rouge_2": None if skip_text_eval else round(text_eval["rouge_2"], 4),
+            "rouge_l": None if skip_text_eval else round(text_eval["rouge_l"], 4),
+            "meteor": None if skip_text_eval else round(text_eval["meteor"], 4),
         },
         "ast_cds": {
             "ast_joint": round(abcd_eval.ast.joint_accuracy, 4),
@@ -441,10 +457,12 @@ def _evaluate_turn_results(
             f"Action={abcd_eval.ast.action_name_accuracy:.4f} "
             f"Slot={abcd_eval.ast.slot_value_accuracy:.4f} "
             f"CDS={abcd_eval.cds.overall_cds:.4f} "
-            f"BERT-F1={text_eval['bert_f1']:.4f} "
-            f"BLEU-4={text_eval['bleu_4']:.1f} "
-            f"ROUGE-L={text_eval['rouge_l']:.4f} "
-            f"METEOR={text_eval['meteor']:.4f}"
+            + ("" if skip_text_eval else (
+                f"BERT-F1={text_eval['bert_f1']:.4f} "
+                f"BLEU-4={text_eval['bleu_4']:.1f} "
+                f"ROUGE-L={text_eval['rouge_l']:.4f} "
+                f"METEOR={text_eval['meteor']:.4f}"
+            ))
         ),
     }
 
@@ -1654,14 +1672,14 @@ def run_pipeline(args) -> PipelineOutputs:
         if seed_train_eval_path.exists():
             train_eval = json.loads(seed_train_eval_path.read_text(encoding="utf-8"))
         else:
-            train_eval = _evaluate_turn_results(train_convs, seed_train_turns, "seed_train")
+            train_eval = _evaluate_turn_results(train_convs, seed_train_turns, "seed_train", skip_text_eval=args.skip_text_eval)
             seed_train_eval_path.write_text(json.dumps(train_eval, indent=2, ensure_ascii=False), encoding="utf-8")
     elif replay_seed_path and replay_seed_path.exists():
         log.info("Stage 1: replaying seed train turns from %s (no rollout calls)", replay_seed_path)
         seed_train_turns = json.loads(replay_seed_path.read_text(encoding="utf-8"))
         seed_train_turns_path.write_text(json.dumps(seed_train_turns, indent=2, ensure_ascii=False), encoding="utf-8")
         train_ast_scores = compute_ast_from_turn_results(train_convs, seed_train_turns)
-        train_eval = _evaluate_turn_results(train_convs, seed_train_turns, "seed_train")
+        train_eval = _evaluate_turn_results(train_convs, seed_train_turns, "seed_train", skip_text_eval=args.skip_text_eval)
         seed_train_eval_path.write_text(json.dumps(train_eval, indent=2, ensure_ascii=False), encoding="utf-8")
     else:
         log.info("Stage 1: seed run on training set")
@@ -1678,7 +1696,7 @@ def run_pipeline(args) -> PipelineOutputs:
             encoding="utf-8",
         )
         train_ast_scores = compute_ast_from_turn_results(train_convs, seed_train_turns)
-        train_eval = _evaluate_turn_results(train_convs, seed_train_turns, "seed_train")
+        train_eval = _evaluate_turn_results(train_convs, seed_train_turns, "seed_train", skip_text_eval=args.skip_text_eval)
         seed_train_eval_path.write_text(
             json.dumps(train_eval, indent=2, ensure_ascii=False),
             encoding="utf-8",
@@ -1784,7 +1802,7 @@ def run_pipeline(args) -> PipelineOutputs:
         )
 
         batch_ast_scores = compute_ast_from_turn_results(batch_convs, batch_turns)
-        batch_eval = _evaluate_turn_results(batch_convs, batch_turns, label)
+        batch_eval = _evaluate_turn_results(batch_convs, batch_turns, label, skip_text_eval=args.skip_text_eval)
         (batch_dir / "eval.json").write_text(
             json.dumps(batch_eval, indent=2, ensure_ascii=False),
             encoding="utf-8",
@@ -1975,7 +1993,7 @@ def run_pipeline(args) -> PipelineOutputs:
             test_convs,
             predict_actions=True,
         )
-        seed_test_eval = _evaluate_turn_results(test_convs, seed_test_turns, "seed_test")
+        seed_test_eval = _evaluate_turn_results(test_convs, seed_test_turns, "seed_test", skip_text_eval=args.skip_text_eval)
         (out_dir / "seed_test_turns.json").write_text(
             json.dumps(seed_test_turns, indent=2, ensure_ascii=False),
             encoding="utf-8",
@@ -2005,7 +2023,7 @@ def run_pipeline(args) -> PipelineOutputs:
         test_convs,
         predict_actions=True,
     )
-    evolved_test_eval = _evaluate_turn_results(test_convs, evolved_test_turns, "evolved_test")
+    evolved_test_eval = _evaluate_turn_results(test_convs, evolved_test_turns, "evolved_test", skip_text_eval=args.skip_text_eval)
     (out_dir / "evolved_test_turns.json").write_text(
         json.dumps(evolved_test_turns, indent=2, ensure_ascii=False),
         encoding="utf-8",
@@ -2158,6 +2176,10 @@ def main() -> None:
             "Expected train_batches/batch_*/turns.json; useful for matched ablations."
         ),
     )
+    parser.add_argument(
+        "--skip-text-eval", action="store_true",
+        help="Skip BLEU/ROUGE/METEOR/BERTScore text evaluation; AST/CDS evaluation remains enabled.",
+    )
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument(
         "--llm-qps",
@@ -2219,6 +2241,9 @@ def main() -> None:
         help="Skip seed and evolved test evaluation; leave it to the unified evaluator",
     )
     args = parser.parse_args()
+
+    if args.reuse_rollout_dir:
+        _validate_replay_rollout_dir(Path(args.reuse_rollout_dir).resolve())
 
     result = run_pipeline(args)
     evolved_ast = result.evolved_eval["ast_cds"]["ast_joint"]

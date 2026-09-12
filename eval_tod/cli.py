@@ -152,6 +152,10 @@ Backward-compatible legacy form:
         "--use_idf", action="store_true",
         help="Enable IDF weighting for BERTScore",
     )
+    text.add_argument(
+        "--compute-bert-score", action="store_true",
+        help="Opt in to BERTScore model loading (disabled by default)",
+    )
 
     # ABCD evaluation
     abcd = subparsers.add_parser(
@@ -192,6 +196,10 @@ Backward-compatible legacy form:
     abcd.add_argument(
         "--use_idf", action="store_true",
         help="Enable IDF weighting for BERTScore",
+    )
+    abcd.add_argument(
+        "--compute-bert-score", action="store_true",
+        help="Opt in to BERTScore model loading (disabled by default)",
     )
 
     return parser
@@ -337,6 +345,7 @@ def evaluate_text_records(
     bert_model: str = "",
     batch_size: int = 32,
     use_idf: bool = False,
+    compute_bert_score: bool = False,
 ) -> dict[str, Any]:
     """Evaluate raw text predictions against raw references."""
     result = evaluate_responses(
@@ -345,6 +354,7 @@ def evaluate_text_records(
         bert_model=bert_model,
         batch_size=batch_size,
         use_idf=use_idf,
+        compute_bert_score=compute_bert_score,
     )
     return {
         "bert_f1": result.bert_f1,
@@ -371,6 +381,7 @@ def evaluate_abcd_bundle(
     bert_model: str = "",
     batch_size: int = 32,
     use_idf: bool = False,
+    compute_bert_score: bool = False,
 ) -> dict[str, Any]:
     """Evaluate ABCD text and/or AST-CDS artifacts from in-memory records."""
     from .abcd.metrics import evaluate_abcd
@@ -393,6 +404,7 @@ def evaluate_abcd_bundle(
             bert_model=bert_model,
             batch_size=batch_size,
             use_idf=use_idf,
+            compute_bert_score=compute_bert_score,
         )
         payload["text"] = {
             "bert_f1": text_result.bert_f1,
@@ -480,6 +492,7 @@ def _evaluate_text(args: argparse.Namespace) -> dict[str, Any]:
             bert_model=args.bert_model,
             batch_size=args.batch_size,
             use_idf=args.use_idf,
+            compute_bert_score=args.compute_bert_score,
         ),
     }
 
@@ -516,6 +529,7 @@ def _evaluate_abcd(args: argparse.Namespace) -> dict[str, Any]:
         bert_model=args.bert_model,
         batch_size=args.batch_size,
         use_idf=args.use_idf,
+        compute_bert_score=args.compute_bert_score,
     )
     payload["split"] = args.split
 

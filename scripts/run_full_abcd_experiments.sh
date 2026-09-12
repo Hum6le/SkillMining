@@ -31,6 +31,7 @@ EVOLUTION_BATCH_SIZE=25
 ANALYSIS_BATCH_SIZE=8
 AWM_INDUCTION_MODE="online"
 SKIP_TRACE2SKILL_SEED_TEST=1
+SKIP_TRACE2SKILL_TEXT_EVAL=1
 ASI_BATCH_SIZE=25
 ASI_HELDOUT_SIZE=10
 ASI_TEST_PASS_RATE="0.5"
@@ -493,6 +494,7 @@ run_worker() {
                 fi
                 trace_extra_args=()
                 [[ "$SKIP_TRACE2SKILL_SEED_TEST" -eq 1 ]] && trace_extra_args+=(--skip-seed-test)
+                [[ "$SKIP_TRACE2SKILL_TEXT_EVAL" -eq 1 ]] && trace_extra_args+=(--skip-text-eval)
                 [[ -n "$EVAL_WORKFLOW_IDS_RAW" ]] && trace_extra_args+=(--skip-test-eval)
                 SKILLMINING_WORKFLOW_ID="$workflow_id" "$PYTHON_BIN" scripts/run_trace2skill_abcd.py \
                     --subflow "$subflow" --train-file "$SPLITS_DIR/$subflow/train.json" \

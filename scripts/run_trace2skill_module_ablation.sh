@@ -82,7 +82,7 @@ run_variant() {
     --output-dir "$OUTPUT_ROOT/$name" --run-seed-test \
     --evolution-batch-size "$EVOLUTION_BATCH_SIZE" \
     --analysis-batch-size "$ANALYSIS_BATCH_SIZE" --map-batch-size "$MAP_BATCH_SIZE" \
-    --continue-on-batch-error "${REPLAY_ARGS[@]}" "$@"
+    --skip-text-eval --continue-on-batch-error "${REPLAY_ARGS[@]}" "$@"
 }
 
 IFS=',' read -r -a WORKFLOW_IDS <<< "$WORKFLOW_IDS_RAW"
