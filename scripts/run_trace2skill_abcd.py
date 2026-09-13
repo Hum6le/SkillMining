@@ -351,6 +351,35 @@ def _validate_replay_rollout_dir(rollout_dir: Path) -> None:
         )
 
 
+def _materialize_replayed_analysis(
+    source_dir: Path,
+    kind: str,
+    batch_index: int,
+    one_shot: bool,
+    destination: Path,
+) -> Path:
+    """Copy fixed parsed analysis evidence into the current ablation run."""
+    analysis_dir = source_dir / f"{kind}_analysis"
+    if one_shot:
+        paths = sorted(analysis_dir.glob("batch_*_parsed.json"))
+    else:
+        paths = [analysis_dir / f"batch_{batch_index:04d}_parsed.json"]
+    if not paths or any(not path.is_file() for path in paths):
+        missing = [str(path) for path in paths if not path.is_file()]
+        raise FileNotFoundError(
+            f"Missing replayed {kind} analysis: {missing or analysis_dir}"
+        )
+    records: list[dict[str, Any]] = []
+    for path in paths:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, list):
+            raise ValueError(f"Replayed analysis must be a JSON list: {path}")
+        records.extend(item for item in payload if isinstance(item, dict))
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(json.dumps(records, indent=2, ensure_ascii=False), encoding="utf-8")
+    return destination
+
+
 def _build_agent(
     model: str,
     workflow_text: str,
@@ -1486,6 +1515,12 @@ def _run_skill_evolution(
     if not records:
         return []
 
+    evidence_mode = (
+        "mixed" if error_records and success_records
+        else "failure_only" if error_records
+        else "success_only"
+    )
+
     evolver = CombinedParallelSkillEvolver(
         client=_ChatClientAdapter(model=model, response_logger=response_logger),
         skill_dir=str(skill_path.parent),
@@ -1503,11 +1538,75 @@ def _run_skill_evolution(
         skip_translation=False,
         patch_pipeline="json",
     )
+    if evidence_mode != "mixed":
+        output_marker = "## Output Format"
+        marker_index = evolver._map_system_prompt.find(output_marker)
+        output_contract = (
+            evolver._map_system_prompt[marker_index:]
+            if marker_index >= 0 else ""
+        )
+        if evidence_mode == "success_only":
+            evidence_role = (
+                "The success-analysis stage has distilled strict AST-correct patterns. "
+                "Consolidate recurring winning action, transition, and ordered-slot "
+                "behavior without inventing failure evidence."
+            )
+            integration_step = (
+                "Group recurring successful patterns, preserve their applicability "
+                "conditions, and remove duplicate or overly specific lessons."
+            )
+        else:
+            evidence_role = (
+                "The failure-analysis stage has diagnosed AST errors and attached "
+                "verified gold action and ordered-slot corrections. Consolidate those "
+                "corrections without inventing successful evidence."
+            )
+            integration_step = (
+                "Group recurring failure causes and corrections, preserving existing "
+                "skill behavior outside the boundaries implicated by the errors."
+            )
+        evolver._map_system_prompt = f"""You are the MAP-stage editor in a skill-evolution pipeline for an ABCD task-oriented dialogue agent.
+
+## MAP Role
+
+{evidence_role} Your job is to integrate multiple analysis records into a
+small, coherent candidate patch. Do not redo per-case diagnosis, invent new
+evidence, or produce a final rewritten skill.
+
+## Integration Procedure
+
+1. {integration_step}
+2. Check the complete current skill before editing it.
+3. Prefer the smallest compatible addition or revision supported by repeated evidence.
+4. Keep critical workflow and transition guidance in SKILL.md; place detailed,
+   low-frequency variants and examples in linked reference files.
+
+The records have already been partitioned into this MAP batch. Use only the
+evidence and current skill supplied in the user message. Optimize joint AST:
+the exact action and exact ordered slot-value list must both be correct. Never
+hard-code customer-specific values or invent hidden state.
+
+## Edit Policy
+
+Add or refine guidance before deleting it. Delete or replace existing guidance
+only when supplied evidence shows it is incorrect or contradictory. Preserve
+YAML frontmatter, keep SKILL.md under 500 lines and each reference under 300
+lines, do not modify protected files, and return no patch when the current
+skill already covers the evidence.
+
+{output_contract}"""
+        evolver._map_patterns_system_prompt = evolver._map_system_prompt
+        if evidence_mode == "success_only":
+            from skill_evolver.parallel_success_evolving_agent import SUCCESS_MERGE_SYSTEM_PROMPT
+            evolver._merge_system_prompt = SUCCESS_MERGE_SYSTEM_PROMPT
+        else:
+            from skill_evolver.parallel_evolving_agent import MERGE_SYSTEM_PROMPT
+            evolver._merge_system_prompt = MERGE_SYSTEM_PROMPT
     prompt_spec = output_dir / "prompt_spec.md"
     prompt_spec.write_text(
         "# Trace2Skill ABCD Combined Evolution Prompt Spec\n\n"
-        "This run combines AST failure evidence and strict AST-success evidence in "
-        "the same MAP/REDUCE evolution pipeline.\n\n"
+        f"Evidence mode: `{evidence_mode}`. The MAP/REDUCE instructions are matched "
+        "to the evidence sources available in this variant.\n\n"
         "## Success Analysis System Prompt\n\n"
         "```text\n" + _ABCD_SUCCESS_ANALYSIS_SYSTEM.rstrip() + "\n```\n\n"
         "## Success Analysis User Prompt Template\n\n"
@@ -1526,6 +1625,131 @@ def _run_skill_evolution(
     )
     result = evolver.run(records, input_mode="records")
     return result.get("changelog", [])
+
+
+def _run_direct_memory_update(
+    error_records_path: Path | None,
+    success_records_path: Path | None,
+    skill_path: Path,
+    *,
+    max_lines: int = 1500,
+) -> list[str]:
+    """Persist analyzed evidence without LLM MAP/REDUCE or semantic rewriting."""
+    skill_path = skill_path.resolve()
+    skill_dir = skill_path.parent
+    references_dir = skill_dir / "references"
+    references_dir.mkdir(parents=True, exist_ok=True)
+    ledger_path = skill_dir / "direct_analysis_memory.json"
+    reference_path = references_dir / "direct_analysis_memory.md"
+
+    ledger: list[dict[str, str]] = []
+    if ledger_path.exists():
+        payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+        if isinstance(payload, list):
+            ledger = [item for item in payload if isinstance(item, dict)]
+
+    def normalized(value: Any) -> str:
+        return " ".join(str(value or "").split()).strip()
+
+    def signature(item: dict[str, str]) -> tuple[str, ...]:
+        return tuple(
+            normalized(item.get(key)).lower()
+            for key in ("type", "title", "description", "content")
+        )
+
+    seen = {signature(item) for item in ledger}
+    added = 0
+    for source, records_path in (
+        ("failure", error_records_path),
+        ("success", success_records_path),
+    ):
+        if not records_path or not records_path.exists():
+            continue
+        records = json.loads(records_path.read_text(encoding="utf-8"))
+        for record in records if isinstance(records, list) else []:
+            for raw_item in record.get("items", []) if isinstance(record, dict) else []:
+                if not isinstance(raw_item, dict):
+                    continue
+                item = {
+                    "source": source,
+                    "instance_id": normalized(record.get("instance_id")),
+                    "type": normalized(raw_item.get("type")) or f"{source}_memory",
+                    "title": normalized(raw_item.get("title")) or "Reusable AST pattern",
+                    "description": normalized(raw_item.get("description")),
+                    "content": normalized(raw_item.get("content")),
+                    "relation_to_skill": normalized(raw_item.get("relation_to_skill")),
+                    "skill_reflection": normalized(raw_item.get("skill_reflection")),
+                }
+                key = signature(item)
+                if not item["content"] or key in seen:
+                    continue
+                ledger.append(item)
+                seen.add(key)
+                added += 1
+
+    ledger_path.write_text(json.dumps(ledger, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # Round-robin rendering prevents one evidence type from consuming the
+    # complete fixed reference budget merely because it was read first.
+    buckets: dict[str, list[dict[str, str]]] = {
+        "success_memory": [], "failure_memory": [], "failure_cause": [], "other": [],
+    }
+    for item in ledger:
+        buckets.get(item.get("type", ""), buckets["other"]).append(item)
+    ordered: list[dict[str, str]] = []
+    bucket_order = ("success_memory", "failure_memory", "failure_cause", "other")
+    index = 0
+    while any(index < len(buckets[key]) for key in bucket_order):
+        for key in bucket_order:
+            if index < len(buckets[key]):
+                ordered.append(buckets[key][index])
+        index += 1
+
+    lines = [
+        "# Direct Analysis Memory",
+        "",
+        "This reference stores deduplicated success and failure analysis without",
+        "LLM MAP/REDUCE rewriting. Retrieve only entries relevant to the current",
+        "dialogue, and never copy example-specific values.",
+        "",
+    ]
+    rendered = 0
+    for item_index, item in enumerate(ordered, start=1):
+        block = [
+            f"## {item['title']}",
+            f"- Evidence type: `{item['type']}`",
+            f"- Source: `{item['source']}`",
+        ]
+        if item["description"]:
+            block.append(f"- Applies when: {item['description']}")
+        block.extend(["", item["content"]])
+        if item["relation_to_skill"]:
+            block.extend(["", f"Skill location hint: {item['relation_to_skill']}"])
+        if item["skill_reflection"]:
+            block.extend(["", f"Skill reflection: {item['skill_reflection']}"])
+        block.append("")
+        if len(lines) + len(block) > max_lines:
+            break
+        lines.extend(block)
+        rendered = item_index
+    reference_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+
+    skill_text = skill_path.read_text(encoding="utf-8")
+    section_heading = "## Direct analysis memory"
+    if section_heading not in skill_text:
+        skill_text = skill_text.rstrip() + (
+            "\n\n## Direct analysis memory\n\n"
+            "Before choosing an uncertain action, transition, or ordered slot list, "
+            "retrieve the relevant success/failure pattern from "
+            "[direct analysis memory](references/direct_analysis_memory.md). "
+            "Use it as general evidence only; current dialogue values remain authoritative.\n"
+        )
+        skill_path.write_text(skill_text, encoding="utf-8")
+
+    return [
+        f"Direct memory added {added} deduplicated item(s); "
+        f"rendered {rendered}/{len(ledger)} within {max_lines} lines"
+    ]
 
 
 def run_pipeline(args) -> PipelineOutputs:
@@ -1601,6 +1825,8 @@ def run_pipeline(args) -> PipelineOutputs:
         "success_analysis_enabled": args.enable_success_analysis,
         "failure_analysis_enabled": args.enable_failure_analysis,
         "skip_evolution": args.skip_evolution,
+        "direct_memory_update": args.direct_memory_update,
+        "reuse_analysis_dir": str(Path(args.reuse_analysis_dir).resolve()) if args.reuse_analysis_dir else None,
         "reuse_rollout_dir": str(Path(args.reuse_rollout_dir).resolve()) if args.reuse_rollout_dir else None,
     }
     if resume_dir and previous_summary.get("config"):
@@ -1841,29 +2067,52 @@ def run_pipeline(args) -> PipelineOutputs:
         if batch_failed_cases or batch_success_cases:
             try:
                 if batch_failed_cases:
-                    error_dir = out_dir / "error_analysis" / label
-                    error_parsed_path = _run_error_analysis(
-                        batch_failed_cases,
-                        error_dir,
-                        model,
-                        response_logger,
-                        batch_size=args.analysis_batch_size,
-                        self_verify=getattr(args, "enable_self_verifier", False),
-                    )
+                    if args.reuse_analysis_dir:
+                        error_parsed_path = _materialize_replayed_analysis(
+                            Path(args.reuse_analysis_dir), "error", batch_idx,
+                            args.one_shot_update,
+                            out_dir / "error_analysis" / f"{label}_parsed.json",
+                        )
+                    else:
+                        error_dir = out_dir / "error_analysis" / label
+                        error_parsed_path = _run_error_analysis(
+                            batch_failed_cases,
+                            error_dir,
+                            model,
+                            response_logger,
+                            batch_size=args.analysis_batch_size,
+                            self_verify=getattr(args, "enable_self_verifier", False),
+                        )
                     log.info("%s parsed error analysis -> %s", label, error_parsed_path)
 
                 if batch_success_cases:
-                    success_dir = out_dir / "success_analysis" / label
-                    success_parsed_path = _run_success_analysis(
-                        batch_success_cases,
-                    success_dir,
-                        model,
-                        response_logger,
-                        batch_size=args.analysis_batch_size,
-                    )
+                    if args.reuse_analysis_dir:
+                        success_parsed_path = _materialize_replayed_analysis(
+                            Path(args.reuse_analysis_dir), "success", batch_idx,
+                            args.one_shot_update,
+                            out_dir / "success_analysis" / f"{label}_parsed.json",
+                        )
+                    else:
+                        success_dir = out_dir / "success_analysis" / label
+                        success_parsed_path = _run_success_analysis(
+                            batch_success_cases,
+                            success_dir,
+                            model,
+                            response_logger,
+                            batch_size=args.analysis_batch_size,
+                        )
                     log.info("%s parsed success analysis -> %s", label, success_parsed_path)
 
-                if not args.skip_evolution:
+                if args.direct_memory_update:
+                    batch_changelog = _run_direct_memory_update(
+                        error_parsed_path,
+                        success_parsed_path,
+                        evolved_skill_path,
+                        max_lines=args.direct_memory_max_lines,
+                    )
+                    changelog.extend(f"{label}: {entry}" for entry in batch_changelog)
+                    log.info("%s applied deterministic direct-memory update", label)
+                elif not args.skip_evolution:
                     batch_changelog = _run_skill_evolution(
                         error_parsed_path,
                         success_parsed_path,
@@ -1956,7 +2205,9 @@ def run_pipeline(args) -> PipelineOutputs:
                 "continue_on_batch_error": args.continue_on_batch_error,
         "success_analysis_enabled": args.enable_success_analysis,
         "failure_analysis_enabled": args.enable_failure_analysis,
-        "skip_evolution": args.skip_evolution,
+                "skip_evolution": args.skip_evolution,
+                "direct_memory_update": args.direct_memory_update,
+                "reuse_analysis_dir": str(Path(args.reuse_analysis_dir).resolve()) if args.reuse_analysis_dir else None,
         "self_verifier_enabled": getattr(args, "enable_self_verifier", False),
             },
             "seed_train": train_eval,
@@ -2065,6 +2316,9 @@ def run_pipeline(args) -> PipelineOutputs:
             "failure_analysis_enabled": args.enable_failure_analysis,
             "skip_evolution": args.skip_evolution,
             "one_shot_update": args.one_shot_update,
+            "direct_memory_update": args.direct_memory_update,
+            "direct_memory_max_lines": args.direct_memory_max_lines,
+            "reuse_analysis_dir": str(Path(args.reuse_analysis_dir).resolve()) if args.reuse_analysis_dir else None,
         },
         "seed_train": train_eval,
         "seed_test": seed_test_eval,
@@ -2166,6 +2420,17 @@ def main() -> None:
         help="Ablation: evaluate the unevolved seed skill; skip all analysis and MAP/REDUCE calls.",
     )
     parser.add_argument(
+        "--direct-memory-update", action="store_true",
+        help=(
+            "Ablation: retain success/failure analysis but replace LLM MAP/REDUCE/APPLY "
+            "with deterministic deduplicated reference-memory compilation."
+        ),
+    )
+    parser.add_argument(
+        "--direct-memory-max-lines", type=int, default=1500,
+        help="Maximum rendered lines in the direct-memory reference (default: 1500).",
+    )
+    parser.add_argument(
         "--one-shot-update", action="store_true",
         help=(
             "Ablation: aggregate all training conversations into one analysis and "
@@ -2182,6 +2447,13 @@ def main() -> None:
         help=(
             "Replay saved training rollout turns from an existing Trace2Skill run. "
             "Expected train_batches/batch_*/turns.json; useful for matched ablations."
+        ),
+    )
+    parser.add_argument(
+        "--reuse-analysis-dir", default=None,
+        help=(
+            "Reuse parsed error/success analysis from a matched Trace2Skill run. "
+            "The directory must contain error_analysis/ and success_analysis/."
         ),
     )
     parser.add_argument(
@@ -2250,8 +2522,13 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    if args.skip_evolution and args.direct_memory_update:
+        parser.error("--skip-evolution and --direct-memory-update are mutually exclusive")
+
     if args.reuse_rollout_dir:
         _validate_replay_rollout_dir(Path(args.reuse_rollout_dir).resolve())
+    if args.reuse_analysis_dir and not Path(args.reuse_analysis_dir).resolve().is_dir():
+        parser.error(f"--reuse-analysis-dir does not exist: {args.reuse_analysis_dir}")
 
     result = run_pipeline(args)
     evolved_ast = result.evolved_eval["ast_cds"]["ast_joint"]

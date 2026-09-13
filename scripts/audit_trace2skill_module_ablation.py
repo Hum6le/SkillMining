@@ -11,11 +11,13 @@ from typing import Any
 
 
 EXPECTED_CONFIG = {
-    "full": (True, True, False, False),
-    "no_failure_analysis": (True, False, False, False),
-    "no_success_memory": (False, True, False, False),
-    "no_evolution": (True, True, True, False),
-    "one_shot_update": (True, True, False, True),
+    "full": (True, True, False, False, False),
+    "no_failure_analysis": (True, False, False, False, False),
+    "no_success_memory": (False, True, False, False, False),
+    "no_structured_evolution": (True, True, False, False, True),
+    "one_shot_update": (True, True, False, True, False),
+    "no_adaptation": (True, True, True, False, False),
+    "no_evolution": (True, True, True, False, False),
 }
 
 
@@ -62,10 +64,18 @@ def _prompt_hashes(rows: list[dict[str, Any]]) -> set[str]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
+    parser.add_argument("--variants", default=None, help="Optional comma-separated variant names")
     args = parser.parse_args()
 
     records: dict[str, dict[str, Any]] = {}
-    for variant in EXPECTED_CONFIG:
+    variants = (
+        [item.strip() for item in args.variants.split(",") if item.strip()]
+        if args.variants else list(EXPECTED_CONFIG)
+    )
+    for variant in variants:
+        if variant not in EXPECTED_CONFIG:
+            print(f"{variant:22s} UNKNOWN VARIANT")
+            continue
         run_dir = _latest_run(args.root / variant)
         if run_dir is None:
             print(f"{variant:22s} MISSING")
@@ -74,20 +84,22 @@ def main() -> None:
         prediction_path = run_dir / "evolved_test_turns.json"
         skill_path = run_dir / "evolved_skill" / "SKILL.md"
         rows = json.loads(prediction_path.read_text(encoding="utf-8"))
+        action_rows = [row for row in rows if row.get("target_type") == "action"]
         skill_text = skill_path.read_text(encoding="utf-8")
         config = summary.get("config", {})
         observed_config = (
-            bool(config.get("success_analysis_enabled", True)),
-            bool(config.get("failure_analysis_enabled", True)),
-            bool(config.get("skip_evolution", False)),
-            bool(config.get("one_shot_update", False)),
+            config.get("success_analysis_enabled"),
+            config.get("failure_analysis_enabled"),
+            config.get("skip_evolution"),
+            config.get("one_shot_update"),
+            config.get("direct_memory_update"),
         )
         records[variant] = {
             "run_dir": str(run_dir),
             "skill_hash": _sha(skill_text),
-            "prediction_hash": _sha(json.dumps([_output_key(row) for row in rows], ensure_ascii=False)),
-            "ast_hash": _sha(json.dumps([_prediction_key(row) for row in rows], ensure_ascii=False)),
-            "keys": [_prediction_key(row) for row in rows],
+            "prediction_hash": _sha(json.dumps([_output_key(row) for row in action_rows], ensure_ascii=False)),
+            "ast_hash": _sha(json.dumps([_prediction_key(row) for row in action_rows], ensure_ascii=False)),
+            "keys": [_prediction_key(row) for row in action_rows],
             "prompt_hashes": _prompt_hashes(rows),
             "changes": len(summary.get("changelog") or []),
             "expected_config": EXPECTED_CONFIG[variant],
@@ -97,13 +109,24 @@ def main() -> None:
 
     print("variant                skill hash       AST-pred hash    raw-pred hash    changes config")
     for variant, record in records.items():
-        config_status = "OK" if record["observed_config"] == record["expected_config"] else "MISMATCH"
+        known_config_matches = all(
+            observed is None or observed == expected
+            for observed, expected in zip(record["observed_config"], record["expected_config"])
+        )
+        config_complete = all(value is not None for value in record["observed_config"])
+        config_status = (
+            "OK" if known_config_matches and config_complete
+            else "LEGACY" if known_config_matches
+            else "MISMATCH"
+        )
         print(
             f"{variant:22s} {record['skill_hash']} {record['ast_hash']} "
             f"{record['prediction_hash']} {record['changes']:7d} {config_status}"
         )
-        if config_status != "OK":
+        if config_status == "MISMATCH":
             print(f"  expected={record['expected_config']} observed={record['observed_config']}")
+        elif config_status == "LEGACY":
+            print(f"  config metadata incomplete: observed={record['observed_config']}")
         print(f"  run={record['run_dir']}")
         print(f"  evolved_ast={record['ast']}")
 

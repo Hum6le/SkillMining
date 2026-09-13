@@ -10,7 +10,9 @@ TEST_FILE=""
 OUTPUT_ROOT=""
 WORKFLOW_IDS_RAW="${SKILLMINING_WORKFLOW_IDS:-${SKILLMINING_WORKFLOW_ID:-}}"
 REUSE_ROLLOUT_DIR="${TRACE2SKILL_REUSE_ROLLOUT_DIR:-}"
+REUSE_ANALYSIS_DIR="${TRACE2SKILL_REUSE_ANALYSIS_DIR:-}"
 EXISTING_FULL_DIR="${TRACE2SKILL_EXISTING_FULL_DIR:-}"
+VARIANTS_RAW="${TRACE2SKILL_ABLATION_VARIANTS:-full,no_failure_analysis,no_success_memory,no_structured_evolution,one_shot_update,no_adaptation}"
 
 usage() {
   cat <<'EOF'
@@ -25,8 +27,14 @@ Required:
 Optional:
   --workflow-ids ID1,ID2,...
   --reuse-rollout-dir PATH
+  --reuse-analysis-dir PATH
   --existing-full-dir PATH
   --force-full
+  --variants NAME1,NAME2,...
+
+Variants:
+  full, no_failure_analysis, no_success_memory,
+  no_structured_evolution, one_shot_update, no_adaptation
 EOF
 }
 
@@ -39,7 +47,9 @@ while [[ $# -gt 0 ]]; do
     --output-dir) OUTPUT_ROOT="${2:?missing value for --output-dir}"; shift 2 ;;
     --workflow-ids) WORKFLOW_IDS_RAW="${2:?missing value for --workflow-ids}"; shift 2 ;;
     --reuse-rollout-dir) REUSE_ROLLOUT_DIR="${2:?missing value for --reuse-rollout-dir}"; shift 2 ;;
+    --reuse-analysis-dir) REUSE_ANALYSIS_DIR="${2:?missing value for --reuse-analysis-dir}"; shift 2 ;;
     --existing-full-dir) EXISTING_FULL_DIR="${2:?missing value for --existing-full-dir}"; shift 2 ;;
+    --variants) VARIANTS_RAW="${2:?missing value for --variants}"; shift 2 ;;
     --force-full) FORCE_FULL=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
@@ -73,17 +83,22 @@ REPLAY_ARGS=()
 if [[ -n "$REUSE_ROLLOUT_DIR" ]]; then
   REPLAY_ARGS=(--reuse-rollout-dir "$REUSE_ROLLOUT_DIR")
 fi
+ANALYSIS_REPLAY_ARGS=()
+if [[ -n "$REUSE_ANALYSIS_DIR" ]]; then
+  ANALYSIS_REPLAY_ARGS=(--reuse-analysis-dir "$REUSE_ANALYSIS_DIR")
+fi
 
 run_variant() {
   local name="$1" workflow_id="$2"; shift 2
   echo "===== Trace2Skill ablation: $name ====="
   SKILLMINING_WORKFLOW_ID="$workflow_id" python scripts/run_trace2skill_abcd.py \
     --subflow "$SUBFLOW" --train-file "$TRAIN_FILE" --test-file "$TEST_FILE" \
-    --output-dir "$OUTPUT_ROOT/$name" --run-seed-test \
+    --output-dir "$OUTPUT_ROOT/$name" --skip-seed-test \
     --ablation-variant "$name" \
     --evolution-batch-size "$EVOLUTION_BATCH_SIZE" \
     --analysis-batch-size "$ANALYSIS_BATCH_SIZE" --map-batch-size "$MAP_BATCH_SIZE" \
-    --skip-text-eval --continue-on-batch-error "${REPLAY_ARGS[@]}" "$@"
+    --skip-text-eval --continue-on-batch-error \
+    "${REPLAY_ARGS[@]}" "${ANALYSIS_REPLAY_ARGS[@]}" "$@"
 }
 
 IFS=',' read -r -a WORKFLOW_IDS <<< "$WORKFLOW_IDS_RAW"
@@ -107,18 +122,30 @@ run_parallel_variant() {
   PIDS+=("$!")
 }
 
-run_parallel_variant no_evolution --skip-evolution
-run_parallel_variant no_failure_analysis --disable-failure-analysis
-run_parallel_variant no_success_memory --disable-success-analysis
-run_parallel_variant one_shot_update --one-shot-update
+variant_enabled() {
+  local requested="$1" item
+  IFS=',' read -r -a selected_variants <<< "$VARIANTS_RAW"
+  for item in "${selected_variants[@]}"; do
+    [[ "$item" == "$requested" ]] && return 0
+  done
+  return 1
+}
+
+variant_enabled no_adaptation && run_parallel_variant no_adaptation --skip-evolution
+variant_enabled no_structured_evolution && run_parallel_variant no_structured_evolution --direct-memory-update
+variant_enabled no_failure_analysis && run_parallel_variant no_failure_analysis --disable-failure-analysis
+variant_enabled no_success_memory && run_parallel_variant no_success_memory --disable-success-analysis
+variant_enabled one_shot_update && run_parallel_variant one_shot_update --one-shot-update
 
 # The full run is often already available from the preceding experiment. Do
 # not spend another complete LLM budget on it unless it is absent or forced.
-if [[ "$FORCE_FULL" -eq 1 || ! -f "$OUTPUT_ROOT/full/summary.json" ]]; then
-  run_parallel_variant full
-else
-  echo "===== Trace2Skill ablation: full (reuse existing summary) ====="
-  echo "Reusing $OUTPUT_ROOT/full/summary.json; set FORCE_FULL=1 to rerun."
+if variant_enabled full; then
+  if [[ "$FORCE_FULL" -eq 1 || ! -f "$OUTPUT_ROOT/full/summary.json" ]]; then
+    run_parallel_variant full
+  else
+    echo "===== Trace2Skill ablation: full (reuse existing summary) ====="
+    echo "Reusing $OUTPUT_ROOT/full/summary.json; set FORCE_FULL=1 to rerun."
+  fi
 fi
 
 status=0
@@ -131,4 +158,4 @@ if [[ "$status" -ne 0 ]]; then
 fi
 
 python scripts/summarize_trace2skill_module_ablation.py --root "$OUTPUT_ROOT"
-python scripts/audit_trace2skill_module_ablation.py --root "$OUTPUT_ROOT"
+python scripts/audit_trace2skill_module_ablation.py --root "$OUTPUT_ROOT" --variants "$VARIANTS_RAW"
