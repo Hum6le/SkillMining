@@ -26,14 +26,29 @@ def main() -> None:
     args = parser.parse_args()
 
     rows = []
-    for path in sorted(args.root.glob("*/summary.json")):
+    # Trace2Skill creates a timestamped run directory below the requested
+    # variant directory. Pick the newest summary per variant, rather than
+    # assuming <variant>/summary.json exists.
+    summary_paths: dict[str, Path] = {}
+    for path in args.root.rglob("summary.json"):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(args.root)
+        if len(relative.parts) < 2:
+            continue
+        variant = relative.parts[0]
+        current = summary_paths.get(variant)
+        if current is None or path.stat().st_mtime > current.stat().st_mtime:
+            summary_paths[variant] = path
+
+    for variant, path in sorted(summary_paths.items()):
         summary = json.loads(path.read_text(encoding="utf-8"))
         usage = summary.get("llm_usage", {}).get("generation", {}).get("total", {})
         evolved = _get(summary, "evolved_test", "ast_cds") or {}
         seed = _get(summary, "seed_test", "ast_cds") or {}
         history = summary.get("batch_history") or []
         rows.append({
-            "variant": path.parent.name,
+            "variant": variant,
             "evolved_ast_joint": evolved.get("ast_joint"),
             "evolved_action": evolved.get("ast_action_name"),
             "evolved_slot": evolved.get("ast_slot_value"),
@@ -48,6 +63,9 @@ def main() -> None:
             "success_cases": sum(int(item.get("successful_cases", 0)) for item in history),
             "skill_changes": len(summary.get("changelog") or []),
             "batches": len(history),
+            "status": "error" if any(item.get("status") == "error" for item in history) else "completed",
+            "summary_path": str(path),
+            "config_variant": _get(summary, "config", "ablation_variant"),
         })
     if not rows:
         raise SystemExit(f"No <variant>/summary.json found below {args.root}")
@@ -61,9 +79,10 @@ def main() -> None:
     print(f"Wrote {len(rows)} variants to {output}")
     for row in rows:
         print(
-            f"{row['variant']:16s} AST={row['evolved_ast_joint']} "
+            f"{row['variant']:16s} status={row['status']:9s} AST={row['evolved_ast_joint']} "
             f"action={row['evolved_action']} slot={row['evolved_slot']} "
-            f"calls={row['generation_calls']} changes={row['skill_changes']}"
+            f"calls={row['generation_calls']} changes={row['skill_changes']} "
+            f"path={row['summary_path']}"
         )
 
 

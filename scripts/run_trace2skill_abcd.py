@@ -1584,6 +1584,7 @@ def run_pipeline(args) -> PipelineOutputs:
         previous_summary = json.loads(summary_path.read_text(encoding="utf-8"))
 
     current_resume_config = {
+        "ablation_variant": getattr(args, "ablation_variant", None),
         "train_split": args.train_split,
         "test_split": args.test_split,
         "train_file": str(Path(args.train_file).resolve()) if args.train_file else None,
@@ -2040,6 +2041,7 @@ def run_pipeline(args) -> PipelineOutputs:
 
     summary = {
         "config": {
+            "ablation_variant": getattr(args, "ablation_variant", None),
             "data_path": source_info["data_path"],
             "train_split": source_info["train_split"],
             "test_split": source_info["test_split"],
@@ -2062,6 +2064,7 @@ def run_pipeline(args) -> PipelineOutputs:
             "success_analysis_enabled": args.enable_success_analysis,
             "failure_analysis_enabled": args.enable_failure_analysis,
             "skip_evolution": args.skip_evolution,
+            "one_shot_update": args.one_shot_update,
         },
         "seed_train": train_eval,
         "seed_test": seed_test_eval,
@@ -2168,6 +2171,11 @@ def main() -> None:
             "Ablation: aggregate all training conversations into one analysis and "
             "MAP/REDUCE update, instead of iteratively updating after each outer batch."
         ),
+    )
+    parser.add_argument(
+        "--ablation-variant",
+        default=None,
+        help="Optional label recorded in the run config for matched ablation runs.",
     )
     parser.add_argument(
         "--reuse-rollout-dir", default=None,

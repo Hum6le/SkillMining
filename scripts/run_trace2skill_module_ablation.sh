@@ -80,6 +80,7 @@ run_variant() {
   SKILLMINING_WORKFLOW_ID="$workflow_id" python scripts/run_trace2skill_abcd.py \
     --subflow "$SUBFLOW" --train-file "$TRAIN_FILE" --test-file "$TEST_FILE" \
     --output-dir "$OUTPUT_ROOT/$name" --run-seed-test \
+    --ablation-variant "$name" \
     --evolution-batch-size "$EVOLUTION_BATCH_SIZE" \
     --analysis-batch-size "$ANALYSIS_BATCH_SIZE" --map-batch-size "$MAP_BATCH_SIZE" \
     --skip-text-eval --continue-on-batch-error "${REPLAY_ARGS[@]}" "$@"
@@ -130,3 +131,4 @@ if [[ "$status" -ne 0 ]]; then
 fi
 
 python scripts/summarize_trace2skill_module_ablation.py --root "$OUTPUT_ROOT"
+python scripts/audit_trace2skill_module_ablation.py --root "$OUTPUT_ROOT"
