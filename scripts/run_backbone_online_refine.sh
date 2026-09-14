@@ -35,7 +35,8 @@ Required:
 
 Options:
   --output-dir DIR           New online run directory. Default: outputs/online_refine_<subflow>_<timestamp>
-  --workflow-id ID           Export SKILLMINING_WORKFLOW_ID for workflow API routing
+  --workflow-id ID           Workflow used by online mining/refinement calls
+  --workflow-ids IDS         Compatibility alias; first comma-separated ID is used for mining
   --eval-workflow-ids IDS    Comma-separated workflow IDs for parallel held-out evaluation
   --conda-env NAME           Default: skillmining310
   --hf-endpoint URL          Default: https://hf-mirror.com
@@ -65,6 +66,11 @@ while [[ $# -gt 0 ]]; do
         --output-dir) require_value "$1" "$#"; OUTPUT_DIR="$2"; shift 2 ;;
         --resume-run) require_value "$1" "$#"; RESUME_RUN="$2"; shift 2 ;;
         --workflow-id) require_value "$1" "$#"; WORKFLOW_ID="$2"; shift 2 ;;
+        --workflow-ids)
+            require_value "$1" "$#"
+            WORKFLOW_ID="${2%%,*}"
+            shift 2
+            ;;
         --eval-workflow-ids) require_value "$1" "$#"; EVAL_WORKFLOW_IDS="$2"; shift 2 ;;
         --conda-env) require_value "$1" "$#"; CONDA_ENV="$2"; shift 2 ;;
         --hf-endpoint) require_value "$1" "$#"; HF_ENDPOINT_VALUE="$2"; shift 2 ;;
@@ -75,6 +81,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$SUBFLOW" ]] || { echo "--subflow is required." >&2; usage >&2; exit 2; }
+WORKFLOW_ID="${WORKFLOW_ID//[[:space:]]/}"
+EVAL_WORKFLOW_IDS="${EVAL_WORKFLOW_IDS//[[:space:]]/}"
 if [[ -n "$OFFLINE_DIR" && -n "$RESUME_RUN" ]]; then
     echo "--offline-dir and --resume-run cannot be used together." >&2
     exit 2
