@@ -198,6 +198,10 @@ def main() -> None:
     parser.add_argument("--max-batches", type=int, default=None)
     parser.add_argument("--max-train", type=int, default=None)
     parser.add_argument("--max-test", type=int, default=None)
+    parser.add_argument(
+        "--skip-utterance-eval", action="store_true",
+        help="Final held-out evaluation only predicts/evaluates action turns; text metrics are left empty.",
+    )
     parser.add_argument("--reference-top-k", type=int, default=3)
     parser.add_argument("--reference-max-chars", type=int, default=1800)
     parser.add_argument("--min-gold-support", type=int, default=3)
@@ -569,6 +573,7 @@ def main() -> None:
     result = evaluate_agent_on_subflow(
         final_agent, test, "online_refined", args.subflow, save_dir=out_dir,
         eval_workflow_ids=eval_workflow_ids,
+        skip_utterance_eval=args.skip_utterance_eval,
     )
     # Parallel evaluation runs in forked processes. Merge their isolated
     # usage snapshots with the parent process' mining/refinement usage.

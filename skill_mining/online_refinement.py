@@ -877,7 +877,8 @@ def _classify_online_evidence(item: dict[str, Any]) -> list[str]:
 
 
 def build_online_evidence_packets(
-    localized: dict[str, Any], max_examples_per_bucket: int = 4,
+    localized: dict[str, Any], max_examples_per_bucket: int = 2,
+    max_transition_examples: int = 48, max_action_examples: int = 72,
 ) -> dict[str, Any]:
     """Organize one rollout batch into transition and action-card evidence.
 
@@ -939,13 +940,45 @@ def build_online_evidence_packets(
         # remains complete, so this limit only controls prompt size.
         return {key: values[:max_examples_per_bucket] for key, values in buckets.items()}
 
+    def bounded_group(
+        group: dict[str, dict[str, list[dict[str, Any]]]], limit: int,
+    ) -> dict[str, dict[str, list[dict[str, Any]]]]:
+        """Apply a global prompt budget while retaining every outcome type."""
+        trimmed = {key: trim(value) for key, value in sorted(group.items())}
+        result: dict[str, dict[str, list[dict[str, Any]]]] = {}
+        keys = list(trimmed)
+        bucket_names = sorted({bucket for value in trimmed.values() for bucket in value})
+        selected = 0
+        index = 0
+        while keys and selected < limit:
+            key = keys[index % len(keys)]
+            buckets = trimmed[key]
+            bucket = bucket_names[index % len(bucket_names)]
+            values = buckets.get(bucket, [])
+            if values:
+                result.setdefault(key, {name: [] for name in bucket_names})[bucket].append(values.pop(0))
+                selected += 1
+            index += 1
+            if index > max(1, len(keys) * max(1, len(bucket_names)) * max_examples_per_bucket * 2):
+                break
+        return result
+
+    transition_packet = bounded_group(by_transition, max_transition_examples)
+    action_packet = bounded_group(by_action, max_action_examples)
+    actual_examples = sum(
+        len(items)
+        for group in (transition_packet, action_packet)
+        for buckets in group.values()
+        for items in buckets.values()
+    )
     return {
-        "transition": {key: trim(value) for key, value in sorted(by_transition.items())},
-        "action_card": {key: trim(value) for key, value in sorted(by_action.items())},
+        "transition": transition_packet,
+        "action_card": action_packet,
         "counts": {
-            "transition_edges": len(by_transition),
-            "actions": len(by_action),
-            "examples": sum(len(values) for values in events),
+            "transition_edges": len(transition_packet),
+            "actions": len(action_packet),
+            "raw_examples": len(events),
+            "examples": actual_examples,
         },
     }
 
@@ -1456,6 +1489,17 @@ def autonomous_resource_reflection(
         "reference_query": reference_query_from_trace(row.get("react_trace")),
     } for row in supervised_rows]
     packets = evidence_packets or {"transition": {}, "action_card": {}, "counts": {}}
+    # The packets carry the contextual examples. Keep only a compact index in
+    # the main reflection prompt; otherwise every turn is serialized twice.
+    prompt_supervision = compact_supervision
+    if evidence_packets:
+        prompt_supervision = [{
+            key: row.get(key)
+            for key in (
+                "conversation_id", "turn_index", "predicted_action", "predicted_slots",
+                "gold", "action_correct", "slot_correct", "ast_outcome", "reference_query",
+            )
+        } for row in compact_supervision]
     graph_edges = [{
         "edge_id": edge_id, "source_action": edge["source_action"],
         "target_action": edge["target_action"], "kind": edge["kind"],
@@ -1479,7 +1523,7 @@ def autonomous_resource_reflection(
         skill=skill or "[empty]",
         retrieved_resources=json.dumps(retrieved, ensure_ascii=False, indent=2) or "[]",
         graph_edges=json.dumps(graph_edges, ensure_ascii=False),
-        rollout_supervision=json.dumps(compact_supervision, ensure_ascii=False, indent=2),
+        rollout_supervision=json.dumps(prompt_supervision, ensure_ascii=False, indent=2),
         evidence_packets=json.dumps(packets, ensure_ascii=False, indent=2),
     )
     from llm import chat, resolve_config

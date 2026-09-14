@@ -97,7 +97,8 @@ def load_subflow_data(subflow: str) -> tuple[list, list]:
 
 def _evaluate_test_shard_worker(agent, shard: list, label: str, subflow: str,
                                 workflow_id: str, result_queue,
-                                response_log_dir: str | None = None) -> None:
+                                response_log_dir: str | None = None,
+                                action_only: bool = False) -> None:
     """Evaluate one test shard in an isolated process/workflow environment."""
     try:
         # fork inherits the parent's tracker state; isolate this shard so the
@@ -117,7 +118,8 @@ def _evaluate_test_shard_worker(agent, shard: list, label: str, subflow: str,
             print(f"  [{label}] worker_workflow={workflow_id} [{index}/{len(shard)}] "
                   f"convo={cid} {subflow}", flush=True)
             rows.extend(agent.predict_all_turns(
-                conversation, predict_actions=True, verbose=False))
+                conversation, predict_actions=True, verbose=False,
+                action_only=action_only))
         selection_log = list(getattr(agent, "selection_log", []))
         usage = getattr(llm, "get_usage_summary", lambda: {})()
         result_queue.put({"ok": True, "rows": rows, "selection_log": selection_log,
@@ -468,6 +470,7 @@ def mine_subflow_semantic_router(
 def evaluate_agent_on_subflow(
     agent, test_convs: list, label: str, subflow: str = "",
     save_dir: Path | None = None, eval_workflow_ids: list[str] | None = None,
+    skip_utterance_eval: bool = False,
 ) -> dict:
     """Run turn-level predictions + evaluation (with progress). Saves preds."""
     total = len(test_convs)
@@ -491,7 +494,7 @@ def evaluate_agent_on_subflow(
                 target=_evaluate_test_shard_worker,
                 args=(agent, shard, label, subflow, workflow_id, result_queue,
                       str(save_dir / "llm_responses" / f"{label}_{workflow_id}")
-                      if save_dir else None),
+                      if save_dir else None, skip_utterance_eval),
                 daemon=False,
             )
             worker.start()
@@ -529,7 +532,8 @@ def evaluate_agent_on_subflow(
             cid = conv.get("convo_id", "?")
             print(f"  [{label}] [{index}/{total}] convo={cid}  {subflow}", end="\r")
             all_turn_results.extend(agent.predict_all_turns(
-                conv, predict_actions=True, verbose=False))
+                conv, predict_actions=True, verbose=False,
+                action_only=skip_utterance_eval))
         print(f"  [{label}] Done: {total} convs, {len(all_turn_results)} turns")
 
     # Save predictions for error analysis
@@ -561,11 +565,16 @@ def evaluate_agent_on_subflow(
     text_turns = [
         r for r in turn_results if r.get("target_type", "utterance") == "utterance"
     ]
+    if skip_utterance_eval:
+        text_turns = []
     preds = [r["prediction"] for r in text_turns]
     # Runtime prompts use original utterances, so compare generated text
     # against the aligned original agent utterance when it is available.
     refs = [r.get("reference_original") or r["reference"] for r in text_turns]
-    text_result = evaluate_text_records(preds, refs)
+    text_result = evaluate_text_records(preds, refs) if text_turns else {
+        "bert_f1": 0.0, "bleu_1": 0.0, "bleu_4": 0.0,
+        "rouge_1": 0.0, "rouge_2": 0.0, "rouge_l": 0.0, "meteor": 0.0,
+    }
 
     # AST from turn results
     from eval_tod.abcd.agent import (

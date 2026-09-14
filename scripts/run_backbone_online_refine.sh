@@ -47,6 +47,7 @@ Options:
   --max-batches N            Limit online batches for a smoke experiment
   --max-train N              Limit train sessions
   --max-test N               Limit held-out test sessions
+  --skip-utterance-eval      Final test predicts/evaluates action turns only; text metrics are zeroed
   --skip-guard-llm           Collect feedback/patches but do not induce guards
   --guard-retries N          LLM retries per local guard (default: 3)
   -h, --help                 Show this help
