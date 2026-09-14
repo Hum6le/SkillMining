@@ -30,6 +30,8 @@ from skill_mining.online_refinement import (
     autonomous_resource_reflection,
     apply_dynamic_skill_operations,
     apply_working_skill_operations,
+    accumulate_online_evidence,
+    build_online_evidence_packets,
     initialize_skill_dag,
     load_skill_dag,
     localize_rollout_batch,
@@ -425,6 +427,16 @@ def main() -> None:
         turns = _rollout_online_batch(agent, batch)
         _write(out_dir / "rollouts" / f"batch_{batch_index:04d}.json", json.dumps(turns, indent=2, ensure_ascii=False))
         localized = localize_rollout_batch(batch, turns, state)
+        rollout_supervision = _batch_rollout_supervision(batch, turns)
+        evidence_packets = build_online_evidence_packets(localized)
+        accumulate_online_evidence(state, evidence_packets, batch_index)
+        _write(out_dir / "online_evidence" / f"batch_{batch_index:04d}.json", json.dumps({
+            "batch_index": batch_index,
+            "conversation_ids": [str(item.get("convo_id", "?")) for item in batch],
+            "rollout_supervision": rollout_supervision,
+            "localized": localized,
+            "packets": evidence_packets,
+        }, indent=2, ensure_ascii=False))
         # Retain threshold-based proposals only as diagnostics. In autonomous
         # mode they must not mutate visibility or override the optimizer's
         # resource decision.
@@ -433,12 +445,13 @@ def main() -> None:
         if not args.skip_guard_llm:
             online_skill, online_reference = render_online_resources(state)
             reflection = autonomous_resource_reflection(
-                state, _batch_rollout_supervision(batch, turns), working_skill,
+                state, rollout_supervision, working_skill,
                 base_reference + "\n" + online_reference,
                 action_rules + "\n" + render_online_action_rules(state),
                 slot_policies + "\n" + render_online_slot_policies(state),
                 args.model, max_retries=args.guard_retries,
                 response_logger=response_logger,
+                evidence_packets=evidence_packets,
             )
             skill_before_sha256 = hashlib.sha256(working_skill.encode("utf-8")).hexdigest()
             proposed_skill_operations = reflection.get("proposed_skill_operations", [])
@@ -530,6 +543,7 @@ def main() -> None:
             "batch_index": batch_index,
             "conversation_ids": [str(item.get("convo_id", "?")) for item in batch],
             "localization": localized,
+            "evidence_packets": evidence_packets,
             "patches": patches,
             "autonomous_reflection": reflection,
         }, indent=2, ensure_ascii=False))

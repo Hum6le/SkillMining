@@ -230,6 +230,13 @@ already correct.
 <current_skill>{skill}</current_skill>
 <retrieved_resources>{retrieved_resources}</retrieved_resources>
 <graph_edges>{graph_edges}</graph_edges>
+<evidence_packets>
+The transition packet contains sibling-route evidence. The action-card packet
+contains same-action AST successes, action-correct slot failures, and action
+selection failures. Use the packet labels as diagnostic organization, not as
+semantic explanations.
+{evidence_packets}
+</evidence_packets>
 <rollout_supervision>
 Each record contains the model's final prediction and, when retrieval was
 used, only its generated `reference_query`; the dialogue context and gold
@@ -405,7 +412,7 @@ def initialize_skill_dag(subgraph: dict[str, Any], subflow: str) -> dict[str, An
             "evidence": [],
         }
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "subflow": subflow,
         "root": ROOT,
         "nodes": [{"id": node, "label": label, "topological_order": order_index.get(node)} for node, label in nodes.items()],
@@ -414,6 +421,11 @@ def initialize_skill_dag(subgraph: dict[str, Any], subflow: str) -> dict[str, An
         "slot_policies": {},
         "action_rules": {},
         "reference_notes": [],
+        "evidence_pool": {
+            "transition": {},
+            "action_card": {},
+            "unresolved": [],
+        },
         "batches_processed": 0,
         "patches": [],
     }
@@ -447,6 +459,10 @@ def load_skill_dag(path: Path) -> dict[str, Any]:
             record.setdefault(key, default)
     state.setdefault("action_rules", {})
     state.setdefault("reference_notes", [])
+    pool = state.setdefault("evidence_pool", {})
+    pool.setdefault("transition", {})
+    pool.setdefault("action_card", {})
+    pool.setdefault("unresolved", [])
     return state
 
 
@@ -705,6 +721,7 @@ def localize_rollout_batch(
     action_to_node = {node["label"]: node["id"] for node in state.get("nodes", [])}
     events = []
     slot_events = []
+    action_events = []
     for conversation in conversations:
         sid = str(conversation.get("convo_id", "?"))
         actions = _gold_action_rows(conversation, by_conversation.get(sid, []))
@@ -769,7 +786,7 @@ def localize_rollout_batch(
             # This record evaluates the decision ``previous.gold_action ->
             # current.gold_action``. The source action is provided by the
             # gold trajectory during teacher-forced rollout context, so
-            # requiring it to be predicted correctly again turns edge
+        # requiring it to be predicted correctly again turns edge
             # reliability into the product of two independent action scores.
             # Attribute success to the target decision only.
             action_ok = bool(current["action_correct"])
@@ -802,13 +819,178 @@ def localize_rollout_batch(
             if len(edge["evidence"]) < max_evidence_per_edge:
                 edge["evidence"].append(evidence)
             events.append({"edge_id": key, **evidence})
+        # Keep action-selection failures in a separate packet. They are useful
+        # for diagnosing routing, but must never be counted as slot-policy
+        # evidence for the gold action.
+        for current in actions:
+            if current["action_correct"]:
+                continue
+            action_events.append({
+                "conversation_id": sid,
+                "source_turn": None,
+                "target_turn": current["turn_index"],
+                "action_success": False,
+                "slot_success": False,
+                "slot_evaluable": False,
+                "gold_action": current["gold_action"],
+                "predicted_action": current["predicted_action"],
+                "gold_slots": current["gold_slots"],
+                "predicted_slots": current["predicted_slots"],
+                "gold_slot_count": current["gold_slot_count"],
+                "predicted_slot_count": current["predicted_slot_count"],
+                "context": current["context"],
+                "react_trace": current["react_trace"],
+            })
     state["batches_processed"] = int(state.get("batches_processed", 0)) + 1
     return {
         "events": events,
         "num_events": len(events),
         "slot_events": slot_events,
         "num_slot_events": len(slot_events),
+        "action_events": action_events,
+        "num_action_events": len(action_events),
     }
+
+
+def _classify_online_evidence(item: dict[str, Any]) -> list[str]:
+    """Attach explicit AST error dimensions for downstream LLM diagnosis."""
+    action_ok = bool(item.get("action_success"))
+    slot_ok = bool(item.get("slot_success"))
+    errors: list[str] = []
+    if not action_ok:
+        errors.append("wrong_action")
+    elif not slot_ok:
+        gold_count = int(item.get("gold_slot_count", len(item.get("gold_slots", []))) or 0)
+        predicted_count = int(item.get("predicted_slot_count", len(item.get("predicted_slots", []))) or 0)
+        if gold_count == 0 and predicted_count > 0:
+            errors.append("forbidden_slots_for_zero_slot_action")
+        elif predicted_count < gold_count:
+            errors.append("missing_slot")
+        elif predicted_count > gold_count:
+            errors.append("extra_slot")
+        if list(item.get("gold_slots", [])) != list(item.get("predicted_slots", [])):
+            if gold_count == predicted_count and sorted(map(str, item.get("gold_slots", []))) == sorted(map(str, item.get("predicted_slots", []))):
+                errors.append("wrong_slot_order")
+            else:
+                errors.append("wrong_slot_value")
+    return errors or ["ast_success"]
+
+
+def build_online_evidence_packets(
+    localized: dict[str, Any], max_examples_per_bucket: int = 4,
+) -> dict[str, Any]:
+    """Organize one rollout batch into transition and action-card evidence.
+
+    Transition packets compare sibling route decisions. Action-card packets
+    compare successes with action-correct slot failures for the same action.
+    This is a deterministic repackaging step; it does not add labels beyond
+    the already computed AST comparison.
+    """
+    events = (
+        list(localized.get("events", []))
+        + list(localized.get("slot_events", []))
+        + list(localized.get("action_events", []))
+    )
+    by_transition: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(
+        lambda: {"positive": [], "negative": []}
+    )
+    by_action: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(
+        lambda: {"success": [], "slot_failure": [], "action_failure": []}
+    )
+    seen: set[tuple[str, int, str, str]] = set()
+    action_seen: set[tuple[str, int, str]] = set()
+    for raw in events:
+        item = dict(raw)
+        action = str(item.get("gold_action", ""))
+        if not action:
+            continue
+        item["error_types"] = _classify_online_evidence(item)
+        item["action_correct"] = bool(item.get("action_success"))
+        item["slot_correct"] = bool(item.get("slot_success")) if item.get("slot_evaluable", True) else None
+        evidence_key = (
+            str(item.get("conversation_id", "?")),
+            int(item.get("target_turn", -1) or -1),
+            str(item.get("edge_id", "")),
+            ",".join(item["error_types"]),
+        )
+        if evidence_key in seen:
+            continue
+        seen.add(evidence_key)
+        edge_id = str(item.get("edge_id", ""))
+        if edge_id:
+            bucket = "positive" if item["action_correct"] else "negative"
+            by_transition[edge_id][bucket].append(item)
+        action_identity = (
+            str(item.get("conversation_id", "?")),
+            int(item.get("target_turn", -1) or -1),
+            ",".join(item["error_types"]),
+        )
+        if action_identity in action_seen:
+            continue
+        action_seen.add(action_identity)
+        if item["action_correct"]:
+            bucket = "success" if item.get("slot_correct") else "slot_failure"
+        else:
+            bucket = "action_failure"
+        by_action[action][bucket].append(item)
+
+    def trim(buckets: dict[str, list[dict[str, Any]]]) -> dict[str, list[dict[str, Any]]]:
+        # Keep both outcomes whenever possible; the on-disk batch artifact
+        # remains complete, so this limit only controls prompt size.
+        return {key: values[:max_examples_per_bucket] for key, values in buckets.items()}
+
+    return {
+        "transition": {key: trim(value) for key, value in sorted(by_transition.items())},
+        "action_card": {key: trim(value) for key, value in sorted(by_action.items())},
+        "counts": {
+            "transition_edges": len(by_transition),
+            "actions": len(by_action),
+            "examples": sum(len(values) for values in events),
+        },
+    }
+
+
+def accumulate_online_evidence(
+    state: dict[str, Any], packets: dict[str, Any], batch_index: int,
+    max_examples_per_bucket: int = 12,
+) -> None:
+    """Accumulate bounded semantic evidence while preserving full batch files."""
+    pool = state.setdefault("evidence_pool", {})
+    transition_pool = pool.setdefault("transition", {})
+    action_pool = pool.setdefault("action_card", {})
+    unresolved = pool.setdefault("unresolved", [])
+
+    def add(target: dict[str, Any], key: str, buckets: dict[str, list[dict[str, Any]]]) -> None:
+        record = target.setdefault(key, {bucket: [] for bucket in buckets})
+        for bucket, values in buckets.items():
+            existing = record.setdefault(bucket, [])
+            known = {
+                (str(item.get("conversation_id", "?")), int(item.get("target_turn", -1) or -1))
+                for item in existing
+            }
+            for value in values:
+                item = dict(value)
+                item["batch_index"] = batch_index
+                identity = (str(item.get("conversation_id", "?")), int(item.get("target_turn", -1) or -1))
+                if identity not in known:
+                    existing.append(item)
+                    known.add(identity)
+            del existing[max_examples_per_bucket:]
+
+    for key, buckets in packets.get("transition", {}).items():
+        add(transition_pool, key, buckets)
+    for key, buckets in packets.get("action_card", {}).items():
+        add(action_pool, key, buckets)
+    for action, buckets in packets.get("action_card", {}).items():
+        for item in buckets.get("action_failure", []):
+            unresolved.append({
+                "batch_index": batch_index,
+                "action": action,
+                "conversation_id": item.get("conversation_id"),
+                "target_turn": item.get("target_turn"),
+                "reason": "action failure is not valid slot-policy evidence",
+            })
+    del unresolved[max_examples_per_bucket * max(1, len(action_pool)):]
 
 
 @dataclass(frozen=True)
@@ -1221,6 +1403,7 @@ def autonomous_resource_reflection(
     state: dict[str, Any], rollout_supervision: list[dict[str, Any]], skill: str,
     reference: str, action_rules: str, slot_policies: str, model: str,
     max_retries: int = 3, response_logger: Any = None,
+    evidence_packets: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Let the LLM select and apply bounded resource updates for one batch."""
     def reference_query_from_trace(trace: Any) -> str:
@@ -1251,19 +1434,28 @@ def autonomous_resource_reflection(
 
     supervised_rows = [
         row for row in rollout_supervision
-        if row.get("gold") is not None or str(row.get("gold_response", "")).strip()
+        if row.get("gold") is not None
     ]
     compact_supervision = [{
         "conversation_id": row.get("conversation_id"), "turn_index": row.get("turn_index"),
-        "target_type": row.get("target_type"), "context": str(row.get("context", ""))[-700:],
+        "target_type": row.get("target_type", "action"), "context": str(row.get("context", ""))[-2000:],
         "prediction": str(row.get("prediction", ""))[:500],
         "predicted_action": row.get("predicted_action", ""),
         "predicted_slots": row.get("predicted_slots", []), "gold": row.get("gold"),
+        "action_correct": _supervision_outcome(row) == "success" or (
+            isinstance(row.get("gold"), dict)
+            and str(row.get("predicted_action", "")) == str(row["gold"].get("gold_action", ""))
+        ),
+        "slot_correct": (
+            list(row.get("predicted_slots", [])) == list(row["gold"].get("gold_slots", []))
+            if isinstance(row.get("gold"), dict) else None
+        ),
         "gold_response": str(row.get("gold_response", ""))[:500],
         "ast_outcome": _supervision_outcome(row),
         "evidence_outcome": _supervision_outcome(row),
         "reference_query": reference_query_from_trace(row.get("react_trace")),
-    } for row in supervised_rows[-32:]]
+    } for row in supervised_rows]
+    packets = evidence_packets or {"transition": {}, "action_card": {}, "counts": {}}
     graph_edges = [{
         "edge_id": edge_id, "source_action": edge["source_action"],
         "target_action": edge["target_action"], "kind": edge["kind"],
@@ -1288,6 +1480,7 @@ def autonomous_resource_reflection(
         retrieved_resources=json.dumps(retrieved, ensure_ascii=False, indent=2) or "[]",
         graph_edges=json.dumps(graph_edges, ensure_ascii=False),
         rollout_supervision=json.dumps(compact_supervision, ensure_ascii=False, indent=2),
+        evidence_packets=json.dumps(packets, ensure_ascii=False, indent=2),
     )
     from llm import chat, resolve_config
     cfg = resolve_config(model=model)
@@ -1449,6 +1642,7 @@ def autonomous_resource_reflection(
         "rejected_skill_operations": rejected_skill_operations,
         "model_decision": str(payload.get("decision", "")),
         "model_no_update_reason": str(payload.get("no_update_reason", "")),
+        "evidence_packet_counts": packets.get("counts", {}),
         "error": last_error if not payload else "",
     }
 

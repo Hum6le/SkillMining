@@ -9,6 +9,8 @@ from skill_mining.online_refinement import (
     apply_refinement_patches,
     apply_dynamic_skill_operations,
     apply_working_skill_operations,
+    accumulate_online_evidence,
+    build_online_evidence_packets,
     build_guard_induction_context,
     edge_confidence,
     initialize_skill_dag,
@@ -522,6 +524,47 @@ ROOT
         branch = next(row for row in summary["branches"] if row["edge_id"] == "a=>c")
         self.assertIn("insufficient_gold_support", branch["blockers"])
         self.assertIn("guard_unresolved", branch["blockers"])
+
+    def test_evidence_packets_separate_route_and_action_card_failures(self):
+        localized = {
+            "events": [{
+                "edge_id": "a=>b", "conversation_id": "c1", "target_turn": 2,
+                "gold_action": "send-link", "predicted_action": "make-password",
+                "action_success": False, "slot_success": False,
+                "slot_evaluable": False, "gold_slots": [], "predicted_slots": [],
+                "context": "Customer requests a reset link.",
+            }],
+            "slot_events": [{
+                "conversation_id": "c2", "target_turn": 1,
+                "gold_action": "send-link", "predicted_action": "send-link",
+                "action_success": True, "slot_success": False,
+                "slot_evaluable": True, "gold_slots": [], "predicted_slots": ["email"],
+                "gold_slot_count": 0, "predicted_slot_count": 1,
+                "context": "Customer asks for a link.",
+            }, {
+                "conversation_id": "c3", "target_turn": 1,
+                "gold_action": "send-link", "predicted_action": "send-link",
+                "action_success": True, "slot_success": True,
+                "slot_evaluable": True, "gold_slots": [], "predicted_slots": [],
+                "gold_slot_count": 0, "predicted_slot_count": 0,
+                "context": "Customer asks for a link.",
+            }],
+            "action_events": [],
+        }
+        packets = build_online_evidence_packets(localized)
+        action_packet = packets["action_card"]["send-link"]
+        self.assertEqual(len(action_packet["action_failure"]), 1)
+        self.assertEqual(len(action_packet["slot_failure"]), 1)
+        self.assertEqual(len(action_packet["success"]), 1)
+        self.assertIn("forbidden_slots_for_zero_slot_action", action_packet["slot_failure"][0]["error_types"])
+        self.assertIn("a=>b", packets["transition"])
+
+        state = initialize_skill_dag(_subgraph(), "account_access")
+        accumulate_online_evidence(state, packets, batch_index=1)
+        self.assertIn("send-link", state["evidence_pool"]["action_card"])
+        self.assertEqual(
+            state["evidence_pool"]["action_card"]["send-link"]["success"][0]["batch_index"], 1
+        )
 
 
 if __name__ == "__main__":
