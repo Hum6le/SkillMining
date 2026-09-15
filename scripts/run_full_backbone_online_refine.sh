@@ -257,6 +257,9 @@ run_worker() {
             cmd+=(--offline-dir "$offline_dir")
         fi
         cmd+=("${RUNNER_ARGS[@]}")
+        if [[ "$CONTINUE_ON_ERROR" -eq 0 ]]; then
+            cmd+=(--stop-on-error)
+        fi
         # The full scheduler assigns exactly one workflow to each worker.
         # Pass it explicitly to both phases; the environment variable is kept
         # only as a compatibility fallback for older runtime code.

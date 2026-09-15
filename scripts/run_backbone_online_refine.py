@@ -288,7 +288,13 @@ def main() -> None:
     )
     parser.add_argument("--skip-guard-llm", action="store_true",
                         help="Only collect graph evidence and deterministic patches")
+    parser.add_argument(
+        "--stop-on-error", action="store_true",
+        help="Fail immediately on an empty LLM response; useful for diagnosing workflow failures.",
+    )
     args = parser.parse_args()
+    if args.stop_on_error:
+        os.environ["SKILLMINING_STOP_ON_ERROR"] = "1"
     eval_workflow_ids = [value.strip() for value in args.eval_workflow_ids.split(",") if value.strip()]
     refine_workflow_ids = [value.strip() for value in args.refine_workflow_ids.split(",") if value.strip()]
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 import json
 import copy
+import os
 import sys
 import time
 from pathlib import Path
@@ -475,11 +476,19 @@ class ABCDAgent(AbstractTodAgent):
             workflow_config["workflow_id"] = self.workflow_id
             kwargs.pop("api_key", None)
             kwargs.pop("base_url", None)
-            return llm.chat(
+            response = llm.chat(
                 messages, model=self.model, config=workflow_config, **kwargs,
             )
-        from llm import chat
-        return chat(messages, **kwargs)
+        else:
+            from llm import chat
+            response = chat(messages, **kwargs)
+        if not str(response or "").strip() and os.getenv("SKILLMINING_STOP_ON_ERROR") == "1":
+            raise RuntimeError(
+                "LLM returned an empty response"
+                f" (workflow_id={self.workflow_id or '<config.py>'},"
+                f" call_tag={kwargs.get('call_tag', 'chat')})"
+            )
+        return response or ""
 
     def set_reference_text(self, reference_text: str | None) -> None:
         """Replace prompt-time mined-reference material."""

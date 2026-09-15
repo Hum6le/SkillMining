@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import time
 from collections import Counter, defaultdict
@@ -1515,10 +1516,16 @@ def _online_refinement_chat(messages: list[dict[str, str]], *, model: str,
         workflow_config = copy.deepcopy(project_config.LLM_CONFIG)
         workflow_config["provider"] = "workflow"
         workflow_config["workflow_id"] = workflow_id
-        return llm.chat(
+        raw_response = llm.chat(
             messages, model=model, temperature=temperature, config=workflow_config,
             response_logger=response_logger, call_tag=call_tag,
         )
+        if not str(raw_response or "").strip() and os.getenv("SKILLMINING_STOP_ON_ERROR") == "1":
+            raise RuntimeError(
+                "Workflow optimizer returned an empty response"
+                f" (workflow_id={workflow_id}, call_tag={call_tag})"
+            )
+        return raw_response or ""
     from llm import chat
     return chat(messages, model=model, api_key=api_key, base_url=base_url,
                 temperature=temperature, response_logger=response_logger,
