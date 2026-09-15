@@ -1655,8 +1655,11 @@ def autonomous_resource_reflection(
         rollout_supervision=json.dumps(prompt_supervision, ensure_ascii=False, indent=2),
         evidence_packets=json.dumps(prompt_packets, ensure_ascii=False, indent=2),
     )
-    from llm import resolve_config
-    cfg = resolve_config(model=model)
+    if workflow_id:
+        cfg = {"model": model, "api_key": None, "base_url": None}
+    else:
+        from llm import resolve_config
+        cfg = resolve_config(model=model)
     raw, payload, last_error = "", {}, ""
     for attempt in range(1, max(1, max_retries) + 1):
         try:

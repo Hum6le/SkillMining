@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 import json
+import copy
 import sys
 import time
 from pathlib import Path
@@ -428,12 +429,14 @@ class ABCDAgent(AbstractTodAgent):
         delay: float = 0.3,
         response_logger=None,
         expose_scenario_labels: bool = True,
+        workflow_id: str | None = None,
     ):
         from llm import resolve_config
         cfg = resolve_config(api_key=api_key, base_url=base_url, model=model)
         self.model = cfg["model"]
         self.api_key = cfg["api_key"]
         self.base_url = cfg["base_url"]
+        self.workflow_id = str(workflow_id or "").strip()
         self.max_turns = max_turns
         self.delay = delay
         self.memory = memory if memory is not None else MemoryStore()
@@ -460,6 +463,23 @@ class ABCDAgent(AbstractTodAgent):
             "selected_exemplars": [],
         }
         self._last_prompt_budget: dict[str, int] = {}
+
+    def _chat(self, messages, **kwargs) -> str:
+        """Route this agent's calls through its explicit workflow when set."""
+        if self.workflow_id:
+            import llm_new
+            from config import LLM_CONFIG
+
+            workflow_config = copy.deepcopy(LLM_CONFIG)
+            workflow_config["provider"] = "workflow"
+            workflow_config["workflow_id"] = self.workflow_id
+            kwargs.pop("api_key", None)
+            kwargs.pop("base_url", None)
+            return llm_new.chat(
+                messages, model=self.model, config=workflow_config, **kwargs,
+            )
+        from llm import chat
+        return chat(messages, **kwargs)
 
     def set_reference_text(self, reference_text: str | None) -> None:
         """Replace prompt-time mined-reference material."""
@@ -556,7 +576,7 @@ class ABCDAgent(AbstractTodAgent):
         ]
         raw_output = ""
         try:
-            raw_output = chat(
+            raw_output = self._chat(
                 messages, model=self.model, api_key=self.api_key,
                 base_url=self.base_url, temperature=0.0,
                 response_logger=self._response_logger,
@@ -674,7 +694,7 @@ class ABCDAgent(AbstractTodAgent):
 
         response_text = ""
         try:
-            response_text = chat(
+            response_text = self._chat(
                 messages,
                 model=self.model,
                 api_key=self.api_key,
@@ -824,7 +844,7 @@ class ABCDAgent(AbstractTodAgent):
                 }
                 if call_tag:
                     chat_kwargs["call_tag"] = call_tag
-                raw_output = chat(messages, **chat_kwargs).strip()
+                raw_output = self._chat(messages, **chat_kwargs).strip()
             except Exception as exc:
                 if verbose:
                     print(f"    LLM error convo={convo_id} turn={turn_idx}: {exc}")
@@ -1075,7 +1095,7 @@ class ABCDAgent(AbstractTodAgent):
         raw_output = ""
         try:
             from llm import chat
-            raw_output = chat(
+            raw_output = self._chat(
                 messages,
                 model=self.model,
                 api_key=self.api_key,
@@ -1574,7 +1594,7 @@ class ABCDAgent(AbstractTodAgent):
         updated = ""
         for attempt in range(3):
             try:
-                updated = chat(
+                updated = self._chat(
                     prompt,
                     model=self.model,
                     api_key=self.api_key,

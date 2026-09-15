@@ -52,7 +52,6 @@ from scripts.run_subflow_eval import (
     load_subflow_data,
     mine_subflow_skill_backbone,
 )
-from llm import workflow_context
 
 
 def _write(path: Path, text: str) -> None:
@@ -93,9 +92,9 @@ def _run_parallel_online_wave(
         agent = _build_agent(
             args, working_skill, base_reference, action_rules, slot_policies,
             copy.deepcopy(frozen_state), response_logger=response_logger,
+            workflow_id=workflow_id,
         )
-        with workflow_context(workflow_id):
-            turns = _rollout_online_batch(agent, batch)
+        turns = _rollout_online_batch(agent, batch)
         return {
             "batch_index": index,
             "workflow_id": workflow_id,
@@ -199,7 +198,8 @@ def _batch_rollout_supervision(conversations: list[dict], turn_results: list[dic
 
 
 def _build_agent(args, working_skill: str, base_reference: str, action_rules: str,
-                 slot_policies: str, state: dict, response_logger=None) -> ABCDAgent:
+                 slot_policies: str, state: dict, response_logger=None,
+                 workflow_id: str | None = None) -> ABCDAgent:
     _, online_reference = render_online_resources(state)
     workflow = WorkflowStore()
     workflow.update(working_skill)
@@ -214,6 +214,7 @@ def _build_agent(args, working_skill: str, base_reference: str, action_rules: st
         reference_top_k=args.reference_top_k,
         reference_max_chars=args.reference_max_chars,
         expose_scenario_labels=False,
+        workflow_id=workflow_id,
     )
 
 
