@@ -38,6 +38,7 @@ Options:
   --workflow-id ID           Workflow used by online mining/refinement calls
   --workflow-ids IDS         Compatibility alias; first comma-separated ID is used for mining
   --eval-workflow-ids IDS    Comma-separated workflow IDs for parallel held-out evaluation
+  --refine-workflow-ids IDS  Comma-separated workflow IDs for parallel reflection candidates per online batch
   --conda-env NAME           Default: skillmining310
   --hf-endpoint URL          Default: https://hf-mirror.com
   --python-bin PATH          Default: python

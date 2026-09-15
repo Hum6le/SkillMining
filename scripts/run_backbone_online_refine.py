@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import copy
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import json
 import logging
@@ -133,6 +135,114 @@ def _batch_rollout_supervision(conversations: list[dict], turn_results: list[dic
     return rows
 
 
+def _merge_reflection_candidate_state(
+    state: dict, candidate_state: dict, accepted_updates: list[dict],
+) -> None:
+    """Merge validated updates from one frozen-state reflection candidate.
+
+    Candidate reflections run against identical state snapshots. Their LLM
+    decisions are merged deterministically in the caller's workflow order;
+    this function copies only the state records touched by accepted updates.
+    """
+    for update in accepted_updates:
+        resource = str(update.get("resource", ""))
+        action = str(update.get("action", ""))
+        edge_id = str(update.get("edge_id", ""))
+        if resource == "transition_guard" and edge_id in candidate_state.get("edges", {}):
+            state.setdefault("edges", {})[edge_id] = copy.deepcopy(candidate_state["edges"][edge_id])
+        elif resource == "action_node":
+            source_node = next((node for node in candidate_state.get("nodes", [])
+                                if str(node.get("label")) == action), None)
+            target_node = next((node for node in state.get("nodes", [])
+                                if str(node.get("label")) == action), None)
+            if source_node is not None and target_node is not None:
+                target_node["online_promotions"] = copy.deepcopy(source_node.get("online_promotions", []))
+            state["node_promotions"] = copy.deepcopy(candidate_state.get("node_promotions", []))
+            if edge_id in candidate_state.get("edges", {}):
+                state.setdefault("edges", {})[edge_id] = copy.deepcopy(candidate_state["edges"][edge_id])
+        elif resource in {"action_rule", "slot_policy"} and action:
+            bucket = "action_rules" if resource == "action_rule" else "slot_policies"
+            if action in candidate_state.get(bucket, {}):
+                state.setdefault(bucket, {})[action] = copy.deepcopy(candidate_state[bucket][action])
+        elif resource == "reference":
+            candidate_notes = candidate_state.get("reference_notes", [])
+            if candidate_notes:
+                latest = candidate_notes[-1]
+                if latest not in state.setdefault("reference_notes", []):
+                    state["reference_notes"].append(copy.deepcopy(latest))
+
+
+def _run_parallel_reflections(
+    state: dict, rollout_supervision: list[dict], working_skill: str,
+    reference: str, action_rules: str, slot_policies: str, model: str,
+    max_retries: int, response_logger, evidence_packets: dict,
+    workflow_ids: list[str],
+) -> tuple[dict, dict]:
+    """Generate parallel candidates, then merge them in deterministic order."""
+    frozen_state = copy.deepcopy(state)
+    ids = workflow_ids or [None]
+
+    def run_one(index: int, workflow_id: str | None) -> tuple[int, str | None, dict, dict]:
+        candidate_state = copy.deepcopy(frozen_state)
+        reflection = autonomous_resource_reflection(
+            candidate_state, rollout_supervision, working_skill,
+            reference, action_rules, slot_policies, model,
+            max_retries=max_retries, response_logger=response_logger,
+            evidence_packets=evidence_packets, workflow_id=workflow_id,
+        )
+        return index, workflow_id, candidate_state, reflection
+
+    results: dict[int, tuple[str | None, dict, dict]] = {}
+    with ThreadPoolExecutor(max_workers=len(ids)) as executor:
+        futures = [executor.submit(run_one, index, workflow_id)
+                   for index, workflow_id in enumerate(ids)]
+        for future in as_completed(futures):
+            index, workflow_id, candidate_state, reflection = future.result()
+            results[index] = (workflow_id, candidate_state, reflection)
+
+    merged = {"accepted": [], "rejected": [], "proposed_skill_operations": [],
+              "rejected_skill_operations": [], "lookups": [], "retrieved_resources": [],
+              "model_decision": "no_update", "model_no_update_reason": "",
+              "candidate_reflections": []}
+    seen_updates: set[tuple[str, str, str, str]] = set()
+    seen_operations: set[tuple[str, str, str, str]] = set()
+    for index in sorted(results):
+        workflow_id, candidate_state, reflection = results[index]
+        merged["candidate_reflections"].append({
+            "candidate_index": index, "workflow_id": workflow_id,
+            "decision": reflection.get("model_decision", ""),
+            "prompt_chars": reflection.get("prompt_chars", 0),
+            "error": reflection.get("error", ""),
+        })
+        for update in reflection.get("accepted", []):
+            key = (str(update.get("resource", "")), str(update.get("edge_id", "")),
+                   str(update.get("action", "")), str(update.get("content", "")))
+            if key in seen_updates:
+                continue
+            seen_updates.add(key)
+            _merge_reflection_candidate_state(state, candidate_state, [update])
+            merged["accepted"].append(update)
+        merged["rejected"].extend(reflection.get("rejected", []))
+        for operation in reflection.get("proposed_skill_operations", []):
+            key = (str(operation.get("op", "")), str(operation.get("match_text", "")),
+                   str(operation.get("new_text", "")), str(operation.get("occurrence", "")))
+            if key not in seen_operations:
+                seen_operations.add(key)
+                merged["proposed_skill_operations"].append(operation)
+        merged["rejected_skill_operations"].extend(reflection.get("rejected_skill_operations", []))
+        merged["lookups"].extend(reflection.get("lookups", []))
+        merged["retrieved_resources"].extend(reflection.get("retrieved_resources", []))
+        if reflection.get("model_decision") == "update":
+            merged["model_decision"] = "update"
+    candidate_prompt_sizes = [int(item.get("prompt_chars", 0) or 0)
+                              for item in merged["candidate_reflections"]]
+    merged["prompt_chars"] = max(candidate_prompt_sizes, default=0)
+    merged["prompt_chars_total"] = sum(candidate_prompt_sizes)
+    merged["parallel_candidate_count"] = len(ids)
+    merged["workflow_ids"] = [value for value in ids if value]
+    return merged, frozen_state
+
+
 def _build_agent(args, working_skill: str, base_reference: str, action_rules: str,
                  slot_policies: str, state: dict, response_logger=None) -> ABCDAgent:
     _, online_reference = render_online_resources(state)
@@ -215,10 +325,16 @@ def main() -> None:
         help="Comma-separated workflow IDs used to parallelize online training rollouts. "
              "Updates remain single-writer in the main process.",
     )
+    parser.add_argument(
+        "--refine-workflow-ids", default="",
+        help="Comma-separated workflow IDs for parallel reflection candidates within each online batch. "
+             "Candidates are merged deterministically before the next batch.",
+    )
     parser.add_argument("--skip-guard-llm", action="store_true",
                         help="Only collect graph evidence and deterministic patches")
     args = parser.parse_args()
     eval_workflow_ids = [value.strip() for value in args.eval_workflow_ids.split(",") if value.strip()]
+    refine_workflow_ids = [value.strip() for value in args.refine_workflow_ids.split(",") if value.strip()]
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -448,14 +564,13 @@ def main() -> None:
         reflection = {"accepted": [], "rejected": []}
         if not args.skip_guard_llm:
             online_skill, online_reference = render_online_resources(state)
-            reflection = autonomous_resource_reflection(
+            reflection, _ = _run_parallel_reflections(
                 state, rollout_supervision, working_skill,
                 base_reference + "\n" + online_reference,
                 action_rules + "\n" + render_online_action_rules(state),
                 slot_policies + "\n" + render_online_slot_policies(state),
-                args.model, max_retries=args.guard_retries,
-                response_logger=response_logger,
-                evidence_packets=evidence_packets,
+                args.model, args.guard_retries, response_logger,
+                evidence_packets, refine_workflow_ids,
             )
             skill_before_sha256 = hashlib.sha256(working_skill.encode("utf-8")).hexdigest()
             proposed_skill_operations = reflection.get("proposed_skill_operations", [])

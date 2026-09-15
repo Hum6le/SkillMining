@@ -1450,6 +1450,7 @@ def _react_model_output_projection(trace: Any, max_chars: int = 1200) -> dict[st
 def _plan_resource_lookups(
     compact_supervision: list[dict[str, Any]], graph_edges: list[dict[str, Any]],
     skill: str, model: str, max_retries: int, response_logger: Any = None,
+    workflow_id: str | None = None,
 ) -> tuple[list[dict[str, Any]], str, str, str]:
     """Ask the optimizer which resources it wants before exposing contents."""
     # The planner only needs the model's decision surface.  In particular,
@@ -1475,10 +1476,11 @@ def _plan_resource_lookups(
     raw, payload, last_error = "", {}, ""
     for attempt in range(1, max(1, max_retries) + 1):
         try:
-            raw = chat(
+            raw = _online_refinement_chat(
                 [{"role": "user", "content": prompt}], model=cfg["model"],
                 api_key=cfg["api_key"], base_url=cfg["base_url"], temperature=0.0,
                 response_logger=response_logger, call_tag="online_resource_planner",
+                workflow_id=workflow_id,
             ).strip()
             start, end = raw.find("{"), raw.rfind("}")
             payload = json.loads(raw[start:end + 1]) if start >= 0 and end > start else {}
@@ -1500,11 +1502,35 @@ def _plan_resource_lookups(
     return planned, prompt, raw, last_error
 
 
+def _online_refinement_chat(messages: list[dict[str, str]], *, model: str,
+                             api_key: str | None = None, base_url: str | None = None,
+                             temperature: float = 0.0, response_logger: Any = None,
+                             call_tag: str = "online_resource_reflection",
+                             workflow_id: str | None = None) -> str:
+    """Call one explicitly selected workflow without mutating process env."""
+    if workflow_id:
+        import copy
+        import config as project_config
+        import llm_new
+        workflow_config = copy.deepcopy(project_config.LLM_CONFIG)
+        workflow_config["provider"] = "workflow"
+        workflow_config["workflow_id"] = workflow_id
+        return llm_new.chat(
+            messages, model=model, temperature=temperature, config=workflow_config,
+            response_logger=response_logger, call_tag=call_tag,
+        )
+    from llm import chat
+    return chat(messages, model=model, api_key=api_key, base_url=base_url,
+                temperature=temperature, response_logger=response_logger,
+                call_tag=call_tag)
+
+
 def autonomous_resource_reflection(
     state: dict[str, Any], rollout_supervision: list[dict[str, Any]], skill: str,
     reference: str, action_rules: str, slot_policies: str, model: str,
     max_retries: int = 3, response_logger: Any = None,
     evidence_packets: dict[str, Any] | None = None,
+    workflow_id: str | None = None,
 ) -> dict[str, Any]:
     """Let the LLM select and apply bounded resource updates for one batch."""
     def _supervision_outcome(row: dict[str, Any]) -> str:
@@ -1615,6 +1641,7 @@ def autonomous_resource_reflection(
     resources = {"reference": reference, "action_rules": action_rules, "slot_policies": slot_policies}
     lookups, planner_prompt, planner_raw, planner_error = _plan_resource_lookups(
         compact_supervision, graph_edges, skill, model, max_retries, response_logger,
+        workflow_id=workflow_id,
     )
     retrieved = []
     for lookup in lookups:
@@ -1628,15 +1655,16 @@ def autonomous_resource_reflection(
         rollout_supervision=json.dumps(prompt_supervision, ensure_ascii=False, indent=2),
         evidence_packets=json.dumps(prompt_packets, ensure_ascii=False, indent=2),
     )
-    from llm import chat, resolve_config
+    from llm import resolve_config
     cfg = resolve_config(model=model)
     raw, payload, last_error = "", {}, ""
     for attempt in range(1, max(1, max_retries) + 1):
         try:
-            raw = chat(
+            raw = _online_refinement_chat(
                 [{"role": "user", "content": prompt}], model=cfg["model"],
                 api_key=cfg["api_key"], base_url=cfg["base_url"], temperature=0.0,
                 response_logger=response_logger, call_tag="online_resource_reflection",
+                workflow_id=workflow_id,
             ).strip()
             text = "\n".join(raw.splitlines()[1:-1]) if raw.startswith("```") else raw
             start, end = text.find("{"), text.rfind("}")
