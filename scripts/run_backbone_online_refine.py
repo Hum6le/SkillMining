@@ -297,12 +297,6 @@ def main() -> None:
         os.environ["SKILLMINING_STOP_ON_ERROR"] = "1"
     eval_workflow_ids = [value.strip() for value in args.eval_workflow_ids.split(",") if value.strip()]
     refine_workflow_ids = [value.strip() for value in args.refine_workflow_ids.split(",") if value.strip()]
-    log.info(
-        "Configured workflow routing: refine=%s eval=%s",
-        ",".join(refine_workflow_ids) if refine_workflow_ids else "config.py",
-        ",".join(eval_workflow_ids) if eval_workflow_ids else "config.py",
-    )
-
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     # Keep usage accounting process-local and persist it even when an online
@@ -373,6 +367,11 @@ def main() -> None:
         handlers=[logging.FileHandler(out_dir / "online_refine.log"), logging.StreamHandler()],
     )
     log = logging.getLogger("online_refine")
+    log.info(
+        "Configured workflow routing: refine=%s eval=%s",
+        ",".join(refine_workflow_ids) if refine_workflow_ids else "config.py",
+        ",".join(eval_workflow_ids) if eval_workflow_ids else "config.py",
+    )
     train, test = load_subflow_data(args.subflow)
     if args.max_train:
         train = train[:args.max_train]
