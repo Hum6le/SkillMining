@@ -239,9 +239,10 @@ semantic explanations.
 </evidence_packets>
 <rollout_supervision>
 Each record contains the model's final prediction and, when retrieval was
-used, only its generated `reference_query`; the dialogue context and gold
-action/slots or gold agent response are supplied separately in that same
-record.
+used, only the generated retrieval query and returned retrieval content from
+the ReAct trace. The raw trace, tool arguments, and duplicated messages are
+never supplied. The dialogue context and gold action/slots or gold agent
+response are supplied separately in that same record.
 {rollout_supervision}
 </rollout_supervision>
 
@@ -901,7 +902,21 @@ def build_online_evidence_packets(
     seen: set[tuple[str, int, str, str]] = set()
     action_seen: set[tuple[str, int, str]] = set()
     for raw in events:
-        item = dict(raw)
+        # Build a prompt-safe projection. The complete localized artifact is
+        # still written to disk, but packets must never carry serialized
+        # ReAct inputs/traces into the optimizer prompt.
+        item = {
+            key: raw.get(key)
+            for key in (
+                "edge_id", "conversation_id", "source_turn", "target_turn",
+                "gold_action", "predicted_action", "predicted_target",
+                "action_success", "slot_success", "slot_evaluable",
+                "gold_slots", "predicted_slots", "gold_slot_count",
+                "predicted_slot_count", "context",
+            )
+            if key in raw
+        }
+        item["context"] = str(item.get("context", ""))[-1200:]
         action = str(item.get("gold_action", ""))
         if not action:
             continue
@@ -979,6 +994,9 @@ def build_online_evidence_packets(
             "actions": len(action_packet),
             "raw_examples": len(events),
             "examples": actual_examples,
+            "serialized_chars": len(json.dumps({
+                "transition": transition_packet, "action_card": action_packet,
+            }, ensure_ascii=False)),
         },
     }
 
@@ -1392,15 +1410,65 @@ def _resource_lookup_sections(resource: str, text: str, query: str, top_k: int =
     ]
 
 
+def _react_model_output_projection(trace: Any, max_chars: int = 1200) -> dict[str, Any]:
+    """Project a ReAct trace to model outputs useful for refinement.
+
+    The raw trace is retained in rollout artifacts for debugging, but it is
+    deliberately not part of any optimizer prompt.  Tool inputs, duplicated
+    conversation messages, and framework metadata add noise and can dominate
+    the context window.  Keep only the generated retrieval query/result and
+    the model's generated prediction when those fields are available.
+    """
+    projection: dict[str, Any] = {"reference_query": "", "retrieval_content": []}
+    if not isinstance(trace, list):
+        return projection
+    for step in trace:
+        if not isinstance(step, dict):
+            continue
+        action = str(step.get("action", ""))
+        action_input = step.get("action_input")
+        if action in {"retrieve_reference", "retrieve_action_card", "retrieve_slot_policy"}:
+            if not projection["reference_query"]:
+                if isinstance(action_input, dict):
+                    projection["reference_query"] = str(action_input.get("query", ""))[:300]
+                elif action_input:
+                    projection["reference_query"] = str(action_input)[:300]
+            # Different agent/runtime versions call this field result,
+            # observation, output, or tool_output.  Accept all of them but
+            # serialize only the returned content, never the tool arguments.
+            result = next((step.get(key) for key in
+                           ("result", "observation", "output", "tool_output", "action_output")
+                           if step.get(key) is not None), None)
+            if result:
+                projection["retrieval_content"].append({
+                    "action": action,
+                    "content": str(result)[:max_chars],
+                })
+    return projection
+
+
 def _plan_resource_lookups(
     compact_supervision: list[dict[str, Any]], graph_edges: list[dict[str, Any]],
     skill: str, model: str, max_retries: int, response_logger: Any = None,
 ) -> tuple[list[dict[str, Any]], str, str, str]:
     """Ask the optimizer which resources it wants before exposing contents."""
+    # The planner only needs the model's decision surface.  In particular,
+    # never serialize the raw ReAct trajectory here: it contains tool inputs,
+    # duplicated dialogue, and implementation details that are irrelevant to
+    # deciding which resource section to retrieve.
+    planner_supervision = [{
+        key: row.get(key)
+        for key in (
+            "conversation_id", "turn_index", "prediction", "predicted_action",
+            "predicted_slots", "gold", "action_correct", "slot_correct",
+            "ast_outcome", "reference_query", "retrieval_content",
+        )
+        if key in row
+    } for row in compact_supervision[:160]]
     prompt = _RESOURCE_LOOKUP_PLANNER_PROMPT.format(
         skill=skill or "[empty]",
-        rollout_supervision=json.dumps(compact_supervision, ensure_ascii=False, indent=2),
-        graph_edges=json.dumps(graph_edges, ensure_ascii=False),
+        rollout_supervision=json.dumps(planner_supervision, ensure_ascii=False, indent=2),
+        graph_edges=json.dumps(graph_edges[:240], ensure_ascii=False),
     )
     from llm import chat, resolve_config
     cfg = resolve_config(model=model)
@@ -1439,19 +1507,6 @@ def autonomous_resource_reflection(
     evidence_packets: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Let the LLM select and apply bounded resource updates for one batch."""
-    def reference_query_from_trace(trace: Any) -> str:
-        """Keep only the model-produced retrieval query, never ReAct inputs."""
-        for step in trace if isinstance(trace, list) else []:
-            if not isinstance(step, dict):
-                continue
-            if step.get("action") != "retrieve_reference":
-                continue
-            action_input = step.get("action_input", {})
-            if isinstance(action_input, dict):
-                return str(action_input.get("query", ""))[:300]
-            return str(action_input)[:300]
-        return ""
-
     def _supervision_outcome(row: dict[str, Any]) -> str:
         """Compute the per-turn joint AST outcome from action and slots."""
         gold = row.get("gold")
@@ -1486,9 +1541,55 @@ def autonomous_resource_reflection(
         "gold_response": str(row.get("gold_response", ""))[:500],
         "ast_outcome": _supervision_outcome(row),
         "evidence_outcome": _supervision_outcome(row),
-        "reference_query": reference_query_from_trace(row.get("react_trace")),
+        **_react_model_output_projection(row.get("react_trace")),
     } for row in supervised_rows]
     packets = evidence_packets or {"transition": {}, "action_card": {}, "counts": {}}
+
+    def prompt_packet_view(source: dict[str, Any], max_examples: int = 60, max_chars: int = 90000) -> dict[str, Any]:
+        """Create a hard-bounded, trace-free packet view for the LLM prompt."""
+        result: dict[str, Any] = {"transition": {}, "action_card": {}}
+        selected = 0
+        for group_name in ("transition", "action_card"):
+            group = source.get(group_name, {}) if isinstance(source, dict) else {}
+            for key, buckets in group.items() if isinstance(group, dict) else []:
+                for bucket, values in buckets.items() if isinstance(buckets, dict) else []:
+                    for raw in values if isinstance(values, list) else []:
+                        if selected >= max_examples:
+                            break
+                        item = {
+                            field: raw.get(field)
+                            for field in (
+                                "edge_id", "conversation_id", "source_turn", "target_turn",
+                                "gold_action", "predicted_action", "predicted_target",
+                                "action_success", "slot_success", "slot_evaluable",
+                                "gold_slots", "predicted_slots", "gold_slot_count",
+                                "predicted_slot_count",
+                            )
+                            if field in raw
+                        }
+                        item["context"] = str(raw.get("context", ""))[-600:]
+                        item["error_types"] = raw.get("error_types", [])
+                        result.setdefault(group_name, {}).setdefault(key, {}).setdefault(bucket, []).append(item)
+                        selected += 1
+                    if selected >= max_examples:
+                        break
+                if selected >= max_examples:
+                    break
+            if selected >= max_examples:
+                break
+        encoded = json.dumps(result, ensure_ascii=False, indent=2)
+        # Context excerpts are already bounded; this final guard protects
+        # against unexpectedly large slot/prediction fields in legacy data.
+        if len(encoded) > max_chars:
+            encoded = encoded[:max_chars]
+            result = {"truncated_packet_json": encoded}
+        result["counts"] = {
+            "selected_examples": selected,
+            "serialized_chars": len(json.dumps(result, ensure_ascii=False)),
+        }
+        return result
+
+    prompt_packets = prompt_packet_view(packets)
     # The packets carry the contextual examples. Keep only a compact index in
     # the main reflection prompt; otherwise every turn is serialized twice.
     prompt_supervision = compact_supervision
@@ -1498,8 +1599,9 @@ def autonomous_resource_reflection(
             for key in (
                 "conversation_id", "turn_index", "predicted_action", "predicted_slots",
                 "gold", "action_correct", "slot_correct", "ast_outcome", "reference_query",
+                "retrieval_content",
             )
-        } for row in compact_supervision]
+        } for row in compact_supervision[:160]]
     graph_edges = [{
         "edge_id": edge_id, "source_action": edge["source_action"],
         "target_action": edge["target_action"], "kind": edge["kind"],
@@ -1524,7 +1626,7 @@ def autonomous_resource_reflection(
         retrieved_resources=json.dumps(retrieved, ensure_ascii=False, indent=2) or "[]",
         graph_edges=json.dumps(graph_edges, ensure_ascii=False),
         rollout_supervision=json.dumps(prompt_supervision, ensure_ascii=False, indent=2),
-        evidence_packets=json.dumps(packets, ensure_ascii=False, indent=2),
+        evidence_packets=json.dumps(prompt_packets, ensure_ascii=False, indent=2),
     )
     from llm import chat, resolve_config
     cfg = resolve_config(model=model)
@@ -1687,6 +1789,13 @@ def autonomous_resource_reflection(
         "model_decision": str(payload.get("decision", "")),
         "model_no_update_reason": str(payload.get("no_update_reason", "")),
         "evidence_packet_counts": packets.get("counts", {}),
+        "prompt_component_chars": {
+            "skill": len(skill or ""),
+            "retrieved_resources": len(json.dumps(retrieved, ensure_ascii=False)),
+            "graph_edges": len(json.dumps(graph_edges, ensure_ascii=False)),
+            "rollout_supervision": len(json.dumps(prompt_supervision, ensure_ascii=False)),
+            "evidence_packets": len(json.dumps(prompt_packets, ensure_ascii=False)),
+        },
         "error": last_error if not payload else "",
     }
 
