@@ -45,6 +45,11 @@ Options:
 All other online options are forwarded to run_backbone_online_refine.py, for example:
   --batch-size 8 --target-selection-rate 0.30
 
+For parallel online waves, pass:
+  --refine-workflow-ids ID1,ID2,ID3,ID4
+This assigns different batches in each wave to different workflows. The wave
+then performs one single-writer reflection/update.
+
 `--eval-workflow-ids` is intentionally unsupported here. It is a single-subflow
 evaluation-only option; use it with run_backbone_online_refine.sh instead.
 

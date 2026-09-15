@@ -52,6 +52,7 @@ from scripts.run_subflow_eval import (
     load_subflow_data,
     mine_subflow_skill_backbone,
 )
+from llm import workflow_context
 
 
 def _write(path: Path, text: str) -> None:
@@ -73,6 +74,68 @@ def _rollout_online_batch(agent: ABCDAgent, batch: list) -> list[dict]:
             conversation, predict_actions=True, verbose=False,
         ))
     return rows
+
+
+def _run_parallel_online_wave(
+    args, batches: list[list[dict]], workflow_ids: list[str],
+    working_skill: str, base_reference: str, action_rules: str,
+    slot_policies: str, state: dict, response_logger,
+) -> list[dict]:
+    """Roll out different batches concurrently against one frozen skill.
+
+    This is deliberately limited to rollout. Localization, evidence-pool
+    mutation, reflection, and skill writes remain in the parent process.
+    """
+    frozen_state = copy.deepcopy(state)
+    ids = workflow_ids or [None]
+
+    def run_one(index: int, batch: list[dict], workflow_id: str | None) -> dict:
+        agent = _build_agent(
+            args, working_skill, base_reference, action_rules, slot_policies,
+            copy.deepcopy(frozen_state), response_logger=response_logger,
+        )
+        with workflow_context(workflow_id):
+            turns = _rollout_online_batch(agent, batch)
+        return {
+            "batch_index": index,
+            "workflow_id": workflow_id,
+            "batch": batch,
+            "turns": turns,
+        }
+
+    if len(batches) == 1:
+        return [run_one(0, batches[0], ids[0])]
+    results: dict[int, dict] = {}
+    with ThreadPoolExecutor(max_workers=min(len(ids), len(batches))) as executor:
+        futures = {
+            executor.submit(run_one, index, batch, ids[index % len(ids)]): index
+            for index, batch in enumerate(batches)
+        }
+        for future in as_completed(futures):
+            item = future.result()
+            results[item["batch_index"]] = item
+    return [results[index] for index in sorted(results)]
+
+
+def _merge_evidence_packets(packet_parts: list[dict]) -> dict:
+    """Combine one wave's bounded packet views for the single reflection call."""
+    merged = {"transition": {}, "action_card": {}, "counts": {}}
+    for packets in packet_parts:
+        for group_name in ("transition", "action_card"):
+            for key, buckets in (packets.get(group_name, {}) or {}).items():
+                target = merged[group_name].setdefault(key, {})
+                for bucket, values in (buckets or {}).items():
+                    target.setdefault(bucket, []).extend(values or [])
+    merged["counts"] = {
+        "transition_edges": len(merged["transition"]),
+        "actions": len(merged["action_card"]),
+        "raw_examples": sum(int((p.get("counts") or {}).get("raw_examples", 0) or 0)
+                             for p in packet_parts),
+        "examples": sum(len(values) for group in merged.values() if isinstance(group, dict)
+                         for buckets in group.values() if isinstance(buckets, dict)
+                         for values in buckets.values() if isinstance(values, list)),
+    }
+    return merged
 
 
 def _repair_failed_skill_operations(
@@ -133,114 +196,6 @@ def _batch_rollout_supervision(conversations: list[dict], turn_results: list[dic
             ),
         })
     return rows
-
-
-def _merge_reflection_candidate_state(
-    state: dict, candidate_state: dict, accepted_updates: list[dict],
-) -> None:
-    """Merge validated updates from one frozen-state reflection candidate.
-
-    Candidate reflections run against identical state snapshots. Their LLM
-    decisions are merged deterministically in the caller's workflow order;
-    this function copies only the state records touched by accepted updates.
-    """
-    for update in accepted_updates:
-        resource = str(update.get("resource", ""))
-        action = str(update.get("action", ""))
-        edge_id = str(update.get("edge_id", ""))
-        if resource == "transition_guard" and edge_id in candidate_state.get("edges", {}):
-            state.setdefault("edges", {})[edge_id] = copy.deepcopy(candidate_state["edges"][edge_id])
-        elif resource == "action_node":
-            source_node = next((node for node in candidate_state.get("nodes", [])
-                                if str(node.get("label")) == action), None)
-            target_node = next((node for node in state.get("nodes", [])
-                                if str(node.get("label")) == action), None)
-            if source_node is not None and target_node is not None:
-                target_node["online_promotions"] = copy.deepcopy(source_node.get("online_promotions", []))
-            state["node_promotions"] = copy.deepcopy(candidate_state.get("node_promotions", []))
-            if edge_id in candidate_state.get("edges", {}):
-                state.setdefault("edges", {})[edge_id] = copy.deepcopy(candidate_state["edges"][edge_id])
-        elif resource in {"action_rule", "slot_policy"} and action:
-            bucket = "action_rules" if resource == "action_rule" else "slot_policies"
-            if action in candidate_state.get(bucket, {}):
-                state.setdefault(bucket, {})[action] = copy.deepcopy(candidate_state[bucket][action])
-        elif resource == "reference":
-            candidate_notes = candidate_state.get("reference_notes", [])
-            if candidate_notes:
-                latest = candidate_notes[-1]
-                if latest not in state.setdefault("reference_notes", []):
-                    state["reference_notes"].append(copy.deepcopy(latest))
-
-
-def _run_parallel_reflections(
-    state: dict, rollout_supervision: list[dict], working_skill: str,
-    reference: str, action_rules: str, slot_policies: str, model: str,
-    max_retries: int, response_logger, evidence_packets: dict,
-    workflow_ids: list[str],
-) -> tuple[dict, dict]:
-    """Generate parallel candidates, then merge them in deterministic order."""
-    frozen_state = copy.deepcopy(state)
-    ids = workflow_ids or [None]
-
-    def run_one(index: int, workflow_id: str | None) -> tuple[int, str | None, dict, dict]:
-        candidate_state = copy.deepcopy(frozen_state)
-        reflection = autonomous_resource_reflection(
-            candidate_state, rollout_supervision, working_skill,
-            reference, action_rules, slot_policies, model,
-            max_retries=max_retries, response_logger=response_logger,
-            evidence_packets=evidence_packets, workflow_id=workflow_id,
-        )
-        return index, workflow_id, candidate_state, reflection
-
-    results: dict[int, tuple[str | None, dict, dict]] = {}
-    with ThreadPoolExecutor(max_workers=len(ids)) as executor:
-        futures = [executor.submit(run_one, index, workflow_id)
-                   for index, workflow_id in enumerate(ids)]
-        for future in as_completed(futures):
-            index, workflow_id, candidate_state, reflection = future.result()
-            results[index] = (workflow_id, candidate_state, reflection)
-
-    merged = {"accepted": [], "rejected": [], "proposed_skill_operations": [],
-              "rejected_skill_operations": [], "lookups": [], "retrieved_resources": [],
-              "model_decision": "no_update", "model_no_update_reason": "",
-              "candidate_reflections": []}
-    seen_updates: set[tuple[str, str, str, str]] = set()
-    seen_operations: set[tuple[str, str, str, str]] = set()
-    for index in sorted(results):
-        workflow_id, candidate_state, reflection = results[index]
-        merged["candidate_reflections"].append({
-            "candidate_index": index, "workflow_id": workflow_id,
-            "decision": reflection.get("model_decision", ""),
-            "prompt_chars": reflection.get("prompt_chars", 0),
-            "error": reflection.get("error", ""),
-        })
-        for update in reflection.get("accepted", []):
-            key = (str(update.get("resource", "")), str(update.get("edge_id", "")),
-                   str(update.get("action", "")), str(update.get("content", "")))
-            if key in seen_updates:
-                continue
-            seen_updates.add(key)
-            _merge_reflection_candidate_state(state, candidate_state, [update])
-            merged["accepted"].append(update)
-        merged["rejected"].extend(reflection.get("rejected", []))
-        for operation in reflection.get("proposed_skill_operations", []):
-            key = (str(operation.get("op", "")), str(operation.get("match_text", "")),
-                   str(operation.get("new_text", "")), str(operation.get("occurrence", "")))
-            if key not in seen_operations:
-                seen_operations.add(key)
-                merged["proposed_skill_operations"].append(operation)
-        merged["rejected_skill_operations"].extend(reflection.get("rejected_skill_operations", []))
-        merged["lookups"].extend(reflection.get("lookups", []))
-        merged["retrieved_resources"].extend(reflection.get("retrieved_resources", []))
-        if reflection.get("model_decision") == "update":
-            merged["model_decision"] = "update"
-    candidate_prompt_sizes = [int(item.get("prompt_chars", 0) or 0)
-                              for item in merged["candidate_reflections"]]
-    merged["prompt_chars"] = max(candidate_prompt_sizes, default=0)
-    merged["prompt_chars_total"] = sum(candidate_prompt_sizes)
-    merged["parallel_candidate_count"] = len(ids)
-    merged["workflow_ids"] = [value for value in ids if value]
-    return merged, frozen_state
 
 
 def _build_agent(args, working_skill: str, base_reference: str, action_rules: str,
@@ -322,13 +277,13 @@ def main() -> None:
                         help="Retries for one local guard-induction call")
     parser.add_argument(
         "--eval-workflow-ids", default="",
-        help="Comma-separated workflow IDs used to parallelize online training rollouts. "
-             "Updates remain single-writer in the main process.",
+        help="Comma-separated workflow IDs used only for parallel held-out evaluation. "
+             "Use --refine-workflow-ids for parallel online training batches.",
     )
     parser.add_argument(
         "--refine-workflow-ids", default="",
-        help="Comma-separated workflow IDs for parallel reflection candidates within each online batch. "
-             "Candidates are merged deterministically before the next batch.",
+        help="Comma-separated workflow IDs for parallel online batches in one wave. "
+             "Their evidence is merged before one reflection/update.",
     )
     parser.add_argument("--skip-guard-llm", action="store_true",
                         help="Only collect graph evidence and deterministic patches")
@@ -538,25 +493,53 @@ def main() -> None:
     if completed > len(batches):
         raise RuntimeError(f"State has {completed} completed batches, but current schedule has {len(batches)}")
 
-    for batch_index, batch in enumerate(batches[completed:], start=completed + 1):
-        log.info("Online batch %d/%d: %d sessions", batch_index, len(batches), len(batch))
-        # Training rollouts are intentionally sequential: each batch is the
-        # evidence source for the next single-writer skill/resource update.
-        agent = _build_agent(args, working_skill, base_reference, action_rules, slot_policies, state,
-                             response_logger=response_logger)
-        turns = _rollout_online_batch(agent, batch)
-        _write(out_dir / "rollouts" / f"batch_{batch_index:04d}.json", json.dumps(turns, indent=2, ensure_ascii=False))
-        localized = localize_rollout_batch(batch, turns, state)
-        rollout_supervision = _batch_rollout_supervision(batch, turns)
-        evidence_packets = build_online_evidence_packets(localized)
-        accumulate_online_evidence(state, evidence_packets, batch_index)
-        _write(out_dir / "online_evidence" / f"batch_{batch_index:04d}.json", json.dumps({
-            "batch_index": batch_index,
-            "conversation_ids": [str(item.get("convo_id", "?")) for item in batch],
-            "rollout_supervision": rollout_supervision,
-            "localized": localized,
-            "packets": evidence_packets,
-        }, indent=2, ensure_ascii=False))
+    wave_size = max(1, len(refine_workflow_ids)) if refine_workflow_ids else 1
+    remaining_batches = batches[completed:]
+    for wave_offset in range(0, len(remaining_batches), wave_size):
+        wave_batches = remaining_batches[wave_offset:wave_offset + wave_size]
+        wave_start = completed + wave_offset + 1
+        wave_end = wave_start + len(wave_batches) - 1
+        log.info("Online wave %d-%d/%d: %d batches, workflows=%s",
+                 wave_start, wave_end, len(batches), len(wave_batches),
+                 ",".join(refine_workflow_ids) if refine_workflow_ids else "config.py")
+        rollout_items = _run_parallel_online_wave(
+            args, wave_batches, refine_workflow_ids, working_skill,
+            base_reference, action_rules, slot_policies, state, response_logger,
+        )
+        localized_parts, supervision_parts, packet_parts = [], [], []
+        for item in rollout_items:
+            batch_index = completed + item["batch_index"] + 1
+            batch = item["batch"]
+            turns = item["turns"]
+            _write(out_dir / "rollouts" / f"batch_{batch_index:04d}.json",
+                   json.dumps(turns, indent=2, ensure_ascii=False))
+            localized = localize_rollout_batch(batch, turns, state)
+            rollout_supervision = _batch_rollout_supervision(batch, turns)
+            evidence_packets = build_online_evidence_packets(localized)
+            accumulate_online_evidence(state, evidence_packets, batch_index)
+            localized_parts.append(localized)
+            supervision_parts.extend(rollout_supervision)
+            packet_parts.append(evidence_packets)
+            _write(out_dir / "online_evidence" / f"batch_{batch_index:04d}.json", json.dumps({
+                "batch_index": batch_index,
+                "workflow_id": item.get("workflow_id"),
+                "conversation_ids": [str(value.get("convo_id", "?")) for value in batch],
+                "rollout_supervision": rollout_supervision,
+                "localized": localized,
+                "packets": evidence_packets,
+            }, indent=2, ensure_ascii=False))
+        batch_index = wave_end
+        batch = [conversation for item in rollout_items for conversation in item["batch"]]
+        rollout_supervision = supervision_parts
+        localized = {
+            "events": [event for part in localized_parts for event in part["events"]],
+            "num_events": sum(part["num_events"] for part in localized_parts),
+            "slot_events": [event for part in localized_parts for event in part["slot_events"]],
+            "num_slot_events": sum(part["num_slot_events"] for part in localized_parts),
+            "action_events": [event for part in localized_parts for event in part["action_events"]],
+            "num_action_events": sum(part["num_action_events"] for part in localized_parts),
+        }
+        evidence_packets = _merge_evidence_packets(packet_parts)
         # Retain threshold-based proposals only as diagnostics. In autonomous
         # mode they must not mutate visibility or override the optimizer's
         # resource decision.
@@ -564,13 +547,15 @@ def main() -> None:
         reflection = {"accepted": [], "rejected": []}
         if not args.skip_guard_llm:
             online_skill, online_reference = render_online_resources(state)
-            reflection, _ = _run_parallel_reflections(
+            reflection = autonomous_resource_reflection(
                 state, rollout_supervision, working_skill,
                 base_reference + "\n" + online_reference,
                 action_rules + "\n" + render_online_action_rules(state),
                 slot_policies + "\n" + render_online_slot_policies(state),
-                args.model, args.guard_retries, response_logger,
-                evidence_packets, refine_workflow_ids,
+                args.model, max_retries=args.guard_retries,
+                response_logger=response_logger,
+                evidence_packets=evidence_packets,
+                workflow_id=refine_workflow_ids[0] if refine_workflow_ids else None,
             )
             skill_before_sha256 = hashlib.sha256(working_skill.encode("utf-8")).hexdigest()
             proposed_skill_operations = reflection.get("proposed_skill_operations", [])
