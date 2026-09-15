@@ -37,7 +37,7 @@ Required:
 Options:
   --output-dir DIR           New online run directory. Default: outputs/online_refine_<subflow>_<timestamp>
   --workflow-id ID           Workflow used by online mining/refinement calls
-  --workflow-ids IDS         Compatibility alias; first comma-separated ID is used for mining
+  --workflow-ids IDS         Compatibility alias for --refine-workflow-ids; all IDs are used
   --eval-workflow-ids IDS    Comma-separated workflow IDs for parallel held-out evaluation
   --refine-workflow-ids IDS  Comma-separated workflow IDs for parallel online batches per wave
   --conda-env NAME           Default: skillmining310
@@ -72,6 +72,7 @@ while [[ $# -gt 0 ]]; do
         --workflow-ids)
             require_value "$1" "$#"
             WORKFLOW_ID="${2%%,*}"
+            REFINE_WORKFLOW_IDS="$2"
             shift 2
             ;;
         --refine-workflow-ids) require_value "$1" "$#"; REFINE_WORKFLOW_IDS="$2"; shift 2 ;;

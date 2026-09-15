@@ -18,6 +18,7 @@ OFFLINE_ROOT=""
 OUTPUT_DIR=""
 RESUME_RUN=""
 WORKFLOW_IDS_RAW=""
+REFINE_WORKFLOW_IDS_RAW=""
 REBUILD_SPLITS=1
 CONTINUE_ON_ERROR=1
 RUNNER_ARGS=()
@@ -35,6 +36,8 @@ Options:
   --workflow-ids IDS        Comma-separated workflow IDs. Subflows are balanced across
                             these workers; each worker processes its assigned flows serially.
                             Each subflow's final evaluation uses its assigned worker workflow.
+  --refine-workflow-ids IDS Comma-separated workflow IDs shared by each subflow's
+                            online rollout waves. One reflection remains single-writer.
   --conda-env NAME          Default: skillmining310
   --hf-endpoint URL         Default: https://hf-mirror.com
   --python-bin PATH         Default: python
@@ -93,6 +96,7 @@ while [[ $# -gt 0 ]]; do
         --output-dir) require_value "$1" "$#"; OUTPUT_DIR="$2"; shift 2 ;;
         --resume-run) require_value "$1" "$#"; RESUME_RUN="$2"; shift 2 ;;
         --workflow-ids) require_value "$1" "$#"; WORKFLOW_IDS_RAW="$2"; shift 2 ;;
+        --refine-workflow-ids) require_value "$1" "$#"; REFINE_WORKFLOW_IDS_RAW="$2"; shift 2 ;;
         --eval-workflow-ids)
             echo "--eval-workflow-ids is only supported for single-subflow runs; full runs use each worker's assigned workflow." >&2
             exit 2
@@ -260,11 +264,16 @@ run_worker() {
         if [[ "$CONTINUE_ON_ERROR" -eq 0 ]]; then
             cmd+=(--stop-on-error)
         fi
-        # The full scheduler assigns exactly one workflow to each worker.
-        # Pass it explicitly to both phases; the environment variable is kept
-        # only as a compatibility fallback for older runtime code.
-        if [[ -n "$workflow_id" ]]; then
+        # The full scheduler assigns one workflow to the final evaluation of
+        # each subflow, but online rollout may use an independent multi-
+        # workflow wave schedule. Do not let the evaluation assignment
+        # overwrite an explicitly requested refine schedule.
+        if [[ -n "$REFINE_WORKFLOW_IDS_RAW" ]]; then
+            cmd+=(--refine-workflow-ids "$REFINE_WORKFLOW_IDS_RAW")
+        elif [[ -n "$workflow_id" ]]; then
             cmd+=(--refine-workflow-ids "$workflow_id")
+        fi
+        if [[ -n "$workflow_id" ]]; then
             cmd+=(--eval-workflow-ids "$workflow_id")
         fi
         echo "===== worker=$worker_index workflow=${workflow_id:-config.py} subflow=$subflow ====="
@@ -282,6 +291,7 @@ offline_root=${OFFLINE_ROOT:-offline_remining}
 conda_env=$CONDA_ENV
 hf_endpoint=$HF_ENDPOINT
 workflow_ids=$(IFS=,; echo "${WORKFLOW_IDS[*]}")
+refine_workflow_ids=${REFINE_WORKFLOW_IDS_RAW:-assigned-worker-workflow}
 load_plan=$PLAN_PATH
 EOF
 

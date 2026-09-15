@@ -297,6 +297,11 @@ def main() -> None:
         os.environ["SKILLMINING_STOP_ON_ERROR"] = "1"
     eval_workflow_ids = [value.strip() for value in args.eval_workflow_ids.split(",") if value.strip()]
     refine_workflow_ids = [value.strip() for value in args.refine_workflow_ids.split(",") if value.strip()]
+    log.info(
+        "Configured workflow routing: refine=%s eval=%s",
+        ",".join(refine_workflow_ids) if refine_workflow_ids else "config.py",
+        ",".join(eval_workflow_ids) if eval_workflow_ids else "config.py",
+    )
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -506,9 +511,18 @@ def main() -> None:
         wave_batches = remaining_batches[wave_offset:wave_offset + wave_size]
         wave_start = completed + wave_offset + 1
         wave_end = wave_start + len(wave_batches) - 1
+        active_workflow_ids = (
+            refine_workflow_ids[:len(wave_batches)]
+            if refine_workflow_ids else ["config.py"]
+        )
         log.info("Online wave %d-%d/%d: %d batches, workflows=%s",
                  wave_start, wave_end, len(batches), len(wave_batches),
-                 ",".join(refine_workflow_ids) if refine_workflow_ids else "config.py")
+                 ",".join(active_workflow_ids))
+        log.info(
+            "Workflow schedule: configured=%d, active=%d",
+            len(refine_workflow_ids) if refine_workflow_ids else 1,
+            len(active_workflow_ids),
+        )
         rollout_items = _run_parallel_online_wave(
             args, wave_batches, refine_workflow_ids, working_skill,
             base_reference, action_rules, slot_policies, state, response_logger,
