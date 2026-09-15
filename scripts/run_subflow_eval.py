@@ -111,6 +111,10 @@ def _evaluate_test_shard_worker(agent, shard: list, label: str, subflow: str,
         reset = getattr(llm, "reset_usage_summary", None)
         if reset:
             reset()
+        # Use the same explicit per-agent workflow path as online rollout.
+        # The environment variable remains for compatibility with llm.py, but
+        # must not be the only mechanism selecting the endpoint.
+        agent.workflow_id = str(workflow_id).strip()
         os.environ["SKILLMINING_WORKFLOW_ID"] = workflow_id
         rows = []
         for index, conversation in enumerate(shard, start=1):

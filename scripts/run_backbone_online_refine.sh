@@ -18,6 +18,7 @@ OFFLINE_DIR=""
 OUTPUT_DIR=""
 RESUME_RUN=""
 WORKFLOW_ID=""
+REFINE_WORKFLOW_IDS=""
 EVAL_WORKFLOW_IDS=""
 EXTRA_ARGS=()
 
@@ -73,6 +74,7 @@ while [[ $# -gt 0 ]]; do
             WORKFLOW_ID="${2%%,*}"
             shift 2
             ;;
+        --refine-workflow-ids) require_value "$1" "$#"; REFINE_WORKFLOW_IDS="$2"; shift 2 ;;
         --eval-workflow-ids) require_value "$1" "$#"; EVAL_WORKFLOW_IDS="$2"; shift 2 ;;
         --conda-env) require_value "$1" "$#"; CONDA_ENV="$2"; shift 2 ;;
         --hf-endpoint) require_value "$1" "$#"; HF_ENDPOINT_VALUE="$2"; shift 2 ;;
@@ -84,6 +86,7 @@ done
 
 [[ -n "$SUBFLOW" ]] || { echo "--subflow is required." >&2; usage >&2; exit 2; }
 WORKFLOW_ID="${WORKFLOW_ID//[[:space:]]/}"
+REFINE_WORKFLOW_IDS="${REFINE_WORKFLOW_IDS//[[:space:]]/}"
 EVAL_WORKFLOW_IDS="${EVAL_WORKFLOW_IDS//[[:space:]]/}"
 if [[ -n "$OFFLINE_DIR" && -n "$RESUME_RUN" ]]; then
     echo "--offline-dir and --resume-run cannot be used together." >&2
@@ -127,6 +130,14 @@ elif [[ -n "$OFFLINE_DIR" ]]; then
     COMMAND+=(--offline-dir "$OFFLINE_DIR")
 fi
 [[ -n "$EVAL_WORKFLOW_IDS" ]] && COMMAND+=(--eval-workflow-ids "$EVAL_WORKFLOW_IDS")
+if [[ -n "$REFINE_WORKFLOW_IDS" ]]; then
+    COMMAND+=(--refine-workflow-ids "$REFINE_WORKFLOW_IDS")
+elif [[ -n "$WORKFLOW_ID" ]]; then
+    # --workflow-id is the single-workflow shorthand.  Passing it explicitly
+    # is required because the Python runner does not infer its rollout-wave
+    # schedule from the environment variable.
+    COMMAND+=(--refine-workflow-ids "$WORKFLOW_ID")
+fi
 COMMAND+=("${EXTRA_ARGS[@]}")
 
 MANIFEST="$RUN_DIR/online_refine_manifest.txt"
@@ -139,6 +150,7 @@ MANIFEST="$RUN_DIR/online_refine_manifest.txt"
     echo "conda_env=$CONDA_ENV"
     echo "hf_endpoint=$HF_ENDPOINT"
     echo "workflow_id=${WORKFLOW_ID:-config.py}"
+    echo "refine_workflow_ids=${REFINE_WORKFLOW_IDS:-${WORKFLOW_ID:-config.py}}"
     echo "eval_workflow_ids=${EVAL_WORKFLOW_IDS:-none}"
     printf 'command='; printf '%q ' "${COMMAND[@]}"; echo
 } > "$MANIFEST"

@@ -257,6 +257,13 @@ run_worker() {
             cmd+=(--offline-dir "$offline_dir")
         fi
         cmd+=("${RUNNER_ARGS[@]}")
+        # The full scheduler assigns exactly one workflow to each worker.
+        # Pass it explicitly to both phases; the environment variable is kept
+        # only as a compatibility fallback for older runtime code.
+        if [[ -n "$workflow_id" ]]; then
+            cmd+=(--refine-workflow-ids "$workflow_id")
+            cmd+=(--eval-workflow-ids "$workflow_id")
+        fi
         echo "===== worker=$worker_index workflow=${workflow_id:-config.py} subflow=$subflow ====="
         if ! SKILLMINING_WORKFLOW_ID="$workflow_id" "${cmd[@]}"; then
             echo "$subflow" >> "$failed_path"
