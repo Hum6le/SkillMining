@@ -17,7 +17,6 @@ import logging
 import json
 import os
 import threading
-from contextlib import contextmanager
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -162,24 +161,6 @@ def resolve_config(
 # Core API: prompt in, response out
 # ══════════════════════════════════════════════════════════════════
 
-_WORKFLOW_CONTEXT = threading.local()
-
-
-@contextmanager
-def workflow_context(workflow_id: str | None):
-    """Bind one workflow to the current thread for parallel batch calls."""
-    previous = getattr(_WORKFLOW_CONTEXT, "workflow_id", None)
-    _WORKFLOW_CONTEXT.workflow_id = str(workflow_id).strip() if workflow_id else None
-    try:
-        yield
-    finally:
-        _WORKFLOW_CONTEXT.workflow_id = previous
-
-
-def _thread_workflow_id() -> str:
-    return str(getattr(_WORKFLOW_CONTEXT, "workflow_id", "") or "").strip()
-
-
 def chat(
     messages: str | list[dict],
     *,
@@ -212,21 +193,6 @@ def chat(
     Returns:
         The response text string.  Empty string on failure.
     """
-    thread_workflow_id = _thread_workflow_id()
-    if thread_workflow_id:
-        import copy
-        import llm_new
-        from config import LLM_CONFIG
-
-        workflow_config = copy.deepcopy(LLM_CONFIG)
-        workflow_config["provider"] = "workflow"
-        workflow_config["workflow_id"] = thread_workflow_id
-        return llm_new.chat(
-            messages, model=model, temperature=temperature, max_tokens=max_tokens,
-            config=workflow_config, response_logger=response_logger,
-            call_tag=call_tag, **kwargs,
-        )
-
     from openai import OpenAI
 
     # Normalize messages

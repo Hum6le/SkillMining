@@ -1,9 +1,7 @@
 """Runner-side adapter for the server-provided shared ``llm.py`` tracker.
 
-The repository keeps the production replacement as ``llm_new.py``; on the
-server it is deployed as ``llm.py``.  This adapter keeps local legacy runners
-importable while making every runner persist the same usage schema when the
-new module is present.
+All runtime calls use the workflow-aware ``llm.py`` entry point. This adapter
+keeps usage accounting consistent across runners.
 """
 
 from __future__ import annotations

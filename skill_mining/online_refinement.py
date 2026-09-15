@@ -1511,16 +1511,11 @@ def _online_refinement_chat(messages: list[dict[str, str]], *, model: str,
     if workflow_id:
         import copy
         import config as project_config
-        try:
-            import llm_new as runtime_llm
-        except ModuleNotFoundError:
-            # The server names this workflow-aware runtime llm.py; the local
-            # checkout keeps it under llm_new.py to coexist with legacy llm.py.
-            import llm as runtime_llm
+        import llm
         workflow_config = copy.deepcopy(project_config.LLM_CONFIG)
         workflow_config["provider"] = "workflow"
         workflow_config["workflow_id"] = workflow_id
-        return runtime_llm.chat(
+        return llm.chat(
             messages, model=model, temperature=temperature, config=workflow_config,
             response_logger=response_logger, call_tag=call_tag,
         )

@@ -467,13 +467,7 @@ class ABCDAgent(AbstractTodAgent):
     def _chat(self, messages, **kwargs) -> str:
         """Route this agent's calls through its explicit workflow when set."""
         if self.workflow_id:
-            try:
-                import llm_new as runtime_llm
-            except ModuleNotFoundError:
-                # On the server the workflow-aware implementation is named
-                # llm.py; locally it is kept as llm_new.py beside the legacy
-                # compatibility module.
-                import llm as runtime_llm
+            import llm
             from config import LLM_CONFIG
 
             workflow_config = copy.deepcopy(LLM_CONFIG)
@@ -481,7 +475,7 @@ class ABCDAgent(AbstractTodAgent):
             workflow_config["workflow_id"] = self.workflow_id
             kwargs.pop("api_key", None)
             kwargs.pop("base_url", None)
-            return runtime_llm.chat(
+            return llm.chat(
                 messages, model=self.model, config=workflow_config, **kwargs,
             )
         from llm import chat
