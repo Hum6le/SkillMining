@@ -650,9 +650,15 @@ def main() -> None:
                 "error": reflection.get("error", "") or reflection.get("planner_error", ""),
             })
             if reflection.get("error"):
+                io_debug = reflection.get("reflection_io", {})
                 log.warning(
-                    "  autonomous reflection failed after retries (prompt_chars=%s): %s",
-                    reflection.get("prompt_chars", "?"), reflection["error"],
+                    "  autonomous reflection failed after retries "
+                    "(input_chars=%s input_tokens~=%s output_chars=%s output_tokens~=%s): %s",
+                    io_debug.get("input_chars", reflection.get("prompt_chars", "?")),
+                    io_debug.get("input_token_estimate", "?"),
+                    io_debug.get("last_output_chars", "?"),
+                    io_debug.get("last_output_token_estimate", "?"),
+                    reflection["error"],
                 )
             else:
                 log.info(

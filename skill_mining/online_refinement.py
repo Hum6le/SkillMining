@@ -1549,6 +1549,12 @@ def autonomous_resource_reflection(
     workflow_id: str | None = None,
 ) -> dict[str, Any]:
     """Let the LLM select and apply bounded resource updates for one batch."""
+    def _token_estimate(text: str) -> int:
+        """Conservative local estimate when a workflow omits token usage."""
+        text = str(text or "")
+        cjk_chars = len(re.findall(r"[\u3400-\u9fff]", text))
+        return cjk_chars + max(0, len(text) - cjk_chars) // 4
+
     def _supervision_outcome(row: dict[str, Any]) -> str:
         """Compute the per-turn joint AST outcome from action and slots."""
         gold = row.get("gold")
@@ -1677,9 +1683,10 @@ def autonomous_resource_reflection(
         from llm import resolve_config
         cfg = resolve_config(model=model)
     raw, payload, last_error = "", {}, ""
+    reflection_attempts: list[dict[str, Any]] = []
     for attempt in range(1, max(1, max_retries) + 1):
+        reflection_prompt = prompt
         try:
-            reflection_prompt = prompt
             if attempt > 1:
                 reflection_prompt += (
                     "\n\nRETRY REQUIREMENT: Your previous response was not valid JSON. "
@@ -1701,6 +1708,15 @@ def autonomous_resource_reflection(
             if not isinstance(payload, dict):
                 raise json.JSONDecodeError("Reflection JSON must be an object", text, start)
             if isinstance(payload.get("updates"), list):
+                reflection_attempts.append({
+                    "attempt": attempt, "status": "parsed",
+                    "input_chars": len(reflection_prompt),
+                    "input_token_estimate": _token_estimate(reflection_prompt),
+                    "output_chars": len(raw),
+                    "output_token_estimate": _token_estimate(raw),
+                    "json_start": start,
+                    "output_tail_chars": len(raw) - raw.rfind("\n"),
+                })
                 break
             raise json.JSONDecodeError("Reflection JSON has no updates list", text, start)
         except Exception as exc:
@@ -1714,6 +1730,20 @@ def autonomous_resource_reflection(
                 ) from exc
             payload = {}
             last_error = repr(exc)
+            json_error_position = getattr(exc, "pos", None)
+            reflection_attempts.append({
+                "attempt": attempt, "status": "failed",
+                "input_chars": len(reflection_prompt),
+                "input_token_estimate": _token_estimate(reflection_prompt),
+                "output_chars": len(raw),
+                "output_token_estimate": _token_estimate(raw),
+                "json_error_position": json_error_position,
+                "error": last_error,
+                # Do not duplicate raw output in the diagnostic record; raw_response
+                # remains the single inspectable source of full model output.
+                "output_prefix": raw[:200],
+                "output_suffix": raw[-400:],
+            })
         if attempt < max(1, max_retries):
             time.sleep(float(2 ** (attempt - 1)))
 
@@ -1857,6 +1887,14 @@ def autonomous_resource_reflection(
         "planner_raw_response": planner_raw, "lookups": lookups,
         "retrieved_resources": retrieved, "planner_error": planner_error,
         "prompt": prompt, "prompt_chars": len(prompt), "raw_response": raw,
+        "reflection_attempts": reflection_attempts,
+        "reflection_io": {
+            "input_chars": len(prompt),
+            "input_token_estimate": _token_estimate(prompt),
+            "last_output_chars": len(raw),
+            "last_output_token_estimate": _token_estimate(raw),
+            "retry_count": len(reflection_attempts),
+        },
         "accepted": accepted, "rejected": rejected,
         "proposed_skill_operations": proposed_skill_operations,
         "rejected_skill_operations": rejected_skill_operations,
