@@ -297,6 +297,11 @@ def main() -> None:
         os.environ["SKILLMINING_STOP_ON_ERROR"] = "1"
     eval_workflow_ids = [value.strip() for value in args.eval_workflow_ids.split(",") if value.strip()]
     refine_workflow_ids = [value.strip() for value in args.refine_workflow_ids.split(",") if value.strip()]
+    if refine_workflow_ids and not os.environ.get("SKILLMINING_WORKFLOW_ID", "").strip():
+        # Some offline/mining helpers and older llm.py code resolve the
+        # endpoint from this compatibility variable. Explicit per-agent
+        # workflow routing remains authoritative for rollout/reflection.
+        os.environ["SKILLMINING_WORKFLOW_ID"] = refine_workflow_ids[0]
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     # Keep usage accounting process-local and persist it even when an online

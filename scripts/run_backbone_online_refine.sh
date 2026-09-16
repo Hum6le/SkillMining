@@ -89,6 +89,13 @@ done
 WORKFLOW_ID="${WORKFLOW_ID//[[:space:]]/}"
 REFINE_WORKFLOW_IDS="${REFINE_WORKFLOW_IDS//[[:space:]]/}"
 EVAL_WORKFLOW_IDS="${EVAL_WORKFLOW_IDS//[[:space:]]/}"
+# Keep the first refine workflow as the compatibility/default endpoint for
+# mining helpers or legacy calls that still read SKILLMINING_WORKFLOW_ID.
+# The complete REFINE_WORKFLOW_IDS list is still passed to Python for batch
+# parallelism.
+if [[ -z "$WORKFLOW_ID" && -n "$REFINE_WORKFLOW_IDS" ]]; then
+    WORKFLOW_ID="${REFINE_WORKFLOW_IDS%%,*}"
+fi
 if [[ -n "$OFFLINE_DIR" && -n "$RESUME_RUN" ]]; then
     echo "--offline-dir and --resume-run cannot be used together." >&2
     exit 2
