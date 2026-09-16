@@ -467,6 +467,8 @@ class ABCDAgent(AbstractTodAgent):
 
     def _chat(self, messages, **kwargs) -> str:
         """Route this agent's calls through its explicit workflow when set."""
+        kwargs = dict(kwargs)
+        kwargs.pop("model", None)
         if self.workflow_id:
             import llm
             from config import LLM_CONFIG
@@ -481,7 +483,7 @@ class ABCDAgent(AbstractTodAgent):
             )
         else:
             from llm import chat
-            response = chat(messages, **kwargs)
+            response = chat(messages, model=self.model, **kwargs)
         if not str(response or "").strip() and os.getenv("SKILLMINING_STOP_ON_ERROR") == "1":
             raise RuntimeError(
                 "LLM returned an empty response"
