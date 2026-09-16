@@ -1240,6 +1240,10 @@ def induce_guard_patches(
                     api_key=cfg["api_key"], base_url=cfg["base_url"], temperature=0.0,
                     response_logger=response_logger,
                 )
+                if not str(raw or "").strip() and os.getenv("SKILLMINING_STOP_ON_ERROR") == "1":
+                    raise RuntimeError(
+                        f"guard_induction returned an empty response (edge_id={edge_id})"
+                    )
                 parsed = _parse_guard_response(raw)
                 if parsed["status"] == "resolved":
                     break
@@ -1527,9 +1531,14 @@ def _online_refinement_chat(messages: list[dict[str, str]], *, model: str,
             )
         return raw_response or ""
     from llm import chat
-    return chat(messages, model=model, api_key=api_key, base_url=base_url,
-                temperature=temperature, response_logger=response_logger,
-                call_tag=call_tag)
+    raw_response = chat(messages, model=model, api_key=api_key, base_url=base_url,
+                        temperature=temperature, response_logger=response_logger,
+                        call_tag=call_tag)
+    if not str(raw_response or "").strip() and os.getenv("SKILLMINING_STOP_ON_ERROR") == "1":
+        raise RuntimeError(
+            f"LLM returned an empty response (workflow_id=<config.py>, call_tag={call_tag})"
+        )
+    return raw_response or ""
 
 
 def autonomous_resource_reflection(
@@ -1682,6 +1691,11 @@ def autonomous_resource_reflection(
             if isinstance(payload.get("updates"), list):
                 break
         except Exception as exc:
+            if os.getenv("SKILLMINING_STOP_ON_ERROR") == "1":
+                raise RuntimeError(
+                    f"online_resource_reflection failed (workflow_id={workflow_id or '<config.py>'}, "
+                    f"attempt={attempt}): {exc}"
+                ) from exc
             payload = {}
             last_error = repr(exc)
         if attempt < max(1, max_retries):

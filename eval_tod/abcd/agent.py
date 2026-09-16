@@ -591,7 +591,11 @@ class ABCDAgent(AbstractTodAgent):
                 response_logger=self._response_logger,
                 call_tag="action_selection",
             ).strip()
-        except Exception:
+        except Exception as exc:
+            if os.getenv("SKILLMINING_STOP_ON_ERROR") == "1":
+                raise RuntimeError(
+                    f"action_selection failed (workflow_id={self.workflow_id or '<config.py>'}): {exc}"
+                ) from exc
             raw_output = ""
 
         selected = ""
@@ -855,6 +859,12 @@ class ABCDAgent(AbstractTodAgent):
                     chat_kwargs["call_tag"] = call_tag
                 raw_output = self._chat(messages, **chat_kwargs).strip()
             except Exception as exc:
+                if os.getenv("SKILLMINING_STOP_ON_ERROR") == "1":
+                    phase = call_tag or "response_generation"
+                    raise RuntimeError(
+                        f"{phase} failed (workflow_id={self.workflow_id or '<config.py>'}, "
+                        f"convo={convo_id}, turn={turn_idx}): {exc}"
+                    ) from exc
                 if verbose:
                     print(f"    LLM error convo={convo_id} turn={turn_idx}: {exc}")
 
@@ -1113,6 +1123,10 @@ class ABCDAgent(AbstractTodAgent):
                 response_logger=self._response_logger,
             ).strip()
         except Exception as exc:
+            if os.getenv("SKILLMINING_STOP_ON_ERROR") == "1":
+                raise RuntimeError(
+                    f"reference_query failed (workflow_id={self.workflow_id or '<config.py>'}): {exc}"
+                ) from exc
             if verbose:
                 print(f"    reference query planning error: {exc}")
 
