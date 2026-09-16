@@ -1679,19 +1679,35 @@ def autonomous_resource_reflection(
     raw, payload, last_error = "", {}, ""
     for attempt in range(1, max(1, max_retries) + 1):
         try:
+            reflection_prompt = prompt
+            if attempt > 1:
+                reflection_prompt += (
+                    "\n\nRETRY REQUIREMENT: Your previous response was not valid JSON. "
+                    "Return exactly one complete JSON object, with double-quoted keys "
+                    "and strings, no markdown fences, no comments, and no text before "
+                    "or after the object."
+                )
             raw = _online_refinement_chat(
-                [{"role": "user", "content": prompt}], model=cfg["model"],
+                [{"role": "user", "content": reflection_prompt}], model=cfg["model"],
                 api_key=cfg["api_key"], base_url=cfg["base_url"], temperature=0.0,
                 response_logger=response_logger, call_tag="online_resource_reflection",
                 workflow_id=workflow_id,
             ).strip()
             text = "\n".join(raw.splitlines()[1:-1]) if raw.startswith("```") else raw
-            start, end = text.find("{"), text.rfind("}")
-            payload = json.loads(text[start:end + 1]) if start >= 0 and end > start else {}
+            start = text.find("{")
+            if start < 0:
+                raise json.JSONDecodeError("No JSON object found", text, 0)
+            payload, _ = json.JSONDecoder().raw_decode(text[start:])
+            if not isinstance(payload, dict):
+                raise json.JSONDecodeError("Reflection JSON must be an object", text, start)
             if isinstance(payload.get("updates"), list):
                 break
+            raise json.JSONDecodeError("Reflection JSON has no updates list", text, start)
         except Exception as exc:
-            if os.getenv("SKILLMINING_STOP_ON_ERROR") == "1":
+            # A non-empty response with malformed JSON is a recoverable model
+            # formatting error. Retry it even in strict diagnostic mode; only
+            # an empty response or a final exhausted retry should terminate.
+            if not isinstance(exc, json.JSONDecodeError) and os.getenv("SKILLMINING_STOP_ON_ERROR") == "1":
                 raise RuntimeError(
                     f"online_resource_reflection failed (workflow_id={workflow_id or '<config.py>'}, "
                     f"attempt={attempt}): {exc}"
@@ -1700,6 +1716,12 @@ def autonomous_resource_reflection(
             last_error = repr(exc)
         if attempt < max(1, max_retries):
             time.sleep(float(2 ** (attempt - 1)))
+
+    if not payload and last_error and os.getenv("SKILLMINING_STOP_ON_ERROR") == "1":
+        raise RuntimeError(
+            f"online_resource_reflection returned invalid JSON after {max(1, max_retries)} attempts "
+            f"(workflow_id={workflow_id or '<config.py>'}): {last_error}"
+        )
 
     proposed_skill_operations, rejected_skill_operations = [], []
     for item in payload.get("skill_operations", []):
