@@ -673,6 +673,55 @@ def schedule_contrastive_batches(
     return batches[:max_batches] if max_batches else batches
 
 
+def build_action_turn_samples(conversations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Expand conversations into independent action-turn + prefix samples."""
+    samples = []
+    for conversation in conversations:
+        convo_id = str(conversation.get("convo_id", "?"))
+        turns = conversation.get("delexed") or []
+        for turn_index, turn in enumerate(turns):
+            targets = turn.get("targets") or []
+            if len(targets) < 3 or targets[1] != "take_action":
+                continue
+            source = "ROOT"
+            for prev in reversed(turns[:turn_index]):
+                ptargets = prev.get("targets") or []
+                if len(ptargets) >= 3 and ptargets[1] == "take_action":
+                    source = str(ptargets[2]); break
+            samples.append({"sample_id": f"{convo_id}:{turn_index}", "conversation_id": convo_id, "convo_id": convo_id,
+                            "turn_index": turn_index, "source_action": source,
+                            "target_action": str(targets[2]),
+                            "gold_slots": targets[3] if len(targets) > 3 and isinstance(targets[3], list) else [],
+                            "conversation": conversation})
+    return samples
+
+
+def schedule_action_turn_batches(conversations: list[dict[str, Any]], batch_size: int = 8,
+                                 max_batches: int | None = None) -> list[list[dict[str, Any]]]:
+    """Schedule independent action turns; one session may occur in many batches."""
+    groups: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(lambda: defaultdict(list))
+    for sample in build_action_turn_samples(conversations):
+        groups[sample["source_action"]][sample["target_action"]].append(sample)
+    batches = []
+    for source in sorted(groups):
+        targets = groups[source]
+        # Round-robin target queues so sibling outcomes share a batch.
+        queues = [targets[target] for target in sorted(targets)]
+        if len(queues) == 1:
+            queue = queues[0]
+            for i in range(0, len(queue), batch_size):
+                batches.append(queue[i:i + batch_size])
+            continue
+        while any(queues):
+            batch = []
+            for queue in queues:
+                if queue and len(batch) < batch_size:
+                    batch.append(queue.pop(0))
+            if batch:
+                batches.append(batch)
+    return batches[:max_batches] if max_batches else batches
+
+
 def edge_confidence(edge: dict[str, Any] | None, alpha: float = 1.0, beta: float = 1.0) -> float:
     """Beta-smoothed rollout reliability for a known transition."""
     if edge is None:
@@ -692,7 +741,12 @@ def _gold_action_rows(conversation: dict[str, Any], turn_results: list[dict[str,
         if len(targets) < 3 or targets[1] != "take_action" or not targets[2]:
             continue
         gold, _ = canonical_action_name(targets[2], schema.get("actions"))
-        raw = rows_by_turn.get(turn_index, {})
+        # A turn absent from rows_by_turn was intentionally not rolled out
+        # (e.g. utterance turns or another action-turn sample in the same
+        # session). Never convert that absence into a synthetic failure.
+        if turn_index not in rows_by_turn:
+            continue
+        raw = rows_by_turn[turn_index]
         predicted, _ = canonical_action_name(raw.get("predicted_action", ""), schema.get("actions"))
         gold_slots = [str(value) for value in (targets[3] if len(targets) > 3 and isinstance(targets[3], list) else [])]
         predicted_slots = [str(value) for value in (raw.get("predicted_slots") or [])]

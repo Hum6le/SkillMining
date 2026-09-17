@@ -44,6 +44,7 @@ from skill_mining.online_refinement import (
     render_online_slot_policies,
     save_skill_dag,
     schedule_contrastive_batches,
+    schedule_action_turn_batches,
     summarize_refinement_state,
 )
 from scripts.run_subflow_eval import (
@@ -68,10 +69,12 @@ def _append_jsonl(path: Path, record: dict) -> None:
 def _rollout_online_batch(agent: ABCDAgent, batch: list) -> list[dict]:
     """Run one online training batch in order under the current policy state."""
     rows: list[dict] = []
-    for conversation in batch:
-        rows.extend(agent.predict_all_turns(
-            conversation, predict_actions=True, verbose=False,
-        ))
+    for item in batch:
+        conversation = item.get("conversation", item) if isinstance(item, dict) else item
+        turn_index = item.get("turn_index") if isinstance(item, dict) and "turn_index" in item else None
+        rows.extend(agent.predict_all_turns(conversation, predict_actions=True,
+                                            action_only=True, verbose=False,
+                                            turn_index=turn_index))
     return rows
 
 
@@ -171,7 +174,8 @@ def _repair_failed_skill_operations(
 def _batch_rollout_supervision(conversations: list[dict], turn_results: list[dict]) -> list[dict]:
     """Align every rollout target with gold action/slot supervision when present."""
     gold_by_turn = {}
-    for conversation in conversations:
+    for item in conversations:
+        conversation = item.get("conversation", item) if isinstance(item, dict) else item
         convo_id = str(conversation.get("convo_id", "?"))
         for turn_index, turn in enumerate(conversation.get("delexed") or []):
             targets = turn.get("targets") or []
@@ -195,6 +199,17 @@ def _batch_rollout_supervision(conversations: list[dict], turn_results: list[dic
             ),
         })
     return rows
+
+
+def _batch_conversations(batch: list[dict]) -> list[dict]:
+    """Unwrap action-turn samples while retaining one copy per sample target."""
+    result, seen = [], set()
+    for item in batch:
+        conversation = item.get("conversation", item) if isinstance(item, dict) else item
+        key = str(conversation.get("convo_id", "?"))
+        if key not in seen:
+            result.append(conversation); seen.add(key)
+    return result
 
 
 def _build_agent(args, working_skill: str, base_reference: str, action_rules: str,
@@ -467,29 +482,30 @@ def main() -> None:
         saved_schedule = json.loads(schedule_path.read_text(encoding="utf-8"))
         batches = []
         for item in saved_schedule.get("batches", []):
+            samples = item.get("samples", [])
+            if samples:
+                batches.append([{**sample, "conversation": by_id[str(sample["conversation_id"])]} for sample in samples])
+                continue
             ids = [str(value) for value in item.get("conversation_ids", [])]
             missing = [sid for sid in ids if sid not in by_id]
             if missing:
                 raise RuntimeError(f"Saved schedule references sessions absent from this train split: {missing[:3]}")
             batches.append([by_id[sid] for sid in ids])
     else:
-        batches = schedule_contrastive_batches(
-            train, state, batch_size=args.batch_size,
-            per_transition_cap=args.per_transition_cap,
-            target_selection_rate=args.target_selection_rate,
-            max_batches=args.max_batches,
-        )
+        batches = schedule_action_turn_batches(train, batch_size=args.batch_size, max_batches=args.max_batches)
         _write(schedule_path, json.dumps({
             "subflow": args.subflow,
             "num_train_sessions": len(train),
-            "num_selected_sessions": sum(len(batch) for batch in batches),
-            "selection_rate": round(sum(len(batch) for batch in batches) / max(len(train), 1), 6),
+            "num_selected_samples": sum(len(batch) for batch in batches),
             "batch_size": args.batch_size,
             "per_transition_cap": args.per_transition_cap,
             "target_selection_rate": args.target_selection_rate,
             "max_batches": args.max_batches,
             "batches": [
-                {"batch_index": index, "conversation_ids": [str(item.get("convo_id", "?")) for item in batch]}
+                {"batch_index": index, "samples": [
+                    {k: value for k, value in item.items() if k != "conversation"}
+                    for item in batch
+                ]}
                 for index, batch in enumerate(batches, start=1)
             ],
         }, indent=2, ensure_ascii=False))
@@ -509,6 +525,8 @@ def main() -> None:
     if completed > len(batches):
         raise RuntimeError(f"State has {completed} completed batches, but current schedule has {len(batches)}")
 
+    # Rollouts may run concurrently on independent workflow agents. The
+    # parent process still localizes and applies updates in batch order.
     wave_size = max(1, len(refine_workflow_ids)) if refine_workflow_ids else 1
     remaining_batches = batches[completed:]
     for wave_offset in range(0, len(remaining_batches), wave_size):
@@ -538,7 +556,7 @@ def main() -> None:
             turns = item["turns"]
             _write(out_dir / "rollouts" / f"batch_{batch_index:04d}.json",
                    json.dumps(turns, indent=2, ensure_ascii=False))
-            localized = localize_rollout_batch(batch, turns, state)
+            localized = localize_rollout_batch(_batch_conversations(batch), turns, state)
             rollout_supervision = _batch_rollout_supervision(batch, turns)
             evidence_packets = build_online_evidence_packets(localized)
             accumulate_online_evidence(state, evidence_packets, batch_index)
@@ -548,7 +566,7 @@ def main() -> None:
             _write(out_dir / "online_evidence" / f"batch_{batch_index:04d}.json", json.dumps({
                 "batch_index": batch_index,
                 "workflow_id": item.get("workflow_id"),
-                "conversation_ids": [str(value.get("convo_id", "?")) for value in batch],
+                "conversation_ids": [str(value.get("conversation_id", value.get("convo_id", "?"))) for value in batch],
                 "rollout_supervision": rollout_supervision,
                 "localized": localized,
                 "packets": evidence_packets,
@@ -634,7 +652,7 @@ def main() -> None:
             _append_jsonl(out_dir / "refinement_ledger.jsonl", {
                 "timestamp_utc": datetime.now(timezone.utc).isoformat(),
                 "batch_index": batch_index,
-                "conversation_ids": [str(item.get("convo_id", "?")) for item in batch],
+                "conversation_ids": [str(item.get("conversation_id", item.get("convo_id", "?"))) for item in batch],
                 "model_decision": reflection.get("model_decision", ""),
                 "no_update_reason": reflection.get("model_no_update_reason", ""),
                 "lookups": reflection.get("lookups", []),

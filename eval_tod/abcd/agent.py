@@ -733,6 +733,7 @@ class ABCDAgent(AbstractTodAgent):
     def predict_all_turns(
         self, conversation: dict[str, Any], verbose: bool = False,
         predict_actions: bool = False, action_only: bool = False,
+        turn_index: int | None = None,
     ) -> list[dict]:
         """Predict EVERY agent turn in a conversation, not just the last.
 
@@ -765,6 +766,10 @@ class ABCDAgent(AbstractTodAgent):
             and t.get("targets", [None, None])[1] == "take_action"
         ]
         target_indices = action_indices if action_only else sorted(set(agent_indices) | set(action_indices))
+        if turn_index is not None:
+            if turn_index not in target_indices:
+                return []
+            target_indices = [turn_index]
 
         task_template = _TASK_PROMPT_WITH_ACTION if predict_actions else _TASK_PROMPT
 

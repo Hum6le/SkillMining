@@ -707,7 +707,7 @@ integration pass, not a re-induction or a verification pass.
 </induced_transition_evidence>
 
 Writing requirements:
-- Preserve the complete Backbone Tree and all action rules conceptually.
+- Preserve the complete Backbone DSL and all action rules conceptually.
 - Organize related transitions around meaningful backbone decision points.
 - Explain normal continuation, alternative routes, retries, loops, and
   rejoining behavior in connected prose. Do not produce one repetitive
@@ -747,7 +747,7 @@ Use exactly one constrained operation:
 }}
 ```
 It replaces only content between `ROUTING_SECTION_START` and
-`ROUTING_SECTION_END`. It cannot change the intent, Backbone Tree, action
+`ROUTING_SECTION_END`. It cannot change the intent, Backbone DSL, action
 rules, slot policies, or reference-use sections.
 </filesystem_mcp>
 
@@ -875,7 +875,7 @@ def _render_routing_fallback(
                 )
         paragraphs.append("\n".join(lines))
     return "\n\n".join(paragraphs) or (
-        "- No transition-specific routing evidence was recoverable; follow the Backbone Tree "
+        "- No transition-specific routing evidence was recoverable; follow the Backbone DSL "
         "and consult `reference.md` for observed alternatives."
     )
 
@@ -1191,8 +1191,8 @@ def _validate_backbone_skill(
 ) -> None:
     """Validate action coverage and preservation of the complete tree section."""
     _validate_backbone_action_coverage(skill, required_actions)
-    if "### Backbone Tree" not in skill:
-        raise ValueError("compiled skill omitted the complete Backbone Tree")
+    if "### Backbone DSL" not in skill and "### Backbone Tree" not in skill:
+        raise ValueError("compiled skill omitted the complete Backbone DSL")
     if "### Action Rules" not in skill:
         raise ValueError("compiled skill omitted the Action Rules section")
     if skill.count(_ACTION_RULES_START) != 1 or skill.count(_ACTION_RULES_END) != 1:
@@ -1201,7 +1201,8 @@ def _validate_backbone_skill(
         raise ValueError("compiled skill omitted the Slot Policies section")
     for source, target in required_backbone_edges or []:
         edge_text = f"`{source}` -> `{target}`"
-        if edge_text not in skill:
+        dsl_edge_text = f"  {source} -> {target}"
+        if edge_text not in skill and dsl_edge_text not in skill:
             raise ValueError(f"compiled skill omitted backbone relation: {edge_text}")
     if skill.count(_ROUTING_SECTION_START) != 1 or skill.count(_ROUTING_SECTION_END) != 1:
         raise ValueError("compiled skill omitted the unique routing MCP region")
@@ -1933,6 +1934,69 @@ def _render_backbone_edge_table(subgraph: dict[str, Any]) -> str:
     return "\n".join(rows) if rows else "(empty backbone)"
 
 
+def _render_backbone_dsl(subgraph: dict[str, Any]) -> str:
+    """Render the compact, machine-readable backbone DSL used in ``skill.md``.
+
+    The DSL is intentionally a projection of the canonical graph: it contains
+    only executable backbone nodes/edges and coarse slot contracts.  Residual
+    branches, retries and evidence stay in ``graph.json`` and are looked up at
+    runtime instead of inflating the skill prompt.
+    """
+    nodes = {str(node.get("id")): node for node in subgraph.get("nodes", [])}
+    backbone = subgraph.get("backbone", {})
+    root = str(backbone.get("root", "ROOT"))
+    order = [str(node_id) for node_id in backbone.get("compilation_order", [])]
+    lines = ["BACKBONE v1", f"root {root}", "nodes {"]
+    for node_id in order:
+        node = nodes.get(node_id, {})
+        label = str(node.get("label", node_id)).replace('\\', '\\\\').replace('"', '\\"')
+        contract = node.get("slot_contract", {}) or {}
+        min_slots = contract.get("min_slots", 0)
+        max_slots = contract.get("max_slots", 0)
+        lines.append(f'  {node_id} "{label}" slots={min_slots}..{max_slots}')
+    lines.append("}")
+    lines.append("edges {")
+    for edge in backbone.get("edges", []):
+        source = str(edge.get("source", root))
+        target = str(edge.get("target", ""))
+        if target:
+            lines.append(f"  {source} -> {target}")
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def parse_backbone_dsl(text: str) -> dict[str, Any]:
+    """Parse the compact backbone DSL emitted in ``skill.md``.
+
+    This parser is deliberately strict about structure but tolerant of labels;
+    the canonical rich metadata remains in graph.json.
+    """
+    import re
+    lines = [line.strip() for line in text.splitlines() if line.strip() and not line.strip().startswith("#")]
+    if not lines or lines[0] != "BACKBONE v1":
+        raise ValueError("missing BACKBONE v1 header")
+    root_match = next((re.fullmatch(r"root\s+(\S+)", line) for line in lines), None)
+    if not root_match:
+        raise ValueError("missing backbone root")
+    result: dict[str, Any] = {"version": 1, "root": root_match.group(1), "nodes": [], "edges": []}
+    section = None
+    for line in lines[2:]:
+        if line == "nodes {": section = "nodes"; continue
+        if line == "edges {": section = "edges"; continue
+        if line == "}" : section = None; continue
+        if section == "nodes":
+            match = re.fullmatch(r'(\S+)\s+"((?:\\.|[^"\\])*)"\s+slots=(\d+)\.\.(\d+)', line)
+            if not match:
+                raise ValueError(f"invalid backbone node: {line}")
+            result["nodes"].append({"id": match.group(1), "label": bytes(match.group(2), "utf-8").decode("unicode_escape"), "min_slots": int(match.group(3)), "max_slots": int(match.group(4))})
+        elif section == "edges":
+            match = re.fullmatch(r"(\S+)\s+->\s+(\S+)", line)
+            if not match:
+                raise ValueError(f"invalid backbone edge: {line}")
+            result["edges"].append({"source": match.group(1), "target": match.group(2)})
+    return result
+
+
 def _build_backbone_skill_prompt(
     subflow: str,
     subgraph: dict,
@@ -1945,7 +2009,7 @@ def _build_backbone_skill_prompt(
     induced_rules = (transition_induction or {}).get("rules_by_source", {})
 
     allowed_actions = [nodes[node_id]["label"] for node_id in order if node_id in nodes]
-    backbone_tree = _render_backbone_tree(subgraph)
+    backbone_dsl = _render_backbone_dsl(subgraph)
     backbone_edge_table = _render_backbone_edge_table(subgraph)
     action_blocks: list[str] = []
     for node_id in order:
@@ -1996,7 +2060,7 @@ def _build_backbone_skill_prompt(
   omit a retained action merely because it belongs to a branch or recovery route.
 - Do not reduce the backbone to a single main path. The complete maximum
   spanning backbone below is the structural organization of the skill and
-  every retained backbone node must remain visible in the Backbone Tree.
+  every retained backbone node must remain visible in the Backbone DSL.
 - The routing prose will be written by a later constrained filesystem-MCP pass.
   In this seed pass, describe the action inventory and backbone organization;
   do not turn transition evidence into a rigid per-edge rule table.
@@ -2015,7 +2079,7 @@ def _build_backbone_skill_prompt(
   safely reused from an earlier action. Use only the observed source evidence
   and dialogue examples below. Do not invent semantic field names or turn an
   example-specific value into a rule.
-- Use the complete backbone tree to explain parent-child organization, branch
+- Use the complete backbone DSL to explain parent-child organization, branch
   attachment, and rejoining relations for each action's transition cards. Do
   not claim that branches are mutually exclusive unless their induced guards
   are.
@@ -2029,8 +2093,10 @@ All actions are retained; the maximum spanning backbone determines the global
 tree organization. It is not a single linear route.
 
 ## Maximum Spanning Backbone (Directed MST / Arborescence)
-Tree view:
-{backbone_tree}
+Canonical compact DSL:
+```text
+{backbone_dsl}
+```
 
 Backbone edge table:
 {backbone_edge_table}
@@ -2051,16 +2117,28 @@ Write only this Markdown document:
 [One short evidence-grounded sentence.]
 
 ## Workflow
-### Backbone Tree
+### Backbone DSL
 ```text
-ROOT
+BACKBONE v1
+root ROOT
+nodes {{
+  action-a "action-a" slots=0..1
+}}
+edges {{
+  ROOT -> action-a
+}}
+<!-- Legacy tree illustration omitted; use the DSL above.
 └── `action-a`
     ├── `action-b`
     └── `action-c`
 ```
 Reproduce the complete retained maximum spanning backbone as a compact tree.
 Do not collapse it into one main path. Preserve every backbone node and parent-child edge.
-Use ASCII connectors such as pipe-dash-dash and backtick-dash-dash; do not use Unicode box-drawing characters.
+Use ASCII connectors such as pipe-dash-dash and backtick-dash-dash; do not use Unicode box-drawing characters. -->
+
+Reproduce the complete retained maximum spanning backbone in this DSL.
+Preserve every node and parent-child edge exactly once. Do not add residual,
+retry or evidence edges here; those are retrieved from graph.json.
 
 ### Backbone Edges
 - `ROOT` -> `action-a`
@@ -2332,9 +2410,9 @@ def _build_skill_md_from_backbone_fallback(subflow: str, subgraph: dict) -> str:
     lines = [
         f"# Skill: {subflow}", "", "## Intent", "",
         f"Handle `{subflow}` requests using the observed action workflow.",
-        "", "## Workflow", "", "### Backbone Tree", "", "```text",
-        _render_backbone_tree(subgraph), "```",
-        "", "Preserve the complete maximum spanning backbone; do not collapse it into one route.",
+        "", "## Workflow", "", "### Backbone DSL", "", "```text",
+        _render_backbone_dsl(subgraph), "```",
+        "", "The DSL is the executable backbone skeleton; consult graph.json for residual branches, retries, revisits and evidence.",
     ]
     lines.extend(["", "### Action Rules", ""])
     for node_id in order:
@@ -2346,7 +2424,7 @@ def _build_skill_md_from_backbone_fallback(subflow: str, subgraph: dict) -> str:
         lines.append(
             f"- Slot contract: {contract.get('min_slots', 0)}-{contract.get('max_slots', 0)} ordered real value(s)."
         )
-        lines.append("- Place this action according to its parent and children in the Backbone Tree.")
+        lines.append("- Place this action according to its parent and children in the Backbone DSL.")
         transitions = local.get(node_id, [])
         if not transitions:
             lines.append("- No retained outgoing transition.")
