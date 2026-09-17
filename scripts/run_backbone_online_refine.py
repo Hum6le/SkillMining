@@ -45,6 +45,12 @@ from skill_mining.online_refinement import (
     save_skill_dag,
     schedule_contrastive_batches,
     schedule_action_turn_batches,
+    build_action_turn_samples,
+    build_post_rollout_batches,
+    diagnose_rollout_batch,
+    group_batch_reports,
+    reflect_batch_report_group,
+    apply_reflection_updates_to_state,
     summarize_refinement_state,
 )
 from scripts.run_subflow_eval import (
@@ -492,7 +498,14 @@ def main() -> None:
                 raise RuntimeError(f"Saved schedule references sessions absent from this train split: {missing[:3]}")
             batches.append([by_id[sid] for sid in ids])
     else:
-        batches = schedule_action_turn_batches(train, batch_size=args.batch_size, max_batches=args.max_batches)
+        # Roll out every action turn first under one frozen skill snapshot.
+        # These are execution micro-batches only; evidence batches are formed
+        # afterwards from observed trajectories and outcomes.
+        samples = build_action_turn_samples(train)
+        batches = [samples[index:index + args.batch_size]
+                   for index in range(0, len(samples), args.batch_size)]
+        if args.max_batches is not None:
+            batches = batches[:args.max_batches]
         _write(schedule_path, json.dumps({
             "subflow": args.subflow,
             "num_train_sessions": len(train),
@@ -529,6 +542,13 @@ def main() -> None:
     # parent process still localizes and applies updates in batch order.
     wave_size = max(1, len(refine_workflow_ids)) if refine_workflow_ids else 1
     remaining_batches = batches[completed:]
+    rollout_record_log = out_dir / "post_rollout_records.jsonl"
+    all_rollout_records: list[dict] = []
+    if rollout_record_log.exists():
+        all_rollout_records = [json.loads(line) for line in
+                               rollout_record_log.read_text(encoding="utf-8").splitlines()
+                               if line.strip()]
+    posthoc_group_reflection = True
     for wave_offset in range(0, len(remaining_batches), wave_size):
         wave_batches = remaining_batches[wave_offset:wave_offset + wave_size]
         wave_start = completed + wave_offset + 1
@@ -554,9 +574,22 @@ def main() -> None:
             batch_index = completed + item["batch_index"] + 1
             batch = item["batch"]
             turns = item["turns"]
+            result_by_key = {
+                (str(row.get("convo_id", "?")), int(row.get("turn_index", -1))): row
+                for row in turns
+            }
+            for sample in batch:
+                result = result_by_key.get((str(sample.get("conversation_id", "?")), int(sample.get("turn_index", -1))))
+                if result is not None:
+                    rollout_record = {
+                        "sample": {key: value for key, value in sample.items() if key != "conversation"},
+                        "result": result,
+                    }
+                    all_rollout_records.append(rollout_record)
+                    _append_jsonl(rollout_record_log, rollout_record)
             _write(out_dir / "rollouts" / f"batch_{batch_index:04d}.json",
                    json.dumps(turns, indent=2, ensure_ascii=False))
-            localized = localize_rollout_batch(_batch_conversations(batch), turns, state)
+            localized = localize_rollout_batch(batch, turns, state)
             rollout_supervision = _batch_rollout_supervision(batch, turns)
             evidence_packets = build_online_evidence_packets(localized)
             accumulate_online_evidence(state, evidence_packets, batch_index)
@@ -588,7 +621,9 @@ def main() -> None:
         # resource decision.
         patches = propose_refinement_patches(state, policy)
         reflection = {"accepted": [], "rejected": []}
-        if not args.skip_guard_llm:
+        # Reflection is intentionally deferred until every rollout from this
+        # frozen skill snapshot has completed and post-hoc batches exist.
+        if not posthoc_group_reflection and not args.skip_guard_llm:
             online_skill, online_reference = render_online_resources(state)
             reflection = autonomous_resource_reflection(
                 state, rollout_supervision, working_skill,
@@ -705,6 +740,77 @@ def main() -> None:
             "  localized=%d diagnostic_patches=%d autonomous_updates=%d candidate_branches=%d blockers=%s",
             localized["num_events"], len(patches), len(reflection["accepted"]),
             summary["num_candidate_branches"], summary["blocker_counts"],
+        )
+
+    # Post-hoc evidence organization: outcomes, trajectory prefixes and local
+    # graph structure are now all available. Batch reports diagnose causes;
+    # group reflections (<=16 reports) make the final edits.
+    if all_rollout_records:
+        _write(out_dir / "post_rollout_records.json", json.dumps(
+            all_rollout_records, indent=2, ensure_ascii=False))
+    elif (out_dir / "post_rollout_records.json").exists():
+        all_rollout_records = json.loads(
+            (out_dir / "post_rollout_records.json").read_text(encoding="utf-8"))
+
+    if (all_rollout_records and not args.skip_guard_llm
+            and not state.get("posthoc_reflection_complete", False)):
+        evidence_batches = build_post_rollout_batches(
+            all_rollout_records, max_batch_size=args.batch_size,
+        )
+        reports = []
+        for report_index, evidence_batch in enumerate(evidence_batches, start=1):
+            batch_id = f"evidence_batch_{report_index:04d}"
+            workflow_id = (
+                refine_workflow_ids[(report_index - 1) % len(refine_workflow_ids)]
+                if refine_workflow_ids else None
+            )
+            report = diagnose_rollout_batch(
+                batch_id, evidence_batch, state, working_skill, args.model,
+                response_logger=response_logger, workflow_id=workflow_id,
+                reference=base_reference + "\n" + render_online_resources(state)[1],
+                action_rules=action_rules + "\n" + render_online_action_rules(state),
+                slot_policies=slot_policies + "\n" + render_online_slot_policies(state),
+            )
+            reports.append(report)
+            _write(out_dir / "batch_root_causes" / f"{batch_id}.json",
+                   json.dumps(report, indent=2, ensure_ascii=False))
+
+        reflection_groups = group_batch_reports(reports, max_reports=16)
+        applied_ids = set(state.get("applied_skill_operation_ids", []))
+        for reflection_index, report_group in enumerate(reflection_groups, start=1):
+            workflow_id = (
+                refine_workflow_ids[(reflection_index - 1) % len(refine_workflow_ids)]
+                if refine_workflow_ids else None
+            )
+            reflection = reflect_batch_report_group(
+                report_group, state, working_skill, args.model,
+                response_logger=response_logger, workflow_id=workflow_id,
+            )
+            accepted, rejected = apply_reflection_updates_to_state(
+                state, reflection.get("updates", []),
+            )
+            working_skill, text_operations = apply_dynamic_skill_operations(
+                working_skill, reflection.get("skill_operations", []), applied_ids,
+            )
+            reflection["accepted_updates"] = accepted
+            reflection["rejected_updates"] = rejected
+            reflection["applied_skill_operations"] = text_operations
+            _write(out_dir / "group_reflections" / f"reflection_{reflection_index:04d}.json",
+                   json.dumps(reflection, indent=2, ensure_ascii=False))
+            _append_jsonl(out_dir / "refinement_ledger.jsonl", {
+                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                "reflection_index": reflection_index,
+                "batch_ids": reflection.get("batch_ids", []),
+                "root_cause_summary": reflection.get("summary", ""),
+                "accepted_updates": accepted,
+                "rejected_updates": rejected,
+                "skill_operations": text_operations,
+            })
+        state["applied_skill_operation_ids"] = sorted(applied_ids)
+        state["posthoc_reflection_complete"] = True
+        working_skill = _checkpoint(
+            out_dir, state, working_skill, base_reference, policy,
+            slot_policies, action_rules,
         )
 
     # Freeze all mining/refinement calls before the held-out evaluation so the

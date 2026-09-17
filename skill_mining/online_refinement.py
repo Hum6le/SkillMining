@@ -9,6 +9,7 @@ stage can turn only the selected edge records into natural-language guards.
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 import os
 import re
@@ -317,6 +318,77 @@ below, so never request it. Return valid JSON only:
 <current_skill>{skill}</current_skill>
 <rollout_supervision>{rollout_supervision}</rollout_supervision>
 <graph_edges>{graph_edges}</graph_edges>
+"""
+
+_BATCH_ROOT_CAUSE_PROMPT = """You are diagnosing a compact batch of similar
+action-turn rollouts from one frozen skill snapshot. Write a substantial,
+specific root-cause analysis. Do not merely restate gold and predicted labels.
+
+Explicitly determine whether the failure came from one or more of:
+- missing, ambiguous, contradictory, or overly verbose skill text;
+- a needed reference section not being queried or not being retrieved;
+- retrieved reference evidence being irrelevant or misleading;
+- the correct reference being available but ignored during action selection;
+- an incorrect graph route or insufficient sibling-edge distinction;
+- an action card missing value-source/order/reuse guidance;
+- correct action selection followed by incorrect slot grounding;
+- insufficient evidence, in which case say what remains unresolved.
+
+Compare successful cases, failures, and counterexamples in the batch. Explain
+the causal chain from visible prompt/retrieval evidence to the final error.
+Candidate changes are proposals only; a later reflection combines several
+batch reports before anything is written.
+
+<current_skill>{skill}</current_skill>
+<local_graph>{local_graph}</local_graph>
+<available_local_resources>{available_resources}</available_local_resources>
+<batch_rollouts>{rollouts}</batch_rollouts>
+
+Return JSON only:
+{{"summary":"a detailed multi-sentence root-cause analysis",
+"root_causes":[{{"category":"skill_missing|skill_ambiguous|reference_not_queried|reference_not_retrieved|reference_misleading|retrieval_ignored|graph_routing|action_card|slot_grounding|insufficient_evidence|other",
+"analysis":"detailed causal explanation","evidence_ids":["sample ids"],
+"confidence":0.0}}],
+"graph_footprint":{{"nodes":["actions"],"edges":["source=>target"]}},
+"candidate_updates":[{{"resource":"transition_guard|action_node|action_rule|slot_policy|reference",
+"edge_id":"optional","action":"optional","op":"upsert|delete",
+"content":"proposed text","status":"resolved|uncertain","rationale":"..."}}],
+"candidate_skill_operations":[{{"operation_id":"stable descriptive id",
+"op":"replace|insert_before|insert_after|delete","match_text":"exact excerpt from current_skill",
+"new_text":"text selected by the model; empty only for delete","rationale":"..."}}],
+"unresolved_questions":["..."]}}
+"""
+
+_GROUP_REFLECTION_PROMPT = """You are the final reflection stage for a local
+neighborhood of a graph-compiled skill. The reports below were produced from
+similar rollout batches. Synthesize their root-cause analyses, resolve
+conflicting proposals, and return one coherent result. A group contains at
+most 16 batch reports.
+
+You can read the compact complete skill and a locally sampled graph. You may
+revise skill text and you decide the exact insertion/replacement location by
+copying an exact match_text and choosing replace, insert_before, insert_after,
+or delete. Prefer coherent revisions over repeatedly appending case-specific
+rules. Do not copy conversation IDs into executable text.
+
+The synthesis summary should be reasonably detailed. It must state whether
+the underlying deficiency is in skill text, graph routing, reference query or
+retrieval, use of retrieved evidence, action selection, or slot grounding.
+
+<current_skill>{skill}</current_skill>
+<local_graph>{local_graph}</local_graph>
+<batch_reports>{batch_reports}</batch_reports>
+
+Return JSON only:
+{{"decision":"update|no_update","summary":"detailed synthesis and causal chain",
+"merged_root_causes":[{{"analysis":"...","batch_ids":["..."],"confidence":0.0}}],
+"updates":[{{"resource":"transition_guard|action_node|action_rule|slot_policy|reference",
+"edge_id":"optional","action":"optional","op":"upsert|delete","content":"...",
+"status":"resolved|uncertain","rationale":"..."}}],
+"skill_operations":[{{"operation_id":"unique stable id",
+"op":"replace|insert_before|insert_after|delete","match_text":"exact excerpt",
+"new_text":"complete text chosen by the model","rationale":"..."}}],
+"rejected_candidates":[{{"reason":"..."}}],"unresolved_questions":["..."]}}
 """
 
 
@@ -684,12 +756,23 @@ def build_action_turn_samples(conversations: list[dict[str, Any]]) -> list[dict[
             if len(targets) < 3 or targets[1] != "take_action":
                 continue
             source = "ROOT"
-            for prev in reversed(turns[:turn_index]):
+            source_turn = None
+            prefix_action_sequence = []
+            for prefix_turn in turns[:turn_index]:
+                prefix_targets = prefix_turn.get("targets") or []
+                if len(prefix_targets) >= 3 and prefix_targets[1] == "take_action":
+                    prefix_action_sequence.append(str(prefix_targets[2]))
+            for previous_index in range(turn_index - 1, -1, -1):
+                prev = turns[previous_index]
                 ptargets = prev.get("targets") or []
                 if len(ptargets) >= 3 and ptargets[1] == "take_action":
-                    source = str(ptargets[2]); break
+                    source = str(ptargets[2])
+                    source_turn = previous_index
+                    break
             samples.append({"sample_id": f"{convo_id}:{turn_index}", "conversation_id": convo_id, "convo_id": convo_id,
                             "turn_index": turn_index, "source_action": source,
+                            "source_turn": source_turn,
+                            "prefix_action_sequence": prefix_action_sequence,
                             "target_action": str(targets[2]),
                             "gold_slots": targets[3] if len(targets) > 3 and isinstance(targets[3], list) else [],
                             "conversation": conversation})
@@ -778,9 +861,14 @@ def localize_rollout_batch(
     events = []
     slot_events = []
     action_events = []
-    for conversation in conversations:
+    for batch_item in conversations:
+        sample = batch_item if isinstance(batch_item, dict) and "conversation" in batch_item else None
+        conversation = sample["conversation"] if sample is not None else batch_item
         sid = str(conversation.get("convo_id", "?"))
         actions = _gold_action_rows(conversation, by_conversation.get(sid, []))
+        if sample is not None:
+            target_turn = int(sample.get("turn_index", -1))
+            actions = [row for row in actions if row["turn_index"] == target_turn]
         # Slot binding is an action-level property, not a property of the
         # incoming transition. Record every gold action turn, including the
         # first action and single-action sessions. Only action-correct turns
@@ -823,7 +911,18 @@ def localize_rollout_batch(
             if len(policy["evidence"]) < max_evidence_per_edge:
                 policy["evidence"].append(evidence)
             slot_events.append(evidence)
-        for previous, current in zip(actions, actions[1:]):
+        edge_pairs = list(zip(actions, actions[1:]))
+        if sample is not None and actions:
+            current = next(
+                (row for row in actions if row["turn_index"] == int(sample.get("turn_index", -1))),
+                None,
+            )
+            if current is not None:
+                edge_pairs = [({
+                    "turn_index": sample.get("source_turn"),
+                    "gold_action": str(sample.get("source_action", "ROOT")),
+                }, current)]
+        for previous, current in edge_pairs:
             source = action_to_node.get(previous["gold_action"], previous["gold_action"])
             target = action_to_node.get(current["gold_action"], current["gold_action"])
             key = _edge_id(source, target)
@@ -1822,7 +1921,8 @@ def autonomous_resource_reflection(
                 occurrence = int(occurrence)
             except (TypeError, ValueError):
                 occurrence = None
-        if op not in {"upsert", "delete"} or not match_text:
+        if op == "upsert": op = "replace"
+        if op not in {"replace", "insert_before", "insert_after", "delete"} or not match_text:
             rejected_skill_operations.append({"operation": item, "reason": "invalid_dynamic_skill_operation"})
             continue
         if (op == "delete" and new_text) or (op != "delete" and not new_text):
@@ -1835,6 +1935,7 @@ def autonomous_resource_reflection(
             })
             continue
         proposed_skill_operations.append({
+            "operation_id": str(item.get("operation_id", "")).strip(),
             "op": op, "resource": str(item.get("resource", "")).strip(),
             "edge_id": str(item.get("edge_id", "")).strip(),
             "action": str(item.get("action", "")).strip(),
@@ -1966,6 +2067,239 @@ def autonomous_resource_reflection(
     }
 
 
+def _rollout_record_features(record: dict[str, Any]) -> set[str]:
+    sample = record.get("sample", {})
+    row = record.get("result", {})
+    sequence = sample.get("prefix_action_sequence") or []
+    features = {f"seq:{index}:{action}" for index, action in enumerate(sequence[-5:])}
+    for name in ("source_action", "target_action"):
+        value = str(sample.get(name, ""))
+        if value: features.add(f"{name}:{value}")
+    predicted = str(row.get("predicted_action", ""))
+    if predicted: features.add(f"predicted:{predicted}")
+    features.update(f"ctx:{token}" for token in _tokenize_for_lookup(str(row.get("context", ""))))
+    return features
+
+
+def build_post_rollout_batches(
+    records: list[dict[str, Any]], max_batch_size: int = 12,
+) -> list[list[dict[str, Any]]]:
+    """Cluster completed rollouts by trajectory, semantics, graph locality and outcome.
+
+    There are no fixed success/failure quotas. A greedy similarity graph keeps
+    closely related traces together while allowing cross-source batches when
+    their prefixes, contexts or predicted alternatives are genuinely similar.
+    """
+    pending = list(records)
+    features = {id(item): _rollout_record_features(item) for item in pending}
+
+    def similarity(left: dict[str, Any], right: dict[str, Any]) -> float:
+        lf, rf = features[id(left)], features[id(right)]
+        lexical = len(lf & rf) / max(len(lf | rf), 1)
+        ls, rs = left.get("sample", {}), right.get("sample", {})
+        graph = 0.0
+        if ls.get("source_action") == rs.get("source_action"): graph += 0.35
+        if ls.get("target_action") == rs.get("target_action"): graph += 0.20
+        lp, rp = left.get("result", {}), right.get("result", {})
+        if lp.get("predicted_action") == rp.get("predicted_action"): graph += 0.10
+        left_ok = lp.get("predicted_action") == ls.get("target_action")
+        right_ok = rp.get("predicted_action") == rs.get("target_action")
+        outcome = 0.10 if left_ok == right_ok else 0.16  # contrast is also informative
+        return lexical + graph + outcome
+
+    batches: list[list[dict[str, Any]]] = []
+    while pending:
+        seed = pending.pop(0)
+        ranked = sorted(((similarity(seed, item), item) for item in pending),
+                        key=lambda pair: pair[0], reverse=True)
+        best = ranked[0][0] if ranked else 0.0
+        adaptive_floor = max(0.08, best * 0.45)
+        selected = [item for value, item in ranked if value >= adaptive_floor][
+            :max(0, max_batch_size - 1)]
+        chosen = {id(item) for item in selected}
+        pending = [item for item in pending if id(item) not in chosen]
+        batches.append([seed, *selected])
+    return batches
+
+
+def lookup_graph_neighborhood(
+    state: dict[str, Any], nodes: list[str], radius: int = 1,
+) -> dict[str, Any]:
+    """Return a bounded JSON graph view around action labels or node ids."""
+    label_to_id = {str(node.get("label")): str(node.get("id")) for node in state.get("nodes", [])}
+    selected = {label_to_id.get(str(node), str(node)) for node in nodes if node}
+    edges = state.get("edges", {})
+    for _ in range(max(0, radius)):
+        selected |= {
+            endpoint
+            for edge in edges.values()
+            if str(edge.get("source")) in selected or str(edge.get("target")) in selected
+            for endpoint in (str(edge.get("source")), str(edge.get("target")))
+        }
+    node_rows = [node for node in state.get("nodes", []) if str(node.get("id")) in selected]
+    edge_rows = [{"edge_id": edge_id, **{
+        key: edge.get(key) for key in (
+            "source", "target", "source_action", "target_action", "kind", "visibility",
+            "gold_support", "rollout_success", "rollout_failure", "guard", "guard_status",
+        )
+    }} for edge_id, edge in edges.items()
+        if str(edge.get("source")) in selected and str(edge.get("target")) in selected]
+    return {"nodes": node_rows, "edges": edge_rows}
+
+
+def _parse_json_object(raw: str) -> dict[str, Any]:
+    text = str(raw or "").strip()
+    if text.startswith("```"):
+        text = "\n".join(text.splitlines()[1:-1])
+    start = text.find("{")
+    if start < 0: return {}
+    try:
+        payload, _ = json.JSONDecoder().raw_decode(text[start:])
+        return payload if isinstance(payload, dict) else {}
+    except json.JSONDecodeError:
+        return {}
+
+
+def diagnose_rollout_batch(
+    batch_id: str, records: list[dict[str, Any]], state: dict[str, Any], skill: str,
+    model: str, response_logger: Any = None, workflow_id: str | None = None,
+    reference: str = "", action_rules: str = "", slot_policies: str = "",
+) -> dict[str, Any]:
+    nodes = sorted({str(record.get("sample", {}).get(key, ""))
+                    for record in records for key in ("source_action", "target_action") if record.get("sample", {}).get(key)})
+    local_graph = lookup_graph_neighborhood(state, nodes, radius=1)
+    resource_query = " ".join(nodes)
+    available_resources = []
+    for resource_name, resource_text in (
+        ("reference", reference), ("action_rules", action_rules),
+        ("slot_policies", slot_policies),
+    ):
+        if resource_text:
+            available_resources.extend(_resource_lookup_sections(
+                resource_name, resource_text, resource_query, 2,
+            ))
+    prompt_records = [{
+        "sample_id": record.get("sample", {}).get("sample_id"),
+        "prefix_action_sequence": record.get("sample", {}).get("prefix_action_sequence", []),
+        "source_action": record.get("sample", {}).get("source_action"),
+        "gold_target": record.get("sample", {}).get("target_action"),
+        "gold_slots": record.get("sample", {}).get("gold_slots", []),
+        "predicted_action": record.get("result", {}).get("predicted_action"),
+        "predicted_slots": record.get("result", {}).get("predicted_slots", []),
+        "context": str(record.get("result", {}).get("context", ""))[-1800:],
+        **_react_model_output_projection(record.get("result", {}).get("react_trace")),
+    } for record in records]
+    prompt = _BATCH_ROOT_CAUSE_PROMPT.format(
+        skill=skill, local_graph=json.dumps(local_graph, ensure_ascii=False),
+        available_resources=json.dumps(available_resources, ensure_ascii=False, indent=2),
+        rollouts=json.dumps(prompt_records, ensure_ascii=False, indent=2),
+    )
+    raw = _online_refinement_chat([{"role": "user", "content": prompt}], model=model,
+        api_key=None, base_url=None, temperature=0.0, response_logger=response_logger,
+        call_tag="online_batch_root_cause", workflow_id=workflow_id)
+    report = _parse_json_object(raw)
+    report.update({"batch_id": batch_id, "sample_ids": [item["sample"]["sample_id"] for item in records],
+                   "local_graph": local_graph, "raw_response": raw})
+    return report
+
+
+def group_batch_reports(reports: list[dict[str, Any]], max_reports: int = 16) -> list[list[dict[str, Any]]]:
+    """Group reports by overlapping/neighboring graph footprint, capped at 16."""
+    def footprint(report: dict[str, Any]) -> set[str]:
+        values = set((report.get("graph_footprint") or {}).get("nodes", []))
+        for node in (report.get("local_graph") or {}).get("nodes", []):
+            values.add(str(node.get("id", ""))); values.add(str(node.get("label", "")))
+        return {value for value in values if value}
+
+    def score(left: dict[str, Any], right: dict[str, Any]) -> float:
+        ln, rn = footprint(left), footprint(right)
+        graph = len(ln & rn) / max(len(ln | rn), 1)
+        lt = _tokenize_for_lookup(str(left.get("summary", "")))
+        rt = _tokenize_for_lookup(str(right.get("summary", "")))
+        semantic = len(lt & rt) / max(len(lt | rt), 1)
+        return 2.0 * graph + semantic
+
+    pending = list(reports); groups = []
+    while pending:
+        seed = pending.pop(0)
+        ranked = sorted(((score(seed, report), report) for report in pending),
+                        key=lambda item: item[0], reverse=True)
+        selected = [report for value, report in ranked
+                    if value > 0.0][:max(0, max_reports - 1)]
+        chosen = {id(item) for item in selected}
+        pending = [item for item in pending if id(item) not in chosen]
+        groups.append([seed, *selected])
+    return groups
+
+
+def reflect_batch_report_group(
+    reports: list[dict[str, Any]], state: dict[str, Any], skill: str, model: str,
+    response_logger: Any = None, workflow_id: str | None = None,
+) -> dict[str, Any]:
+    reports = reports[:16]
+    nodes = sorted({node for report in reports for node in
+                    (report.get("graph_footprint") or {}).get("nodes", [])})
+    nodes = sorted(set(nodes) | {
+        str(node.get("label") or node.get("id"))
+        for report in reports for node in (report.get("local_graph") or {}).get("nodes", [])
+        if node.get("label") or node.get("id")
+    })
+    local_graph = lookup_graph_neighborhood(state, nodes, radius=1)
+    compact = [{key: report.get(key) for key in (
+        "batch_id", "summary", "root_causes", "graph_footprint", "candidate_updates",
+        "candidate_skill_operations", "unresolved_questions")}
+        for report in reports]
+    prompt = _GROUP_REFLECTION_PROMPT.format(skill=skill,
+        local_graph=json.dumps(local_graph, ensure_ascii=False),
+        batch_reports=json.dumps(compact, ensure_ascii=False, indent=2))
+    raw = _online_refinement_chat([{"role": "user", "content": prompt}], model=model,
+        api_key=None, base_url=None, temperature=0.0, response_logger=response_logger,
+        call_tag="online_group_reflection", workflow_id=workflow_id)
+    result = _parse_json_object(raw)
+    result.update({"batch_ids": [report.get("batch_id") for report in reports],
+                   "local_graph": local_graph, "raw_response": raw, "prompt_chars": len(prompt)})
+    return result
+
+
+def apply_reflection_updates_to_state(
+    state: dict[str, Any], updates: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Apply final group-level semantic decisions to graph/resource state."""
+    valid_actions = {str(node.get("label")) for node in state.get("nodes", [])}
+    accepted, rejected = [], []
+    for update in updates:
+        resource = str(update.get("resource", "")); op = str(update.get("op", "upsert"))
+        content = str(update.get("content", "")).strip()
+        if resource == "transition_guard":
+            edge_id = str(update.get("edge_id", "")); edge = state.get("edges", {}).get(edge_id)
+            if edge is None:
+                rejected.append({"update": update, "reason": "unknown_edge"}); continue
+            edge["guard"] = content if op == "upsert" else ""
+            edge["guard_status"] = str(update.get("status", "uncertain"))
+            if op == "upsert" and edge["guard_status"] == "resolved":
+                if edge.get("kind") == "candidate_branch": edge["kind"] = "promoted_branch"
+                edge["visibility"] = "skill"
+            elif edge.get("kind") != "backbone": edge["visibility"] = "reference"
+        elif resource in {"action_rule", "slot_policy", "action_node"}:
+            action = str(update.get("action", ""))
+            if action not in valid_actions:
+                rejected.append({"update": update, "reason": "unknown_action"}); continue
+            bucket = "slot_policies" if resource == "slot_policy" else "action_rules"
+            record = state.setdefault(bucket, {}).setdefault(action, {"action": action})
+            record["policy" if bucket == "slot_policies" else "rule"] = content if op == "upsert" else ""
+            record["status"] = str(update.get("status", "uncertain"))
+        elif resource == "reference":
+            state.setdefault("reference_notes", []).append({
+                "edge_id": str(update.get("edge_id", "")), "content": content,
+                "status": str(update.get("status", "uncertain")),
+                "rationale": str(update.get("rationale", "")),
+            })
+        else:
+            rejected.append({"update": update, "reason": "unsupported_resource"}); continue
+        accepted.append(update)
+    return accepted, rejected
+
+
 def render_online_action_rules(state: dict[str, Any]) -> str:
     lines = ["# Online Action Rule Refinements", ""]
     for action, record in sorted(state.get("action_rules", {}).items()):
@@ -1976,7 +2310,7 @@ def render_online_action_rules(state: dict[str, Any]) -> str:
 
 
 def apply_dynamic_skill_operations(
-    skill: str, operations: list[dict[str, Any]],
+    skill: str, operations: list[dict[str, Any]], applied_operation_ids: set[str] | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Apply model-authored, content-addressed edits to the current skill.
 
@@ -1985,14 +2319,19 @@ def apply_dynamic_skill_operations(
     check without coupling online refinement to a particular compiler layout.
     """
     current = skill
+    applied_operation_ids = applied_operation_ids if applied_operation_ids is not None else set()
     applied: list[dict[str, Any]] = []
     for operation in operations:
         op = str(operation.get("op", "")).strip().lower()
+        if op == "upsert": op = "replace"
+        operation_id = str(operation.get("operation_id", "")).strip() or hashlib.sha256(
+            json.dumps(operation, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()[:20]
         match_text = str(operation.get("match_text", ""))
         new_text = str(operation.get("new_text", ""))
         occurrence = operation.get("occurrence")
         record = {
-            "op": op,
+            "op": op, "operation_id": operation_id,
             "resource": str(operation.get("resource", "")),
             "edge_id": str(operation.get("edge_id", "")),
             "action": str(operation.get("action", "")),
@@ -2002,14 +2341,18 @@ def apply_dynamic_skill_operations(
             "rationale": str(operation.get("rationale", "")),
         }
         try:
-            if op not in {"upsert", "delete"}:
+            if operation_id in applied_operation_ids:
+                record["skipped"] = "operation_already_applied"
+                applied.append(record)
+                continue
+            if op not in {"replace", "insert_before", "insert_after", "delete"}:
                 raise ValueError("unsupported dynamic skill operation")
             if not match_text:
                 raise ValueError("dynamic skill operation requires match_text")
             if op == "delete" and new_text:
                 raise ValueError("delete operation must use an empty new_text")
             if op != "delete" and not new_text:
-                raise ValueError("upsert operation requires new_text")
+                raise ValueError("text operation requires new_text")
             occurrences = current.count(match_text)
             if occurrences == 0:
                 raise ValueError("match_text was not found in current skill")
@@ -2029,11 +2372,17 @@ def apply_dynamic_skill_operations(
                 raise ValueError(
                     f"could not locate occurrence={occurrence} for match_text (found={occurrences})"
                 )
-            if op == "upsert":
+            if op == "replace":
                 current = current[:position] + new_text + current[position + len(match_text):]
+            elif op == "insert_before":
+                current = current[:position] + new_text + current[position:]
+            elif op == "insert_after":
+                end = position + len(match_text)
+                current = current[:end] + new_text + current[end:]
             else:
                 current = current[:position] + current[position + len(match_text):]
             record["applied"] = True
+            applied_operation_ids.add(operation_id)
         except Exception as exc:
             record["error"] = repr(exc)
         applied.append(record)

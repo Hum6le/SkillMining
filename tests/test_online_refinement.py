@@ -11,6 +11,9 @@ from skill_mining.online_refinement import (
     apply_working_skill_operations,
     accumulate_online_evidence,
     build_online_evidence_packets,
+    build_action_turn_samples,
+    build_post_rollout_batches,
+    group_batch_reports,
     build_guard_induction_context,
     edge_confidence,
     initialize_skill_dag,
@@ -48,6 +51,34 @@ def _subgraph():
 
 
 class OnlineRefinementTest(unittest.TestCase):
+    def test_action_turn_samples_preserve_prefix_sequence(self):
+        conversation = {"convo_id": "c1", "delexed": [
+            {"targets": [None, "take_action", "enter-details", []]},
+            {"speaker": "customer", "text": "continue"},
+            {"targets": [None, "take_action", "send-link", ["x"]]},
+        ]}
+        samples = build_action_turn_samples([conversation])
+        self.assertEqual(samples[1]["prefix_action_sequence"], ["enter-details"])
+        self.assertEqual(samples[1]["source_turn"], 0)
+
+    def test_dynamic_insert_is_idempotent_by_operation_id(self):
+        applied_ids = set()
+        operation = {"operation_id": "add-guidance", "op": "insert_after",
+                     "match_text": "## Workflow", "new_text": "\nUse retrieval first."}
+        once, first = apply_dynamic_skill_operations("# Skill\n## Workflow\n", [operation], applied_ids)
+        twice, second = apply_dynamic_skill_operations(once, [operation], applied_ids)
+        self.assertEqual(once, twice)
+        self.assertTrue(first[0]["applied"])
+        self.assertEqual(second[0]["skipped"], "operation_already_applied")
+
+    def test_reflection_groups_are_capped_at_sixteen(self):
+        reports = [{"batch_id": str(index), "summary": "same routing failure",
+                    "graph_footprint": {"nodes": ["a", "b"]}}
+                   for index in range(33)]
+        groups = group_batch_reports(reports, max_reports=16)
+        self.assertTrue(all(len(group) <= 16 for group in groups))
+        self.assertEqual(sum(map(len, groups)), 33)
+
     def test_dynamic_skill_operations_do_not_require_compiler_anchors(self):
         skill = "# Skill\n\n## Workflow\n- Route A.\n\n## Reference\n- Retrieve details.\n"
         updated, operations = apply_dynamic_skill_operations(skill, [
