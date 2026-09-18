@@ -830,6 +830,7 @@ def main() -> None:
         eval_workflow_ids=eval_workflow_ids,
         skip_utterance_eval=args.skip_utterance_eval,
     )
+    log.info("Held-out evaluation merged successfully; writing final result artifacts")
     # Parallel evaluation runs in forked processes. Merge their isolated
     # usage snapshots with the parent process' mining/refinement usage.
     worker_usage = result.pop("_evaluation_worker_usage", [])

@@ -126,14 +126,16 @@ def _evaluate_test_shard_worker(agent, shard: list, label: str, subflow: str,
                 action_only=action_only))
         selection_log = list(getattr(agent, "selection_log", []))
         usage = getattr(llm, "get_usage_summary", lambda: {})()
-        result_queue.put({"ok": True, "rows": rows, "selection_log": selection_log,
+        result_queue.put({"ok": True, "workflow_id": workflow_id,
+                          "rows": rows, "selection_log": selection_log,
                           "llm_usage": usage})
     except Exception as exc:
         try:
             usage = getattr(llm, "get_usage_summary", lambda: {})()
         except Exception:
             usage = {}
-        result_queue.put({"ok": False, "error": repr(exc), "llm_usage": usage})
+        result_queue.put({"ok": False, "workflow_id": workflow_id,
+                          "error": repr(exc), "llm_usage": usage})
 
 
 def mine_subflow_skill(
@@ -504,19 +506,27 @@ def evaluate_agent_on_subflow(
             worker.start()
             workers.append(worker)
         worker_results = []
-        remaining = set(workers)
-        while remaining:
+        expected_results = len(workers)
+        while len(worker_results) < expected_results:
             try:
                 worker_results.append(result_queue.get(timeout=5.0))
-                # A result is emitted exactly once by every live worker. The
-                # process status check below catches crashes without output.
-                remaining = {worker for worker in remaining if worker.is_alive()}
             except Exception:
-                dead = [worker for worker in remaining if not worker.is_alive()]
-                if dead:
+                # A worker may put its result and remain alive briefly while
+                # the multiprocessing queue feeder flushes a large rows
+                # payload. Count queue results, not process liveness, so a
+                # successfully returned worker is never mistaken for a
+                # missing fifth result after all shards have completed.
+                crashed = [worker for worker in workers
+                           if worker.exitcode not in (None, 0)]
+                if crashed:
                     raise RuntimeError(
                         "An evaluation worker exited without returning results: "
-                        + ", ".join(str(worker.exitcode) for worker in dead)
+                        + ", ".join(str(worker.exitcode) for worker in crashed)
+                    )
+                if all(not worker.is_alive() for worker in workers):
+                    raise RuntimeError(
+                        f"Evaluation workers returned {len(worker_results)}/"
+                        f"{expected_results} result payloads"
                     )
         for worker in workers:
             worker.join()
