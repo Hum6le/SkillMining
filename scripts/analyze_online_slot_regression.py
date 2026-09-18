@@ -17,6 +17,8 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
+from eval_tod.abcd.metrics import slot_error_bucket
+
 
 MAX_EVIDENCE_CHARS = 6000
 
@@ -192,6 +194,7 @@ def align(predictions: list[dict[str, Any]], conversations: list[dict[str, Any]]
                 "action_ok": pred_action == gold_action, "slot_ok": pred_slots == gold_slots,
                 "joint_ok": pred_action == gold_action and pred_slots == gold_slots,
                 "slot_error_type": slot_error_type(gold_slots, pred_slots),
+                "slot_error_detail": slot_error_bucket(gold_slots, pred_slots),
                 "context": str(row.get("context", ""))[-1200:],
                 "lookup": lookup_diagnostics(row, gold_action),
                 "evidence": evidence(row),
@@ -220,16 +223,19 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         for row in rows
     )
     action_correct_errors: dict[str, Counter[str]] = defaultdict(Counter)
+    action_correct_error_details: dict[str, Counter[str]] = defaultdict(Counter)
     error_examples: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         if not row["action_ok"] or row["slot_ok"]:
             continue
         action_correct_errors[row["gold_action"]][row["slot_error_type"]] += 1
+        action_correct_error_details[row["gold_action"]][row["slot_error_detail"]] += 1
         if len(error_examples[row["gold_action"]]) < 50:
             error_examples[row["gold_action"]].append({
                 "id": row["id"], "gold_slots": row["gold_slots"],
                 "current_slots": row["predicted_slots"],
                 "slot_error_type": row["slot_error_type"],
+                "slot_error_detail": row["slot_error_detail"],
                 "context": row["context"], "evidence": row["evidence"],
             })
     return {
@@ -256,8 +262,14 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
             ),
         },
         "slot_errors": dict(Counter(row["slot_error_type"] for row in rows if not row["slot_ok"])),
+        "slot_error_details": dict(Counter(
+            row["slot_error_detail"] for row in rows if not row["slot_ok"]
+        )),
         "action_correct_slot_errors_by_action": {
             action: dict(counts) for action, counts in sorted(action_correct_errors.items())
+        },
+        "action_correct_slot_error_details_by_action": {
+            action: dict(counts) for action, counts in sorted(action_correct_error_details.items())
         },
         "action_correct_slot_error_examples": dict(sorted(error_examples.items())),
         "lookup_among_action_correct": dict(lookup),
@@ -284,6 +296,7 @@ def compare(current: list[dict[str, Any]], baseline: list[dict[str, Any]]) -> di
                 "baseline_action": previous["predicted_action"], "baseline_slots": previous["predicted_slots"],
                 "current_action": row["predicted_action"], "current_slots": row["predicted_slots"],
                 "current_slot_error_type": row["slot_error_type"], "lookup": row["lookup"],
+                "current_slot_error_detail": row["slot_error_detail"],
                 "context": row["context"], "current_evidence": row["evidence"],
             })
     return {"paired_turns": sum(transitions.values()), "transition_counts": dict(transitions),
@@ -339,10 +352,14 @@ def markdown(report: dict[str, Any]) -> str:
         lines.append(f"| baseline | {base['metrics']['action_accuracy']:.4f} | {base['metrics']['slot_accuracy']:.4f} | {base['metrics']['joint_accuracy']:.4f} | {base['metrics']['slot_accuracy_given_action']:.4f} | {base['counts']['turns']} |")
     lines.extend(["", "## Slot error decomposition", "", "```json",
                   json.dumps(cur["slot_errors"], ensure_ascii=False, indent=2), "```", "",
+                  "## Detailed slot error decomposition", "", "```json",
+                  json.dumps(cur["slot_error_details"], ensure_ascii=False, indent=2), "```", "",
                   "## Normalization-equivalent counterfactual", "", "```json",
                   json.dumps(cur["normalization_equivalent_metrics"], ensure_ascii=False, indent=2), "```", "",
                   "## Action-correct slot errors by gold action", "", "```json",
                   json.dumps(cur["action_correct_slot_errors_by_action"], ensure_ascii=False, indent=2), "```", "",
+                  "## Detailed action-correct slot errors by gold action", "", "```json",
+                  json.dumps(cur["action_correct_slot_error_details_by_action"], ensure_ascii=False, indent=2), "```", "",
                   "## Retrieval/action-card signals among action-correct turns", "", "```json",
                   json.dumps(cur["lookup_among_action_correct"], ensure_ascii=False, indent=2), "```"])
     if report.get("comparison"):

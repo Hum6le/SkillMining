@@ -31,6 +31,8 @@ This is a strict metric — a single mistake breaks the cascade.
 
 from __future__ import annotations
 
+import unicodedata
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -135,6 +137,122 @@ class ASTAggregate:
         if n == 0:
             return 0.0
         return sum(r.joint_accuracy for r in self.per_dialogue) / n
+
+
+def _casefold_slot(value: Any) -> str:
+    """Normalize only Unicode, case, and repeated surrounding whitespace."""
+    text = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    return " ".join(text.split())
+
+
+def _alnum_slot(value: Any) -> str:
+    """Diagnostic-only comparison that also ignores punctuation/spacing."""
+    return "".join(character for character in _casefold_slot(value) if character.isalnum())
+
+
+def _multiset_equal(left: list[str], right: list[str]) -> bool:
+    return Counter(left) == Counter(right)
+
+
+def slot_match_profile(gold: list[Any] | None, predicted: list[Any] | None) -> dict[str, bool]:
+    """Return nested slot-match views without changing the strict AST metric.
+
+    ``strict_ordered`` remains the repository's historical headline metric.
+    The other views isolate permutation, case/whitespace, and punctuation
+    effects.  Multiset comparison is used so duplicate values are preserved.
+    """
+    gold_exact = [str(value) for value in (gold or [])]
+    pred_exact = [str(value) for value in (predicted or [])]
+    gold_casefold = [_casefold_slot(value) for value in gold_exact]
+    pred_casefold = [_casefold_slot(value) for value in pred_exact]
+    gold_alnum = [_alnum_slot(value) for value in gold_exact]
+    pred_alnum = [_alnum_slot(value) for value in pred_exact]
+    return {
+        "strict_ordered": gold_exact == pred_exact,
+        "exact_unordered": _multiset_equal(gold_exact, pred_exact),
+        "casefold_ordered": gold_casefold == pred_casefold,
+        "casefold_unordered": _multiset_equal(gold_casefold, pred_casefold),
+        "punctuation_insensitive_ordered": gold_alnum == pred_alnum,
+        "punctuation_insensitive_unordered": _multiset_equal(gold_alnum, pred_alnum),
+    }
+
+
+def slot_error_bucket(gold: list[Any] | None, predicted: list[Any] | None) -> str:
+    """Assign an exclusive, progressively relaxed slot-error category."""
+    profile = slot_match_profile(gold, predicted)
+    if profile["strict_ordered"]:
+        return "strict_correct"
+    if profile["exact_unordered"]:
+        return "permutation_only"
+    if profile["casefold_ordered"]:
+        return "case_or_whitespace_only"
+    if profile["casefold_unordered"]:
+        return "case_or_whitespace_plus_permutation"
+    if profile["punctuation_insensitive_ordered"]:
+        return "punctuation_or_formatting_only"
+    if profile["punctuation_insensitive_unordered"]:
+        return "punctuation_or_formatting_plus_permutation"
+    if gold and not predicted:
+        return "missing_all"
+    if len(predicted or []) < len(gold or []):
+        return "missing_values"
+    if len(predicted or []) > len(gold or []):
+        return "extra_values"
+    return "value_mismatch"
+
+
+def compute_ast_match_profiles(
+    all_ground_truths: list[list[ABCDGroundTruth]],
+    all_predictions: list[ABCDPrediction],
+) -> dict[str, Any]:
+    """Compute strict and diagnostic AST views over the same predictions."""
+    profile_names = tuple(slot_match_profile([], []).keys())
+    slot_correct = Counter({name: 0 for name in profile_names})
+    joint_correct = Counter({name: 0 for name in profile_names})
+    action_correct_slot_correct = Counter({name: 0 for name in profile_names})
+    buckets: Counter[str] = Counter()
+    total = 0
+    action_correct = 0
+    for dialogue_index, truths in enumerate(all_ground_truths):
+        prediction = (
+            all_predictions[dialogue_index]
+            if dialogue_index < len(all_predictions)
+            else ABCDPrediction(conversation_id=str(dialogue_index), turns=[])
+        )
+        pred_by_idx = {turn.turn_index: turn for turn in prediction.turns}
+        for ground_truth in truths:
+            if ground_truth.turn_type != "action":
+                continue
+            total += 1
+            predicted = pred_by_idx.get(ground_truth.turn_index)
+            predicted_action = predicted.predicted_action if predicted else None
+            predicted_slots = predicted.predicted_slots if predicted else []
+            action_ok = predicted_action == ground_truth.action_name
+            action_correct += int(action_ok)
+            matches = slot_match_profile(ground_truth.slot_values, predicted_slots)
+            buckets[slot_error_bucket(ground_truth.slot_values, predicted_slots)] += 1
+            for name, matched in matches.items():
+                slot_correct[name] += int(matched)
+                joint_correct[name] += int(action_ok and matched)
+                action_correct_slot_correct[name] += int(action_ok and matched)
+    profiles = {}
+    for name in profile_names:
+        profiles[name] = {
+            "slot_correct": slot_correct[name],
+            "slot_accuracy": slot_correct[name] / total if total else 0.0,
+            "joint_correct": joint_correct[name],
+            "joint_accuracy": joint_correct[name] / total if total else 0.0,
+            "slot_correct_given_action": action_correct_slot_correct[name],
+            "slot_accuracy_given_action": (
+                action_correct_slot_correct[name] / action_correct if action_correct else 0.0
+            ),
+        }
+    return {
+        "num_action_turns": total,
+        "num_action_correct_turns": action_correct,
+        "profiles": profiles,
+        "exclusive_slot_outcomes": dict(sorted(buckets.items())),
+    }
 
 
 def compute_ast(

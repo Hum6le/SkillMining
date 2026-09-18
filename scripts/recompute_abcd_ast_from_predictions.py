@@ -22,7 +22,7 @@ from eval_tod.abcd.agent import (
 )
 from eval_tod.abcd.action_schema import canonicalize_prediction, load_action_schema
 from eval_tod.abcd.data import extract_ground_truth
-from eval_tod.abcd.metrics import evaluate_abcd
+from eval_tod.abcd.metrics import compute_ast_match_profiles, evaluate_abcd
 
 
 def _read(path: str | Path) -> Any:
@@ -184,6 +184,7 @@ def recompute_one(
     predictions = turn_results_to_abcd_predictions(rows, conversations)
     ground_truth = [extract_ground_truth(conv) for conv in conversations]
     result = evaluate_abcd(ground_truth, predictions)
+    match_profiles = compute_ast_match_profiles(ground_truth, predictions)
     payload = {
         "test_data": str(test_data_path.resolve()),
         "predictions": str(preds_path.resolve()),
@@ -198,6 +199,7 @@ def recompute_one(
             "num_action_turns": result.ast.total_action_turns,
             "num_action_correct_turns": result.ast.action_correct_turns,
         },
+        "ast_match_profiles": match_profiles,
         "test_sessions": len(conversations),
         "summary": (
             f"AST={result.ast.joint_accuracy:.4f} "
