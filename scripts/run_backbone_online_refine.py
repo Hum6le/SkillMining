@@ -850,6 +850,24 @@ def main() -> None:
         slot_policies, action_rules,
     )
     log.info("Final AST=%.4f action=%.4f slot=%.4f", result["ast_cds"]["ast_joint"], result["ast_cds"]["ast_action_name"], result["ast_cds"]["ast_slot_value"])
+    # Keep single-subflow runs consistent with the full launcher: expose the
+    # same weighted aggregate schema even when there is only one record.
+    try:
+        from scripts.aggregate_subflow_results import _records_from_summary, _weighted_average
+        records = _records_from_summary(out_dir / "online_refine_result.json")
+        if records:
+            aggregate_payload = {
+                "protocol": "independent_subflow_runs",
+                "summary_files": [str(out_dir / "online_refine_result.json")],
+                "records": records,
+                "aggregate": _weighted_average(records),
+                "llm_usage": usage,
+            }
+            _write(out_dir / "aggregate_online_refine.json",
+                   json.dumps(aggregate_payload, indent=2, ensure_ascii=False))
+            log.info("Aggregate written to %s", out_dir / "aggregate_online_refine.json")
+    except Exception as exc:
+        log.warning("Could not write single-subflow aggregate: %s", exc)
 
 
 if __name__ == "__main__":
