@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from eval_tod.abcd.action_schema import canonical_action_name, load_action_schema
+from eval_tod.abcd.metrics import slot_error_bucket, slot_match_profile
 
 
 ROOT = "<START>"
@@ -324,6 +325,22 @@ _BATCH_ROOT_CAUSE_PROMPT = """You are diagnosing a compact batch of similar
 action-turn rollouts from one frozen skill snapshot. Write a substantial,
 specific root-cause analysis. Do not merely restate gold and predicted labels.
 
+The rollout records include deterministic slot-comparison diagnostics. Treat
+those diagnostics as authoritative. Do not collapse `permutation_only`,
+`case_or_whitespace_only`, `case_or_whitespace_plus_permutation`, or
+`punctuation_or_formatting_only` into a generic wrong-value explanation.
+For every action-correct slot failure, explicitly reason in this order:
+value count -> semantic value multiset -> ordered position -> case/whitespace
+-> punctuation/formatting. Distinguish a genuinely wrong value from a value
+that is correct but serialized in the wrong position or surface form.
+
+In addition to diagnosing failures, mine reusable behavior from successful
+trajectories. Explicitly summarize: (1) action order and transition strategy;
+(2) ordered slot usage, including any supported variants rather than inventing
+one global order; (3) normalization/surface-form behavior by value type; and
+(4) which successful behaviors should be preserved. A successful trajectory
+is positive evidence even when another trajectory in the batch fails.
+
 Explicitly determine whether the failure came from one or more of:
 - missing, ambiguous, contradictory, or overly verbose skill text;
 - a needed reference section not being queried or not being retrieved;
@@ -346,7 +363,7 @@ batch reports before anything is written.
 
 Return JSON only:
 {{"summary":"a detailed multi-sentence root-cause analysis",
-"root_causes":[{{"category":"skill_missing|skill_ambiguous|reference_not_queried|reference_not_retrieved|reference_misleading|retrieval_ignored|graph_routing|action_card|slot_grounding|insufficient_evidence|other",
+"root_causes":[{{"category":"skill_missing|skill_ambiguous|reference_not_queried|reference_not_retrieved|reference_misleading|retrieval_ignored|graph_routing|action_order|action_card|slot_order|normalization|slot_grounding|preserved_success|insufficient_evidence|other",
 "analysis":"detailed causal explanation","evidence_ids":["sample ids"],
 "confidence":0.0}}],
 "graph_footprint":{{"nodes":["actions"],"edges":["source=>target"]}},
@@ -364,6 +381,15 @@ neighborhood of a graph-compiled skill. The reports below were produced from
 similar rollout batches. Synthesize their root-cause analyses, resolve
 conflicting proposals, and return one coherent result. A group contains at
 most 16 batch reports.
+
+Preserve the useful behaviors identified in successful trajectories. In the
+final synthesis explicitly consider four dimensions: action order and
+transition strategy; ordered slot usage and supported order variants;
+normalization/surface-form behavior; and successful behaviors that must remain
+unchanged. Treat deterministic slot-match profiles in the reports as ground
+truth for the error type. Do not turn a case-plus-permutation or formatting
+error into a generic value-grounding rule, and do not promote one observed
+local order to a global invariant without supporting evidence.
 
 You can read the compact complete skill and a locally sampled graph. You may
 revise skill text and you decide the exact insertion/replacement location by
@@ -1011,21 +1037,34 @@ def _classify_online_evidence(item: dict[str, Any]) -> list[str]:
     """Attach explicit AST error dimensions for downstream LLM diagnosis."""
     action_ok = bool(item.get("action_success"))
     slot_ok = bool(item.get("slot_success"))
+    gold_slots = [str(value) for value in item.get("gold_slots", [])]
+    predicted_slots = [str(value) for value in item.get("predicted_slots", [])]
+    item["slot_match_profile"] = slot_match_profile(gold_slots, predicted_slots)
+    item["slot_error_bucket"] = slot_error_bucket(gold_slots, predicted_slots)
     errors: list[str] = []
     if not action_ok:
         errors.append("wrong_action")
     elif not slot_ok:
-        gold_count = int(item.get("gold_slot_count", len(item.get("gold_slots", []))) or 0)
-        predicted_count = int(item.get("predicted_slot_count", len(item.get("predicted_slots", []))) or 0)
+        gold_count = int(item.get("gold_slot_count", len(gold_slots)) or 0)
+        predicted_count = int(item.get("predicted_slot_count", len(predicted_slots)) or 0)
+        profile = item["slot_match_profile"]
         if gold_count == 0 and predicted_count > 0:
             errors.append("forbidden_slots_for_zero_slot_action")
         elif predicted_count < gold_count:
             errors.append("missing_slot")
         elif predicted_count > gold_count:
             errors.append("extra_slot")
-        if list(item.get("gold_slots", [])) != list(item.get("predicted_slots", [])):
-            if gold_count == predicted_count and sorted(map(str, item.get("gold_slots", []))) == sorted(map(str, item.get("predicted_slots", []))):
+        if not profile["strict_ordered"]:
+            if profile["exact_unordered"]:
                 errors.append("wrong_slot_order")
+            elif profile["casefold_ordered"]:
+                errors.append("case_or_whitespace_only")
+            elif profile["casefold_unordered"]:
+                errors.append("case_plus_slot_order")
+            elif profile["punctuation_insensitive_ordered"]:
+                errors.append("formatting_only")
+            elif profile["punctuation_insensitive_unordered"]:
+                errors.append("formatting_plus_slot_order")
             else:
                 errors.append("wrong_slot_value")
     return errors or ["ast_success"]
@@ -1066,7 +1105,8 @@ def build_online_evidence_packets(
                 "gold_action", "predicted_action", "predicted_target",
                 "action_success", "slot_success", "slot_evaluable",
                 "gold_slots", "predicted_slots", "gold_slot_count",
-                "predicted_slot_count", "context",
+                "predicted_slot_count", "context", "slot_match_profile",
+                "slot_error_bucket",
             )
             if key in raw
         }
@@ -2178,17 +2218,32 @@ def diagnose_rollout_batch(
             available_resources.extend(_resource_lookup_sections(
                 resource_name, resource_text, resource_query, 2,
             ))
-    prompt_records = [{
-        "sample_id": record.get("sample", {}).get("sample_id"),
-        "prefix_action_sequence": record.get("sample", {}).get("prefix_action_sequence", []),
-        "source_action": record.get("sample", {}).get("source_action"),
-        "gold_target": record.get("sample", {}).get("target_action"),
-        "gold_slots": record.get("sample", {}).get("gold_slots", []),
-        "predicted_action": record.get("result", {}).get("predicted_action"),
-        "predicted_slots": record.get("result", {}).get("predicted_slots", []),
-        "context": str(record.get("result", {}).get("context", ""))[-1800:],
-        **_react_model_output_projection(record.get("result", {}).get("react_trace")),
-    } for record in records]
+    prompt_records = []
+    for record in records:
+        sample = record.get("sample", {})
+        result = record.get("result", {})
+        gold_slots = [str(value) for value in sample.get("gold_slots", [])]
+        predicted_slots = [str(value) for value in result.get("predicted_slots", [])]
+        slot_profile = slot_match_profile(gold_slots, predicted_slots)
+        action_ok = str(result.get("predicted_action", "")) == str(sample.get("target_action", ""))
+        prompt_records.append({
+            "sample_id": sample.get("sample_id"),
+            "prefix_action_sequence": sample.get("prefix_action_sequence", []),
+            "source_action": sample.get("source_action"),
+            "gold_target": sample.get("target_action"),
+            "gold_slots": gold_slots,
+            "predicted_action": result.get("predicted_action"),
+            "predicted_slots": predicted_slots,
+            "action_correct": action_ok,
+            "slot_exact_correct": bool(slot_profile["strict_ordered"]),
+            "slot_error_bucket": (
+                "strict_correct" if slot_profile["strict_ordered"]
+                else slot_error_bucket(gold_slots, predicted_slots)
+            ),
+            "slot_match_profile": slot_profile,
+            "context": str(result.get("context", ""))[-1800:],
+            **_react_model_output_projection(result.get("react_trace")),
+        })
     prompt = _BATCH_ROOT_CAUSE_PROMPT.format(
         skill=skill, local_graph=json.dumps(local_graph, ensure_ascii=False),
         available_resources=json.dumps(available_resources, ensure_ascii=False, indent=2),
