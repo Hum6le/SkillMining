@@ -18,6 +18,9 @@ from pathlib import Path
 from typing import Any
 
 
+MAX_EVIDENCE_CHARS = 6000
+
+
 def read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -88,6 +91,83 @@ def lookup_diagnostics(row: dict[str, Any], gold_action: str) -> dict[str, bool]
     }
 
 
+def clipped(value: Any, limit: int = MAX_EVIDENCE_CHARS) -> str:
+    text = str(value or "")
+    return text if len(text) <= limit else text[:limit] + "\n...[truncated]"
+
+
+def grounding_messages(row: dict[str, Any]) -> list[dict[str, str]]:
+    """Recover the actual stage-2 messages saved in the prediction trace."""
+    for step in reversed(row.get("react_trace") or []):
+        if not isinstance(step, dict):
+            continue
+        if step.get("action") not in {"llm_ground_slots_and_response", "llm_generate"}:
+            continue
+        messages = (step.get("action_input") or {}).get("messages") or []
+        if isinstance(messages, list):
+            return [
+                {"role": str(message.get("role", "")), "content": str(message.get("content", ""))}
+                for message in messages if isinstance(message, dict)
+            ]
+    return []
+
+
+def tagged_excerpt(messages: list[dict[str, str]], tag: str) -> str:
+    """Extract the prompt block containing a retrieved resource tag."""
+    needle = f"<{tag}"
+    close = f"</{tag}>"
+    for message in messages:
+        content = message.get("content", "")
+        start = content.find(needle)
+        if start < 0:
+            continue
+        end = content.find(close, start)
+        if end >= 0:
+            end += len(close)
+        else:
+            end = min(len(content), start + MAX_EVIDENCE_CHARS)
+        return clipped(content[start:end])
+    return ""
+
+
+def evidence(row: dict[str, Any]) -> dict[str, Any]:
+    """Keep enough run-local evidence to attribute a slot failure."""
+    messages = grounding_messages(row)
+    reference = row.get("reference_lookup") or {}
+    card = row.get("action_card_lookup") or {}
+    selection = row.get("action_selection") or {}
+    validation = row.get("action_schema_validation") or {}
+    return {
+        "action_card_lookup": {
+            "executed": card.get("executed"),
+            "query": card.get("query"),
+            "selected_actions": card.get("selected_actions"),
+            "prompt_excerpt": tagged_excerpt(messages, "retrieved_action_card"),
+        },
+        "reference_lookup": {
+            "executed": reference.get("executed"),
+            "status": reference.get("status"),
+            "query": reference.get("query"),
+            "selected_sections": reference.get("selected_sections"),
+            "observation": clipped(reference.get("observation")),
+        },
+        "action_selection": {
+            "two_stage_applied": selection.get("two_stage_applied"),
+            "selected_action": selection.get("selected_action"),
+            "stage2_reported_action": selection.get("stage2_reported_action"),
+            "action_locked": selection.get("action_locked"),
+            "raw_output": clipped(selection.get("raw_output"), 2000),
+        },
+        "action_schema_validation": validation,
+        "raw_generation": clipped(next((
+            step.get("observation", "") for step in reversed(row.get("react_trace") or [])
+            if isinstance(step, dict) and step.get("action") in {
+                "llm_ground_slots_and_response", "llm_generate"
+            }
+        ), ""), 3000),
+    }
+
+
 def align(predictions: list[dict[str, Any]], conversations: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_turn = {
         (str(row.get("convo_id", "")), int(row.get("turn_index", -1))): row
@@ -114,6 +194,7 @@ def align(predictions: list[dict[str, Any]], conversations: list[dict[str, Any]]
                 "slot_error_type": slot_error_type(gold_slots, pred_slots),
                 "context": str(row.get("context", ""))[-1200:],
                 "lookup": lookup_diagnostics(row, gold_action),
+                "evidence": evidence(row),
             })
     return aligned
 
@@ -134,6 +215,23 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     for row in action_correct_rows:
         for key, value in row["lookup"].items():
             lookup[key] += int(value)
+    normalization_action_correct = sum(
+        row["action_ok"] and row["slot_error_type"] == "normalization_only"
+        for row in rows
+    )
+    action_correct_errors: dict[str, Counter[str]] = defaultdict(Counter)
+    error_examples: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        if not row["action_ok"] or row["slot_ok"]:
+            continue
+        action_correct_errors[row["gold_action"]][row["slot_error_type"]] += 1
+        if len(error_examples[row["gold_action"]]) < 50:
+            error_examples[row["gold_action"]].append({
+                "id": row["id"], "gold_slots": row["gold_slots"],
+                "current_slots": row["predicted_slots"],
+                "slot_error_type": row["slot_error_type"],
+                "context": row["context"], "evidence": row["evidence"],
+            })
     return {
         "counts": {"turns": total, "action_correct": action_ok, "slot_correct": slot_ok,
                    "joint_correct": joint_ok, "action_correct_slot_wrong": sum(
@@ -143,7 +241,25 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
                     "joint_accuracy": joint_ok / total if total else 0.0,
                     "slot_accuracy_given_action": sum(row["slot_ok"] for row in action_correct_rows) /
                                                   len(action_correct_rows) if action_correct_rows else 0.0},
+        "normalization_equivalent_metrics": {
+            "action_correct_normalization_only": normalization_action_correct,
+            "joint_correct_if_normalization_equivalent": joint_ok + normalization_action_correct,
+            "joint_accuracy_if_normalization_equivalent": (
+                (joint_ok + normalization_action_correct) / total if total else 0.0
+            ),
+            "slot_correct_if_normalization_equivalent": slot_ok + sum(
+                row["slot_error_type"] == "normalization_only" for row in rows
+            ),
+            "slot_accuracy_if_normalization_equivalent": (
+                (slot_ok + sum(row["slot_error_type"] == "normalization_only" for row in rows)) /
+                total if total else 0.0
+            ),
+        },
         "slot_errors": dict(Counter(row["slot_error_type"] for row in rows if not row["slot_ok"])),
+        "action_correct_slot_errors_by_action": {
+            action: dict(counts) for action, counts in sorted(action_correct_errors.items())
+        },
+        "action_correct_slot_error_examples": dict(sorted(error_examples.items())),
         "lookup_among_action_correct": dict(lookup),
         "per_action": {action: dict(counts) for action, counts in sorted(by_action.items())},
     }
@@ -152,6 +268,7 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
 def compare(current: list[dict[str, Any]], baseline: list[dict[str, Any]]) -> dict[str, Any]:
     old = {row["id"]: row for row in baseline}
     transitions = Counter(); examples: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_action: dict[str, Counter[str]] = defaultdict(Counter)
     for row in current:
         previous = old.get(row["id"])
         if previous is None:
@@ -160,14 +277,19 @@ def compare(current: list[dict[str, Any]], baseline: list[dict[str, Any]]) -> di
         slot_change = f"slot_{'ok' if previous['slot_ok'] else 'wrong'}_to_{'ok' if row['slot_ok'] else 'wrong'}"
         key = f"{action_change}__{slot_change}"
         transitions[key] += 1
-        if len(examples[key]) < 20:
+        by_action[row["gold_action"]][key] += 1
+        if len(examples[key]) < 50:
             examples[key].append({
                 "id": row["id"], "gold_action": row["gold_action"], "gold_slots": row["gold_slots"],
                 "baseline_action": previous["predicted_action"], "baseline_slots": previous["predicted_slots"],
                 "current_action": row["predicted_action"], "current_slots": row["predicted_slots"],
                 "current_slot_error_type": row["slot_error_type"], "lookup": row["lookup"],
+                "context": row["context"], "current_evidence": row["evidence"],
             })
     return {"paired_turns": sum(transitions.values()), "transition_counts": dict(transitions),
+            "transition_counts_by_gold_action": {
+                action: dict(counts) for action, counts in sorted(by_action.items())
+            },
             "examples": dict(examples)}
 
 
@@ -217,11 +339,17 @@ def markdown(report: dict[str, Any]) -> str:
         lines.append(f"| baseline | {base['metrics']['action_accuracy']:.4f} | {base['metrics']['slot_accuracy']:.4f} | {base['metrics']['joint_accuracy']:.4f} | {base['metrics']['slot_accuracy_given_action']:.4f} | {base['counts']['turns']} |")
     lines.extend(["", "## Slot error decomposition", "", "```json",
                   json.dumps(cur["slot_errors"], ensure_ascii=False, indent=2), "```", "",
+                  "## Normalization-equivalent counterfactual", "", "```json",
+                  json.dumps(cur["normalization_equivalent_metrics"], ensure_ascii=False, indent=2), "```", "",
+                  "## Action-correct slot errors by gold action", "", "```json",
+                  json.dumps(cur["action_correct_slot_errors_by_action"], ensure_ascii=False, indent=2), "```", "",
                   "## Retrieval/action-card signals among action-correct turns", "", "```json",
                   json.dumps(cur["lookup_among_action_correct"], ensure_ascii=False, indent=2), "```"])
     if report.get("comparison"):
         lines.extend(["", "## Paired transition table", "", "```json",
-                      json.dumps(report["comparison"]["transition_counts"], ensure_ascii=False, indent=2), "```"])
+                      json.dumps(report["comparison"]["transition_counts"], ensure_ascii=False, indent=2), "```", "",
+                      "## Paired transitions by gold action", "", "```json",
+                      json.dumps(report["comparison"]["transition_counts_by_gold_action"], ensure_ascii=False, indent=2), "```"])
     lines.extend(["", "## Artifact/update signals", "", "```json",
                   json.dumps(report["artifact_signals"], ensure_ascii=False, indent=2), "```"])
     lines.extend(["", "## Interpretation guide", "",
