@@ -19,6 +19,7 @@ OUTPUT_DIR=""
 RESUME_RUN=""
 WORKFLOW_IDS_RAW=""
 REFINE_WORKFLOW_IDS_RAW=""
+SUBFLOW_MODE="parallel"
 REBUILD_SPLITS=1
 CONTINUE_ON_ERROR=1
 RUNNER_ARGS=()
@@ -38,6 +39,9 @@ Options:
                             Each subflow's final evaluation uses its assigned worker workflow.
   --refine-workflow-ids IDS Comma-separated workflow IDs shared by each subflow's
                             online rollout waves. One reflection remains single-writer.
+  --subflow-mode MODE      `parallel` (default) assigns subflows to workers;
+                            `serial` runs subflows one by one while retaining
+                            parallelism inside each subflow.
   --conda-env NAME          Default: skillmining310
   --hf-endpoint URL         Default: https://hf-mirror.com
   --python-bin PATH         Default: python
@@ -97,6 +101,7 @@ while [[ $# -gt 0 ]]; do
         --resume-run) require_value "$1" "$#"; RESUME_RUN="$2"; shift 2 ;;
         --workflow-ids) require_value "$1" "$#"; WORKFLOW_IDS_RAW="$2"; shift 2 ;;
         --refine-workflow-ids) require_value "$1" "$#"; REFINE_WORKFLOW_IDS_RAW="$2"; shift 2 ;;
+        --subflow-mode) require_value "$1" "$#"; SUBFLOW_MODE="$2"; shift 2 ;;
         --eval-workflow-ids)
             echo "--eval-workflow-ids is only supported for single-subflow runs; full runs use each worker's assigned workflow." >&2
             exit 2
@@ -110,6 +115,11 @@ while [[ $# -gt 0 ]]; do
         *) RUNNER_ARGS+=("$1"); shift ;;
     esac
 done
+
+case "$SUBFLOW_MODE" in
+    parallel|serial) ;;
+    *) echo "Invalid --subflow-mode: $SUBFLOW_MODE (expected parallel or serial)" >&2; exit 2 ;;
+esac
 
 [[ -z "$RESUME_RUN" || -z "$OUTPUT_DIR" ]] || {
     echo "--output-dir must be omitted when --resume-run is used." >&2; exit 2;
@@ -284,6 +294,49 @@ run_worker() {
     done
 }
 
+run_serial() {
+    local subflow task_dir offline_dir failed_path="$RUN_ROOT/serial_failed.txt"
+    local serial_eval_ids="" serial_refine_ids=""
+    : > "$failed_path"
+    if [[ -n "$WORKFLOW_IDS_RAW" ]]; then
+        serial_eval_ids="$WORKFLOW_IDS_RAW"
+    else
+        serial_eval_ids="$(IFS=,; echo "${WORKFLOW_IDS[*]}")"
+    fi
+    serial_refine_ids="${REFINE_WORKFLOW_IDS_RAW:-$serial_eval_ids}"
+    for subflow in "${SUBFLOWS[@]}"; do
+        [[ -n "$subflow" ]] || continue
+        task_dir="$RUN_ROOT/subflows/$subflow"
+        if task_complete "$task_dir"; then
+            echo "SKIP completed: subflow=$subflow"
+            continue
+        fi
+        cmd=("$PYTHON_BIN" scripts/run_backbone_online_refine.py
+             --subflow "$subflow" --output-dir "$task_dir")
+        if [[ -f "$task_dir/skill_dag_state.json" ]]; then
+            cmd+=(--resume)
+        elif [[ -n "$OFFLINE_ROOT" ]]; then
+            offline_dir="$(resolve_offline_dir "$subflow")" || {
+                echo "Missing offline artifacts for $subflow under $OFFLINE_ROOT" >&2
+                echo "$subflow" >> "$failed_path"
+                [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1
+                continue
+            }
+            cmd+=(--offline-dir "$offline_dir")
+        fi
+        cmd+=("${RUNNER_ARGS[@]}")
+        [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && cmd+=(--stop-on-error)
+        [[ -n "$serial_refine_ids" ]] && cmd+=(--refine-workflow-ids "$serial_refine_ids")
+        [[ -n "$serial_eval_ids" ]] && cmd+=(--eval-workflow-ids "$serial_eval_ids")
+        echo "===== serial subflow=$subflow workflows=$serial_eval_ids ====="
+        if ! SKILLMINING_WORKFLOW_ID="${WORKFLOW_IDS[0]}" "${cmd[@]}" \
+             > "$RUN_ROOT/logs/subflow_${subflow}.log" 2>&1; then
+            echo "$subflow" >> "$failed_path"
+            [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1
+        fi
+    done
+}
+
 cat > "$MANIFEST_PATH" <<EOF
 status=running
 run_root=$RUN_ROOT
@@ -292,6 +345,7 @@ conda_env=$CONDA_ENV
 hf_endpoint=$HF_ENDPOINT
 workflow_ids=$(IFS=,; echo "${WORKFLOW_IDS[*]}")
 refine_workflow_ids=${REFINE_WORKFLOW_IDS_RAW:-assigned-worker-workflow}
+subflow_mode=$SUBFLOW_MODE
 load_plan=$PLAN_PATH
 EOF
 
@@ -299,15 +353,20 @@ echo "===== Full Backbone Online Refinement ====="
 echo "Run root:     $RUN_ROOT"
 echo "Subflows:     ${#SUBFLOWS[@]} (current 10-flow split)"
 echo "Workers:      ${#WORKFLOW_IDS[@]}"
+echo "Subflow mode: $SUBFLOW_MODE"
 echo "Offline root: ${OFFLINE_ROOT:-per-subflow offline re-mining}"
 echo "Load plan:    $PLAN_PATH"
 
-for index in "${!WORKFLOW_IDS[@]}"; do
-    run_worker "$index" "${WORKFLOW_IDS[$index]}" > "$RUN_ROOT/logs/worker_${index}.log" 2>&1 &
-    pid="$!"
-    PIDS+=("$pid")
-    echo "Started worker $index (PID $pid), log: $RUN_ROOT/logs/worker_${index}.log"
-done
+if [[ "$SUBFLOW_MODE" == "serial" ]]; then
+    run_serial
+else
+    for index in "${!WORKFLOW_IDS[@]}"; do
+        run_worker "$index" "${WORKFLOW_IDS[$index]}" > "$RUN_ROOT/logs/worker_${index}.log" 2>&1 &
+        pid="$!"
+        PIDS+=("$pid")
+        echo "Started worker $index (PID $pid), log: $RUN_ROOT/logs/worker_${index}.log"
+    done
+fi
 
 WORKER_FAILURE=0
 for pid in "${PIDS[@]}"; do
