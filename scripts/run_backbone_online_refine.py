@@ -50,6 +50,7 @@ from skill_mining.online_refinement import (
     diagnose_rollout_batch,
     group_batch_reports,
     reflect_batch_report_group,
+    trace2skill_hybrid_reflect_report_group,
     apply_reflection_updates_to_state,
     summarize_refinement_state,
 )
@@ -307,6 +308,15 @@ def main() -> None:
         help="Comma-separated workflow IDs for parallel online batches in one wave. "
              "Their evidence is merged before one reflection/update.",
     )
+    parser.add_argument(
+        "--refinement-mode", choices=("standard", "trace2skill-hybrid"),
+        default="standard",
+        help="Post-rollout synthesis: direct group reflection or local Trace2Skill-style MAP/REDUCE.",
+    )
+    parser.add_argument(
+        "--hybrid-map-batch-size", type=int, default=4,
+        help="Diagnosed reports per local MAP call in trace2skill-hybrid mode (default: 4).",
+    )
     parser.add_argument("--skip-guard-llm", action="store_true",
                         help="Only collect graph evidence and deterministic patches")
     parser.add_argument(
@@ -314,6 +324,8 @@ def main() -> None:
         help="Fail immediately on an empty LLM response; useful for diagnosing workflow failures.",
     )
     args = parser.parse_args()
+    if args.hybrid_map_batch_size <= 0:
+        parser.error("--hybrid-map-batch-size must be positive")
     if args.stop_on_error:
         os.environ["SKILLMINING_STOP_ON_ERROR"] = "1"
     eval_workflow_ids = [value.strip() for value in args.eval_workflow_ids.split(",") if value.strip()]
@@ -394,9 +406,10 @@ def main() -> None:
     )
     log = logging.getLogger("online_refine")
     log.info(
-        "Configured workflow routing: refine=%s eval=%s",
+        "Configured workflow routing: refine=%s eval=%s refinement_mode=%s hybrid_map_batch_size=%d",
         ",".join(refine_workflow_ids) if refine_workflow_ids else "config.py",
         ",".join(eval_workflow_ids) if eval_workflow_ids else "config.py",
+        args.refinement_mode, args.hybrid_map_batch_size,
     )
     train, test = load_subflow_data(args.subflow)
     if args.max_train:
@@ -757,6 +770,8 @@ def main() -> None:
         evidence_batches = build_post_rollout_batches(
             all_rollout_records, max_batch_size=args.batch_size,
         )
+        log.info("Post-rollout refinement mode=%s evidence_batches=%d",
+                 args.refinement_mode, len(evidence_batches))
         reports = []
         for report_index, evidence_batch in enumerate(evidence_batches, start=1):
             batch_id = f"evidence_batch_{report_index:04d}"
@@ -764,6 +779,8 @@ def main() -> None:
                 refine_workflow_ids[(report_index - 1) % len(refine_workflow_ids)]
                 if refine_workflow_ids else None
             )
+            log.info("Root-cause batch %d/%d started (%d records)",
+                     report_index, len(evidence_batches), len(evidence_batch))
             report = diagnose_rollout_batch(
                 batch_id, evidence_batch, state, working_skill, args.model,
                 response_logger=response_logger, workflow_id=workflow_id,
@@ -774,6 +791,7 @@ def main() -> None:
             reports.append(report)
             _write(out_dir / "batch_root_causes" / f"{batch_id}.json",
                    json.dumps(report, indent=2, ensure_ascii=False))
+            log.info("Root-cause batch %d/%d completed", report_index, len(evidence_batches))
 
         reflection_groups = group_batch_reports(reports, max_reports=16)
         applied_ids = set(state.get("applied_skill_operation_ids", []))
@@ -782,10 +800,20 @@ def main() -> None:
                 refine_workflow_ids[(reflection_index - 1) % len(refine_workflow_ids)]
                 if refine_workflow_ids else None
             )
-            reflection = reflect_batch_report_group(
-                report_group, state, working_skill, args.model,
-                response_logger=response_logger, workflow_id=workflow_id,
-            )
+            log.info("Reflection group %d/%d started mode=%s reports=%d",
+                     reflection_index, len(reflection_groups),
+                     args.refinement_mode, len(report_group))
+            if args.refinement_mode == "trace2skill-hybrid":
+                reflection = trace2skill_hybrid_reflect_report_group(
+                    report_group, state, working_skill, args.model,
+                    response_logger=response_logger, workflow_id=workflow_id,
+                    map_batch_size=args.hybrid_map_batch_size,
+                )
+            else:
+                reflection = reflect_batch_report_group(
+                    report_group, state, working_skill, args.model,
+                    response_logger=response_logger, workflow_id=workflow_id,
+                )
             accepted, rejected = apply_reflection_updates_to_state(
                 state, reflection.get("updates", []),
             )
@@ -805,7 +833,11 @@ def main() -> None:
                 "accepted_updates": accepted,
                 "rejected_updates": rejected,
                 "skill_operations": text_operations,
+                "refinement_mode": args.refinement_mode,
             })
+            log.info("Reflection group %d/%d completed accepted=%d rejected=%d text_ops=%d",
+                     reflection_index, len(reflection_groups), len(accepted),
+                     len(rejected), len(text_operations))
         state["applied_skill_operation_ids"] = sorted(applied_ids)
         state["posthoc_reflection_complete"] = True
         working_skill = _checkpoint(

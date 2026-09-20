@@ -46,6 +46,8 @@ Options:
   --batch-size N             Online rollout batch size (default: 8)
   --per-transition-cap N     Max representative sessions per transition (default: 3)
   --target-selection-rate R  Target fraction of train sessions for online rollout (default: 0.30)
+  --refinement-mode MODE     standard (default) or trace2skill-hybrid local MAP/REDUCE
+  --hybrid-map-batch-size N  Diagnosed reports per hybrid MAP call (default: 4)
   --max-batches N            Limit online batches for a smoke experiment
   --max-train N              Limit train sessions
   --max-test N               Limit held-out test sessions

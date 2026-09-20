@@ -14,6 +14,7 @@ from skill_mining.online_refinement import (
     build_action_turn_samples,
     build_post_rollout_batches,
     group_batch_reports,
+    trace2skill_hybrid_reflect_report_group,
     build_guard_induction_context,
     edge_confidence,
     initialize_skill_dag,
@@ -51,6 +52,27 @@ def _subgraph():
 
 
 class OnlineRefinementTest(unittest.TestCase):
+    @patch("skill_mining.online_refinement._online_refinement_chat")
+    def test_trace2skill_hybrid_maps_then_reduces_local_reports(self, chat):
+        chat.side_effect = [
+            '{"summary":"map one","candidate_updates":[],"preserved_successes":[]}',
+            '{"summary":"map two","candidate_updates":[],"preserved_successes":[]}',
+            '{"decision":"no_update","summary":"reduced","updates":[],"skill_operations":[]}',
+        ]
+        state = initialize_skill_dag(_subgraph(), "account_access")
+        reports = [{
+            "batch_id": str(index), "summary": "diagnosis",
+            "graph_footprint": {"nodes": ["enter-details", "send-link"]},
+            "local_graph": {"nodes": [{"id": "a", "label": "enter-details"}]},
+        } for index in range(5)]
+        result = trace2skill_hybrid_reflect_report_group(
+            reports, state, "# Skill\n", "model", map_batch_size=4,
+        )
+        self.assertEqual(chat.call_count, 3)
+        self.assertEqual(len(result["map_outputs"]), 2)
+        self.assertEqual(result["mode"], "trace2skill_hybrid")
+        self.assertEqual(result["decision"], "no_update")
+
     def test_action_turn_samples_preserve_prefix_sequence(self):
         conversation = {"convo_id": "c1", "delexed": [
             {"targets": [None, "take_action", "enter-details", []]},

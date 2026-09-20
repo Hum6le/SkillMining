@@ -417,6 +417,67 @@ Return JSON only:
 "rejected_candidates":[{{"reason":"..."}}],"unresolved_questions":["..."]}}
 """
 
+_TRACE2SKILL_LOCAL_MAP_PROMPT = """You are the MAP stage of a Trace2Skill-style
+skill evolution pass, adapted to one local neighborhood of a graph-compiled
+customer-service skill. The supplied records are already diagnosed rollout
+batches containing both strict successes and failures.
+
+Extract a small, evidence-grounded candidate patch. Preserve recurring success
+behavior and contrast it with failures. Explicitly cover action order, sibling
+route distinctions, ordered slot usage, normalization, and reference retrieval
+when supported. Do not turn one local observation into a global rule, invent
+actions or slot values, or rewrite the whole skill. Candidate changes are not
+applied at this stage; a REDUCE stage will reconcile all MAP outputs.
+
+<current_skill>{skill}</current_skill>
+<local_graph>{local_graph}</local_graph>
+<diagnosed_records>{batch_reports}</diagnosed_records>
+
+Return JSON only:
+{{"summary":"reusable success and failure patterns",
+"root_causes":[{{"analysis":"...","batch_ids":["..."],"confidence":0.0}}],
+"graph_footprint":{{"nodes":["..."],"edges":["..."]}},
+"candidate_updates":[{{"resource":"transition_guard|action_node|action_rule|slot_policy|reference",
+"edge_id":"optional","action":"optional","op":"upsert|delete","content":"...",
+"status":"resolved|uncertain","rationale":"..."}}],
+"candidate_skill_operations":[{{"operation_id":"unique stable id",
+"op":"replace|insert_before|insert_after|delete","match_text":"exact excerpt",
+"new_text":"complete local revision","rationale":"..."}}],
+"preserved_successes":[{{"behavior":"...","evidence_ids":["..."]}}],
+"unresolved_questions":["..."]}}
+"""
+
+_TRACE2SKILL_LOCAL_REDUCE_PROMPT = """You are the REDUCE/APPLY stage of a
+Trace2Skill-style evolution pass for one local neighborhood of a graph-compiled
+customer-service skill. Reconcile the MAP candidates below into one minimal,
+coherent patch that can be written back to graph resources and skill text.
+
+Resolve contradictions using evidence coverage and confidence. A proposed fix
+must preserve the listed successful action order, route distinctions, ordered
+slot behavior, and normalization behavior. Prefer action- or edge-scoped
+updates. Reject unsupported global generalizations and duplicate rules. The
+complete graph remains in JSON; do not flatten it into skill text. You decide
+the exact text insertion/replacement location by copying an exact excerpt from
+current_skill. Do not include conversation IDs or literal customer values in
+executable text.
+
+<current_skill>{skill}</current_skill>
+<local_graph>{local_graph}</local_graph>
+<map_candidates>{map_candidates}</map_candidates>
+
+Return JSON only:
+{{"decision":"update|no_update","summary":"detailed reduced causal analysis",
+"merged_root_causes":[{{"analysis":"...","batch_ids":["..."],"confidence":0.0}}],
+"updates":[{{"resource":"transition_guard|action_node|action_rule|slot_policy|reference",
+"edge_id":"optional","action":"optional","op":"upsert|delete","content":"...",
+"status":"resolved|uncertain","rationale":"..."}}],
+"skill_operations":[{{"operation_id":"unique stable id",
+"op":"replace|insert_before|insert_after|delete","match_text":"exact excerpt",
+"new_text":"complete local revision","rationale":"..."}}],
+"preserved_successes":[{{"behavior":"...","evidence_ids":["..."]}}],
+"rejected_candidates":[{{"reason":"..."}}],"unresolved_questions":["..."]}}
+"""
+
 
 def _edge_id(source: str, target: str) -> str:
     return f"{source}=>{target}"
@@ -2313,6 +2374,83 @@ def reflect_batch_report_group(
     result = _parse_json_object(raw)
     result.update({"batch_ids": [report.get("batch_id") for report in reports],
                    "local_graph": local_graph, "raw_response": raw, "prompt_chars": len(prompt)})
+    return result
+
+
+def trace2skill_hybrid_reflect_report_group(
+    reports: list[dict[str, Any]], state: dict[str, Any], skill: str, model: str,
+    response_logger: Any = None, workflow_id: str | None = None,
+    map_batch_size: int = 4,
+) -> dict[str, Any]:
+    """Run local success/failure MAP-REDUCE, then emit native graph updates."""
+    reports = reports[:16]
+    if map_batch_size <= 0:
+        raise ValueError("map_batch_size must be positive")
+    nodes = sorted({
+        str(node.get("label") or node.get("id"))
+        for report in reports
+        for node in (report.get("local_graph") or {}).get("nodes", [])
+        if node.get("label") or node.get("id")
+    } | {
+        str(node)
+        for report in reports
+        for node in (report.get("graph_footprint") or {}).get("nodes", [])
+        if node
+    })
+    local_graph = lookup_graph_neighborhood(state, nodes, radius=1)
+    map_outputs: list[dict[str, Any]] = []
+    for start in range(0, len(reports), map_batch_size):
+        report_batch = reports[start:start + map_batch_size]
+        compact = [{key: report.get(key) for key in (
+            "batch_id", "summary", "root_causes", "graph_footprint",
+            "candidate_updates", "candidate_skill_operations",
+            "unresolved_questions",
+        )} for report in report_batch]
+        prompt = _TRACE2SKILL_LOCAL_MAP_PROMPT.format(
+            skill=skill,
+            local_graph=json.dumps(local_graph, ensure_ascii=False),
+            batch_reports=json.dumps(compact, ensure_ascii=False, indent=2),
+        )
+        raw = _online_refinement_chat(
+            [{"role": "user", "content": prompt}], model=model,
+            api_key=None, base_url=None, temperature=0.0,
+            response_logger=response_logger, call_tag="online_trace2skill_local_map",
+            workflow_id=workflow_id,
+        )
+        mapped = _parse_json_object(raw)
+        mapped.update({
+            "map_index": len(map_outputs) + 1,
+            "batch_ids": [report.get("batch_id") for report in report_batch],
+            "raw_response": raw,
+            "prompt_chars": len(prompt),
+        })
+        map_outputs.append(mapped)
+
+    reduce_payload = [{key: mapped.get(key) for key in (
+        "map_index", "batch_ids", "summary", "root_causes", "graph_footprint",
+        "candidate_updates", "candidate_skill_operations", "preserved_successes",
+        "unresolved_questions",
+    )} for mapped in map_outputs]
+    prompt = _TRACE2SKILL_LOCAL_REDUCE_PROMPT.format(
+        skill=skill,
+        local_graph=json.dumps(local_graph, ensure_ascii=False),
+        map_candidates=json.dumps(reduce_payload, ensure_ascii=False, indent=2),
+    )
+    raw = _online_refinement_chat(
+        [{"role": "user", "content": prompt}], model=model,
+        api_key=None, base_url=None, temperature=0.0,
+        response_logger=response_logger, call_tag="online_trace2skill_local_reduce",
+        workflow_id=workflow_id,
+    )
+    result = _parse_json_object(raw)
+    result.update({
+        "mode": "trace2skill_hybrid",
+        "batch_ids": [report.get("batch_id") for report in reports],
+        "local_graph": local_graph,
+        "map_outputs": map_outputs,
+        "raw_response": raw,
+        "prompt_chars": len(prompt),
+    })
     return result
 
 

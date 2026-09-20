@@ -20,6 +20,8 @@ RESUME_RUN=""
 WORKFLOW_IDS_RAW=""
 REFINE_WORKFLOW_IDS_RAW=""
 SUBFLOW_MODE="parallel"
+REFINEMENT_MODE="standard"
+HYBRID_MAP_BATCH_SIZE="4"
 REBUILD_SPLITS=1
 CONTINUE_ON_ERROR=1
 RUNNER_ARGS=()
@@ -42,6 +44,8 @@ Options:
   --subflow-mode MODE      `parallel` (default) assigns subflows to workers;
                             `serial` runs subflows one by one while retaining
                             parallelism inside each subflow.
+  --refinement-mode MODE    Forward `standard` or `trace2skill-hybrid` to every subflow.
+  --hybrid-map-batch-size N Diagnosed reports per hybrid MAP call (default: 4).
   --conda-env NAME          Default: skillmining310
   --hf-endpoint URL         Default: https://hf-mirror.com
   --python-bin PATH         Default: python
@@ -102,6 +106,8 @@ while [[ $# -gt 0 ]]; do
         --workflow-ids) require_value "$1" "$#"; WORKFLOW_IDS_RAW="$2"; shift 2 ;;
         --refine-workflow-ids) require_value "$1" "$#"; REFINE_WORKFLOW_IDS_RAW="$2"; shift 2 ;;
         --subflow-mode) require_value "$1" "$#"; SUBFLOW_MODE="$2"; shift 2 ;;
+        --refinement-mode) require_value "$1" "$#"; REFINEMENT_MODE="$2"; shift 2 ;;
+        --hybrid-map-batch-size) require_value "$1" "$#"; HYBRID_MAP_BATCH_SIZE="$2"; shift 2 ;;
         --eval-workflow-ids)
             echo "--eval-workflow-ids is only supported for single-subflow runs; full runs use each worker's assigned workflow." >&2
             exit 2
@@ -120,6 +126,14 @@ case "$SUBFLOW_MODE" in
     parallel|serial) ;;
     *) echo "Invalid --subflow-mode: $SUBFLOW_MODE (expected parallel or serial)" >&2; exit 2 ;;
 esac
+case "$REFINEMENT_MODE" in
+    standard|trace2skill-hybrid) ;;
+    *) echo "Invalid --refinement-mode: $REFINEMENT_MODE (expected standard or trace2skill-hybrid)" >&2; exit 2 ;;
+esac
+[[ "$HYBRID_MAP_BATCH_SIZE" =~ ^[1-9][0-9]*$ ]] || {
+    echo "Invalid --hybrid-map-batch-size: $HYBRID_MAP_BATCH_SIZE (expected a positive integer)" >&2; exit 2;
+}
+RUNNER_ARGS+=(--refinement-mode "$REFINEMENT_MODE" --hybrid-map-batch-size "$HYBRID_MAP_BATCH_SIZE")
 
 [[ -z "$RESUME_RUN" || -z "$OUTPUT_DIR" ]] || {
     echo "--output-dir must be omitted when --resume-run is used." >&2; exit 2;
@@ -346,6 +360,8 @@ hf_endpoint=$HF_ENDPOINT
 workflow_ids=$(IFS=,; echo "${WORKFLOW_IDS[*]}")
 refine_workflow_ids=${REFINE_WORKFLOW_IDS_RAW:-assigned-worker-workflow}
 subflow_mode=$SUBFLOW_MODE
+refinement_mode=$REFINEMENT_MODE
+hybrid_map_batch_size=$HYBRID_MAP_BATCH_SIZE
 load_plan=$PLAN_PATH
 EOF
 
@@ -354,6 +370,7 @@ echo "Run root:     $RUN_ROOT"
 echo "Subflows:     ${#SUBFLOWS[@]} (current 10-flow split)"
 echo "Workers:      ${#WORKFLOW_IDS[@]}"
 echo "Subflow mode: $SUBFLOW_MODE"
+echo "Refinement:   $REFINEMENT_MODE (MAP batch size: $HYBRID_MAP_BATCH_SIZE)"
 echo "Offline root: ${OFFLINE_ROOT:-per-subflow offline re-mining}"
 echo "Load plan:    $PLAN_PATH"
 
