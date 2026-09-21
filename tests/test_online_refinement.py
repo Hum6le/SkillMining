@@ -90,6 +90,35 @@ class OnlineRefinementTest(unittest.TestCase):
         self.assertEqual(result["error"], "all_local_map_calls_failed")
 
     @patch("skill_mining.online_refinement._online_refinement_chat")
+    def test_hybrid_distills_success_and_failure_before_map_reduce(self, chat):
+        chat.side_effect = [
+            '{"summary":"successes","patterns":[]}',
+            '{"summary":"failures","corrections":[]}',
+            '{"summary":"map","candidate_updates":[]}',
+            '{"decision":"no_update","summary":"reduce","updates":[],"skill_operations":[]}',
+        ]
+        state = initialize_skill_dag(_subgraph(), "account_access")
+        reports = [{
+            "batch_id": "1", "summary": "diagnosis",
+            "graph_footprint": {"nodes": ["enter-details", "send-link"]},
+            "local_graph": {"nodes": [{"id": "a", "label": "enter-details"}]},
+            "trajectory_exemplars": [
+                {"sample_id": "ok", "action_correct": True, "slot_exact_correct": True},
+                {"sample_id": "bad", "action_correct": False, "slot_exact_correct": False},
+            ],
+        }]
+        result = trace2skill_hybrid_reflect_report_group(
+            reports, state, "# Skill\n", "model", map_batch_size=4,
+            max_retries=3, retry_base_delay=0,
+        )
+        self.assertEqual(chat.call_count, 4)
+        self.assertEqual(result["success_distillation"]["summary"], "successes")
+        self.assertEqual(result["failure_distillation"]["summary"], "failures")
+        map_prompt = chat.call_args_list[2].args[0][0]["content"]
+        self.assertIn('"sample_id": "ok"', map_prompt)
+        self.assertIn('"sample_id": "bad"', map_prompt)
+
+    @patch("skill_mining.online_refinement._online_refinement_chat")
     def test_trace2skill_hybrid_maps_then_reduces_local_reports(self, chat):
         chat.side_effect = [
             '{"summary":"map one","candidate_updates":[],"preserved_successes":[]}',

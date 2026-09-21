@@ -431,6 +431,8 @@ applied at this stage; a REDUCE stage will reconcile all MAP outputs.
 
 <current_skill>{skill}</current_skill>
 <local_graph>{local_graph}</local_graph>
+<success_distillation>{success_distillation}</success_distillation>
+<failure_distillation>{failure_distillation}</failure_distillation>
 <diagnosed_records>{batch_reports}</diagnosed_records>
 
 Return JSON only:
@@ -445,6 +447,33 @@ Return JSON only:
 "new_text":"complete local revision","rationale":"..."}}],
 "preserved_successes":[{{"behavior":"...","evidence_ids":["..."]}}],
 "unresolved_questions":["..."]}}
+"""
+
+_TRACE2SKILL_SUCCESS_DISTILL_PROMPT = """Distill reusable behavior from strict
+successful action-turn trajectories in one graph neighborhood. Focus on action
+order, sibling-route cues, ordered slot values, normalization, and retrieval
+behavior. State applicability conditions and behavior that later edits must
+preserve. Do not infer rules not supported by the examples.
+
+<local_graph>{local_graph}</local_graph>
+<successful_trajectories>{trajectories}</successful_trajectories>
+
+Return JSON only: {{"summary":"...","patterns":[{{"behavior":"...",
+"evidence_ids":["..."],"scope":{{"actions":["..."],"edges":["..."]}}}}]}}
+"""
+
+_TRACE2SKILL_FAILURE_DISTILL_PROMPT = """Distill reusable corrections from
+failed action-turn trajectories in one graph neighborhood. Separate routing,
+retrieval, ordered-slot, and normalization causes using the deterministic
+profiles. Contrast failures with visible context; do not invent hidden state,
+actions, slot names, or customer-specific rules.
+
+<local_graph>{local_graph}</local_graph>
+<failed_trajectories>{trajectories}</failed_trajectories>
+
+Return JSON only: {{"summary":"...","corrections":[{{"cause":"...",
+"correction":"...","evidence_ids":["..."],
+"scope":{{"actions":["..."],"edges":["..."]}}}}]}}
 """
 
 _TRACE2SKILL_LOCAL_REDUCE_PROMPT = """You are the REDUCE/APPLY stage of a
@@ -2347,7 +2376,13 @@ def diagnose_rollout_batch(
     report.update({"batch_id": batch_id, "sample_ids": [item["sample"]["sample_id"] for item in records],
                    "local_graph": local_graph, "raw_response": raw,
                    "status": "error" if error else "ok", "error": error,
-                   "attempts": attempts})
+                   "attempts": attempts,
+                   "trajectory_exemplars": (
+                       [item for item in prompt_records if item["action_correct"] and item["slot_exact_correct"]][:2]
+                       + [item for item in prompt_records if not (
+                           item["action_correct"] and item["slot_exact_correct"]
+                       )][:4]
+                   )})
     return report
 
 
@@ -2436,17 +2471,53 @@ def trace2skill_hybrid_reflect_report_group(
         if node
     })
     local_graph = lookup_graph_neighborhood(state, nodes, radius=1)
+    exemplars = [
+        exemplar for report in reports
+        for exemplar in report.get("trajectory_exemplars", [])
+        if isinstance(exemplar, dict)
+    ]
+    successes = [item for item in exemplars
+                 if item.get("action_correct") and item.get("slot_exact_correct")]
+    failures = [item for item in exemplars
+                if not (item.get("action_correct") and item.get("slot_exact_correct"))]
+
+    def distill(prompt_template: str, trajectories: list[dict[str, Any]], tag: str) -> dict[str, Any]:
+        if not trajectories:
+            return {"status": "skipped", "summary": "no matching trajectories"}
+        prompt = prompt_template.format(
+            local_graph=json.dumps(local_graph, ensure_ascii=False),
+            trajectories=json.dumps(trajectories[:24], ensure_ascii=False, indent=2),
+        )
+        payload, raw, error, attempts = _chat_for_json_with_retries(
+            [{"role": "user", "content": prompt}], model=model,
+            response_logger=response_logger, call_tag=tag, workflow_id=workflow_id,
+            max_retries=max_retries, retry_base_delay=retry_base_delay,
+        )
+        payload.update({"status": "error" if error else "ok", "error": error,
+                        "attempts": attempts, "raw_response": raw})
+        return payload
+
+    success_distillation = distill(
+        _TRACE2SKILL_SUCCESS_DISTILL_PROMPT, successes,
+        "online_trace2skill_success_distill",
+    )
+    failure_distillation = distill(
+        _TRACE2SKILL_FAILURE_DISTILL_PROMPT, failures,
+        "online_trace2skill_failure_distill",
+    )
     map_outputs: list[dict[str, Any]] = []
     for start in range(0, len(reports), map_batch_size):
         report_batch = reports[start:start + map_batch_size]
         compact = [{key: report.get(key) for key in (
             "batch_id", "summary", "root_causes", "graph_footprint",
             "candidate_updates", "candidate_skill_operations",
-            "unresolved_questions",
+            "unresolved_questions", "trajectory_exemplars",
         )} for report in report_batch]
         prompt = _TRACE2SKILL_LOCAL_MAP_PROMPT.format(
             skill=skill,
             local_graph=json.dumps(local_graph, ensure_ascii=False),
+            success_distillation=json.dumps(success_distillation, ensure_ascii=False, indent=2),
+            failure_distillation=json.dumps(failure_distillation, ensure_ascii=False, indent=2),
             batch_reports=json.dumps(compact, ensure_ascii=False, indent=2),
         )
         mapped, raw, error, attempts = _chat_for_json_with_retries(
@@ -2478,6 +2549,8 @@ def trace2skill_hybrid_reflect_report_group(
             "error": "all_local_map_calls_failed",
             "batch_ids": [report.get("batch_id") for report in reports],
             "local_graph": local_graph, "map_outputs": map_outputs,
+            "success_distillation": success_distillation,
+            "failure_distillation": failure_distillation,
             "updates": [], "skill_operations": [],
         }
     prompt = _TRACE2SKILL_LOCAL_REDUCE_PROMPT.format(
@@ -2496,6 +2569,8 @@ def trace2skill_hybrid_reflect_report_group(
         "batch_ids": [report.get("batch_id") for report in reports],
         "local_graph": local_graph,
         "map_outputs": map_outputs,
+        "success_distillation": success_distillation,
+        "failure_distillation": failure_distillation,
         "raw_response": raw,
         "prompt_chars": len(prompt),
         "status": "error" if error else "ok",

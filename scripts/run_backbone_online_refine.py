@@ -280,6 +280,121 @@ def _checkpoint(
     return working_skill
 
 
+def _run_refinement_pass(
+    *, artifact_root: Path, pass_id: str, records: list[dict], state: dict,
+    working_skill: str, base_reference: str, action_rules: str,
+    slot_policies: str, model: str, response_logger, workflow_ids: list[str],
+    batch_size: int, refinement_mode: str, hybrid_map_batch_size: int,
+    max_retries: int, ledger_path: Path, log: logging.Logger,
+) -> tuple[str, dict]:
+    """Diagnose and apply one frozen-snapshot refinement pass."""
+    evidence_batches = build_post_rollout_batches(records, max_batch_size=batch_size)
+    log.info("Refinement pass=%s mode=%s evidence_batches=%d",
+             pass_id, refinement_mode, len(evidence_batches))
+    reports = []
+    failed_batch_ids = []
+    for report_index, evidence_batch in enumerate(evidence_batches, start=1):
+        batch_id = f"evidence_batch_{report_index:04d}"
+        report_path = artifact_root / "batch_root_causes" / f"{batch_id}.json"
+        sample_ids = [str(item["sample"]["sample_id"]) for item in evidence_batch]
+        report = _load_successful_posthoc_artifact(report_path, sample_ids)
+        if report is not None:
+            reports.append(report)
+            log.info("Root-cause pass=%s batch=%d/%d reused", pass_id,
+                     report_index, len(evidence_batches))
+            continue
+        workflow_id = workflow_ids[(report_index - 1) % len(workflow_ids)] if workflow_ids else None
+        log.info("Root-cause pass=%s batch=%d/%d started records=%d", pass_id,
+                 report_index, len(evidence_batches), len(evidence_batch))
+        report = diagnose_rollout_batch(
+            batch_id, evidence_batch, state, working_skill, model,
+            response_logger=response_logger, workflow_id=workflow_id,
+            reference=base_reference + "\n" + render_online_resources(state)[1],
+            action_rules=action_rules + "\n" + render_online_action_rules(state),
+            slot_policies=slot_policies + "\n" + render_online_slot_policies(state),
+            max_retries=max_retries,
+        )
+        _write(report_path, json.dumps(report, indent=2, ensure_ascii=False))
+        if report.get("status") == "error":
+            failed_batch_ids.append(batch_id)
+            log.error("Root-cause pass=%s batch=%d/%d skipped after %d attempts: %s",
+                      pass_id, report_index, len(evidence_batches),
+                      report.get("attempts", 0), report.get("error", "unknown error"))
+            continue
+        reports.append(report)
+        log.info("Root-cause pass=%s batch=%d/%d completed", pass_id,
+                 report_index, len(evidence_batches))
+
+    reflection_groups = group_batch_reports(reports, max_reports=16)
+    applied_ids = set(state.get("applied_skill_operation_ids", []))
+    failed_reflection_groups = []
+    for reflection_index, report_group in enumerate(reflection_groups, start=1):
+        reflection_path = artifact_root / "group_reflections" / f"reflection_{reflection_index:04d}.json"
+        group_batch_ids = [str(report.get("batch_id")) for report in report_group]
+        reflection = _load_successful_posthoc_artifact(reflection_path, group_batch_ids)
+        workflow_id = workflow_ids[(reflection_index - 1) % len(workflow_ids)] if workflow_ids else None
+        if reflection is not None:
+            log.info("Reflection pass=%s group=%d/%d reused", pass_id,
+                     reflection_index, len(reflection_groups))
+        else:
+            log.info("Reflection pass=%s group=%d/%d started mode=%s reports=%d",
+                     pass_id, reflection_index, len(reflection_groups),
+                     refinement_mode, len(report_group))
+            if refinement_mode == "trace2skill-hybrid":
+                reflection = trace2skill_hybrid_reflect_report_group(
+                    report_group, state, working_skill, model,
+                    response_logger=response_logger, workflow_id=workflow_id,
+                    map_batch_size=hybrid_map_batch_size,
+                    max_retries=max_retries,
+                )
+            else:
+                reflection = reflect_batch_report_group(
+                    report_group, state, working_skill, model,
+                    response_logger=response_logger, workflow_id=workflow_id,
+                    max_retries=max_retries,
+                )
+            _write(reflection_path, json.dumps(reflection, indent=2, ensure_ascii=False))
+        if reflection.get("status") == "error":
+            failed_reflection_groups.append(reflection_index)
+            log.error("Reflection pass=%s group=%d/%d skipped after retries: %s",
+                      pass_id, reflection_index, len(reflection_groups),
+                      reflection.get("error", "unknown error"))
+            continue
+        accepted, rejected = apply_reflection_updates_to_state(
+            state, reflection.get("updates", []),
+        )
+        working_skill, text_operations = apply_dynamic_skill_operations(
+            working_skill, reflection.get("skill_operations", []), applied_ids,
+        )
+        reflection["accepted_updates"] = accepted
+        reflection["rejected_updates"] = rejected
+        reflection["applied_skill_operations"] = text_operations
+        _write(reflection_path, json.dumps(reflection, indent=2, ensure_ascii=False))
+        _append_jsonl(ledger_path, {
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "pass_id": pass_id,
+            "reflection_index": reflection_index,
+            "batch_ids": reflection.get("batch_ids", []),
+            "root_cause_summary": reflection.get("summary", ""),
+            "accepted_updates": accepted,
+            "rejected_updates": rejected,
+            "skill_operations": text_operations,
+            "refinement_mode": refinement_mode,
+        })
+        log.info("Reflection pass=%s group=%d/%d completed accepted=%d rejected=%d text_ops=%d",
+                 pass_id, reflection_index, len(reflection_groups), len(accepted),
+                 len(rejected), len(text_operations))
+    state["applied_skill_operation_ids"] = sorted(applied_ids)
+    return working_skill, {
+        "pass_id": pass_id,
+        "num_evidence_batches": len(evidence_batches),
+        "num_successful_reports": len(reports),
+        "num_reflection_groups": len(reflection_groups),
+        "failed_batch_ids": failed_batch_ids,
+        "failed_reflection_groups": failed_reflection_groups,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evidence-calibrated online refinement for a backbone skill")
     parser.add_argument("--subflow", required=True, help="One existing ABCD split directory")
@@ -579,6 +694,37 @@ def main() -> None:
         all_rollout_records = [json.loads(line) for line in
                                rollout_record_log.read_text(encoding="utf-8").splitlines()
                                if line.strip()]
+    pending_hybrid = state.get("pending_hybrid_refinement")
+    if (args.refinement_mode == "trace2skill-hybrid" and not args.skip_guard_llm
+            and isinstance(pending_hybrid, dict)):
+        pending_records_path = out_dir / str(pending_hybrid.get("records_path", ""))
+        if not pending_records_path.is_file():
+            raise FileNotFoundError(
+                f"Pending hybrid refinement records are missing: {pending_records_path}"
+            )
+        pending_records = json.loads(pending_records_path.read_text(encoding="utf-8"))
+        pass_id = str(pending_hybrid["pass_id"])
+        log.info("Resuming pending iterative hybrid pass=%s records=%d",
+                 pass_id, len(pending_records))
+        working_skill, pass_summary = _run_refinement_pass(
+            artifact_root=out_dir / "iterative_refinement" / pass_id,
+            pass_id=pass_id, records=pending_records, state=state,
+            working_skill=working_skill, base_reference=base_reference,
+            action_rules=action_rules, slot_policies=slot_policies,
+            model=args.model, response_logger=response_logger,
+            workflow_ids=refine_workflow_ids, batch_size=args.batch_size,
+            refinement_mode=args.refinement_mode,
+            hybrid_map_batch_size=args.hybrid_map_batch_size,
+            max_retries=args.guard_retries,
+            ledger_path=out_dir / "refinement_ledger.jsonl", log=log,
+        )
+        state.setdefault("iterative_refinement_history", []).append(pass_summary)
+        state["hybrid_refined_through_batch"] = int(pending_hybrid["wave_end"])
+        state.pop("pending_hybrid_refinement", None)
+        working_skill = _checkpoint(
+            out_dir, state, working_skill, base_reference, policy,
+            slot_policies, action_rules,
+        )
     posthoc_group_reflection = True
     for wave_offset in range(0, len(remaining_batches), wave_size):
         wave_batches = remaining_batches[wave_offset:wave_offset + wave_size]
@@ -601,6 +747,7 @@ def main() -> None:
             base_reference, action_rules, slot_policies, state, response_logger,
         )
         localized_parts, supervision_parts, packet_parts = [], [], []
+        wave_rollout_records: list[dict] = []
         for item in rollout_items:
             batch_index = completed + item["batch_index"] + 1
             batch = item["batch"]
@@ -617,6 +764,7 @@ def main() -> None:
                         "result": result,
                     }
                     all_rollout_records.append(rollout_record)
+                    wave_rollout_records.append(rollout_record)
                     _append_jsonl(rollout_record_log, rollout_record)
             _write(out_dir / "rollouts" / f"batch_{batch_index:04d}.json",
                    json.dumps(turns, indent=2, ensure_ascii=False))
@@ -753,6 +901,40 @@ def main() -> None:
                     reflection.get("model_decision", "missing"),
                     reflection.get("model_no_update_reason", "")[:180], reflection.get("prompt_chars", 0),
                 )
+        if (args.refinement_mode == "trace2skill-hybrid" and not args.skip_guard_llm
+                and wave_rollout_records):
+            pass_id = f"wave_{wave_start:04d}_{wave_end:04d}"
+            pass_root = out_dir / "iterative_refinement" / pass_id
+            records_path = pass_root / "records.json"
+            _write(records_path, json.dumps(wave_rollout_records, indent=2, ensure_ascii=False))
+            state["pending_hybrid_refinement"] = {
+                "pass_id": pass_id,
+                "wave_start": wave_start,
+                "wave_end": wave_end,
+                "records_path": str(records_path.relative_to(out_dir)),
+            }
+            # Persist rollout progress before LLM refinement so resume never
+            # needs to repeat this frozen-snapshot wave.
+            working_skill = _checkpoint(
+                out_dir, state, working_skill, base_reference, policy,
+                slot_policies, action_rules,
+            )
+            working_skill, pass_summary = _run_refinement_pass(
+                artifact_root=pass_root, pass_id=pass_id,
+                records=wave_rollout_records, state=state,
+                working_skill=working_skill, base_reference=base_reference,
+                action_rules=action_rules, slot_policies=slot_policies,
+                model=args.model, response_logger=response_logger,
+                workflow_ids=refine_workflow_ids, batch_size=args.batch_size,
+                refinement_mode=args.refinement_mode,
+                hybrid_map_batch_size=args.hybrid_map_batch_size,
+                max_retries=args.guard_retries,
+                ledger_path=out_dir / "refinement_ledger.jsonl", log=log,
+            )
+            state.setdefault("iterative_refinement_history", []).append(pass_summary)
+            state["hybrid_refined_through_batch"] = wave_end
+            state.pop("pending_hybrid_refinement", None)
+
         working_skill = _checkpoint(
             out_dir, state, working_skill, base_reference, policy,
             slot_policies, action_rules,
@@ -783,113 +965,48 @@ def main() -> None:
         all_rollout_records = json.loads(
             (out_dir / "post_rollout_records.json").read_text(encoding="utf-8"))
 
-    if (all_rollout_records and not args.skip_guard_llm
+    # Compatibility for a hybrid run created before iterative wave refinement
+    # existed. Its completed rollouts cannot be replayed historically without
+    # new model calls, so resume them once as a catch-up pass and continue.
+    if (args.refinement_mode == "trace2skill-hybrid" and all_rollout_records
+            and not args.skip_guard_llm
+            and not state.get("iterative_refinement_history")
             and not state.get("posthoc_reflection_complete", False)):
-        evidence_batches = build_post_rollout_batches(
-            all_rollout_records, max_batch_size=args.batch_size,
+        log.info("Legacy hybrid resume detected; running one catch-up refinement pass")
+        working_skill, pass_summary = _run_refinement_pass(
+            artifact_root=out_dir, pass_id="legacy_resume_catchup",
+            records=all_rollout_records, state=state, working_skill=working_skill,
+            base_reference=base_reference, action_rules=action_rules,
+            slot_policies=slot_policies, model=args.model,
+            response_logger=response_logger, workflow_ids=refine_workflow_ids,
+            batch_size=args.batch_size, refinement_mode=args.refinement_mode,
+            hybrid_map_batch_size=args.hybrid_map_batch_size,
+            max_retries=args.guard_retries,
+            ledger_path=out_dir / "refinement_ledger.jsonl", log=log,
         )
-        log.info("Post-rollout refinement mode=%s evidence_batches=%d",
-                 args.refinement_mode, len(evidence_batches))
-        reports = []
-        failed_batch_ids = []
-        for report_index, evidence_batch in enumerate(evidence_batches, start=1):
-            batch_id = f"evidence_batch_{report_index:04d}"
-            report_path = out_dir / "batch_root_causes" / f"{batch_id}.json"
-            sample_ids = [str(item["sample"]["sample_id"]) for item in evidence_batch]
-            report = _load_successful_posthoc_artifact(report_path, sample_ids)
-            if report is not None:
-                reports.append(report)
-                log.info("Root-cause batch %d/%d reused from artifact",
-                         report_index, len(evidence_batches))
-                continue
-            workflow_id = (
-                refine_workflow_ids[(report_index - 1) % len(refine_workflow_ids)]
-                if refine_workflow_ids else None
-            )
-            log.info("Root-cause batch %d/%d started (%d records)",
-                     report_index, len(evidence_batches), len(evidence_batch))
-            report = diagnose_rollout_batch(
-                batch_id, evidence_batch, state, working_skill, args.model,
-                response_logger=response_logger, workflow_id=workflow_id,
-                reference=base_reference + "\n" + render_online_resources(state)[1],
-                action_rules=action_rules + "\n" + render_online_action_rules(state),
-                slot_policies=slot_policies + "\n" + render_online_slot_policies(state),
-                max_retries=args.guard_retries,
-            )
-            _write(report_path, json.dumps(report, indent=2, ensure_ascii=False))
-            if report.get("status") == "error":
-                failed_batch_ids.append(batch_id)
-                log.error("Root-cause batch %d/%d skipped after %d attempts: %s",
-                          report_index, len(evidence_batches), report.get("attempts", 0),
-                          report.get("error", "unknown error"))
-                continue
-            reports.append(report)
-            log.info("Root-cause batch %d/%d completed", report_index, len(evidence_batches))
+        state.setdefault("iterative_refinement_history", []).append(pass_summary)
+        state["posthoc_reflection_complete"] = True
+        working_skill = _checkpoint(
+            out_dir, state, working_skill, base_reference, policy,
+            slot_policies, action_rules,
+        )
 
-        reflection_groups = group_batch_reports(reports, max_reports=16)
-        applied_ids = set(state.get("applied_skill_operation_ids", []))
-        failed_reflection_groups = []
-        for reflection_index, report_group in enumerate(reflection_groups, start=1):
-            reflection_path = out_dir / "group_reflections" / f"reflection_{reflection_index:04d}.json"
-            group_batch_ids = [str(report.get("batch_id")) for report in report_group]
-            reflection = _load_successful_posthoc_artifact(reflection_path, group_batch_ids)
-            workflow_id = (
-                refine_workflow_ids[(reflection_index - 1) % len(refine_workflow_ids)]
-                if refine_workflow_ids else None
-            )
-            if reflection is not None:
-                log.info("Reflection group %d/%d reused from artifact",
-                         reflection_index, len(reflection_groups))
-            else:
-                log.info("Reflection group %d/%d started mode=%s reports=%d",
-                         reflection_index, len(reflection_groups),
-                         args.refinement_mode, len(report_group))
-                if args.refinement_mode == "trace2skill-hybrid":
-                    reflection = trace2skill_hybrid_reflect_report_group(
-                        report_group, state, working_skill, args.model,
-                        response_logger=response_logger, workflow_id=workflow_id,
-                        map_batch_size=args.hybrid_map_batch_size,
-                        max_retries=args.guard_retries,
-                    )
-                else:
-                    reflection = reflect_batch_report_group(
-                        report_group, state, working_skill, args.model,
-                        response_logger=response_logger, workflow_id=workflow_id,
-                        max_retries=args.guard_retries,
-                    )
-                _write(reflection_path, json.dumps(reflection, indent=2, ensure_ascii=False))
-            if reflection.get("status") == "error":
-                failed_reflection_groups.append(reflection_index)
-                log.error("Reflection group %d/%d skipped after retries: %s",
-                          reflection_index, len(reflection_groups),
-                          reflection.get("error", "unknown error"))
-                continue
-            accepted, rejected = apply_reflection_updates_to_state(
-                state, reflection.get("updates", []),
-            )
-            working_skill, text_operations = apply_dynamic_skill_operations(
-                working_skill, reflection.get("skill_operations", []), applied_ids,
-            )
-            reflection["accepted_updates"] = accepted
-            reflection["rejected_updates"] = rejected
-            reflection["applied_skill_operations"] = text_operations
-            _write(reflection_path, json.dumps(reflection, indent=2, ensure_ascii=False))
-            _append_jsonl(out_dir / "refinement_ledger.jsonl", {
-                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-                "reflection_index": reflection_index,
-                "batch_ids": reflection.get("batch_ids", []),
-                "root_cause_summary": reflection.get("summary", ""),
-                "accepted_updates": accepted,
-                "rejected_updates": rejected,
-                "skill_operations": text_operations,
-                "refinement_mode": args.refinement_mode,
-            })
-            log.info("Reflection group %d/%d completed accepted=%d rejected=%d text_ops=%d",
-                     reflection_index, len(reflection_groups), len(accepted),
-                     len(rejected), len(text_operations))
-        state["applied_skill_operation_ids"] = sorted(applied_ids)
-        state["posthoc_failed_batch_ids"] = failed_batch_ids
-        state["posthoc_failed_reflection_groups"] = failed_reflection_groups
+    if (args.refinement_mode == "standard" and all_rollout_records
+            and not args.skip_guard_llm
+            and not state.get("posthoc_reflection_complete", False)):
+        working_skill, pass_summary = _run_refinement_pass(
+            artifact_root=out_dir, pass_id="posthoc", records=all_rollout_records,
+            state=state, working_skill=working_skill,
+            base_reference=base_reference, action_rules=action_rules,
+            slot_policies=slot_policies, model=args.model,
+            response_logger=response_logger, workflow_ids=refine_workflow_ids,
+            batch_size=args.batch_size, refinement_mode=args.refinement_mode,
+            hybrid_map_batch_size=args.hybrid_map_batch_size,
+            max_retries=args.guard_retries,
+            ledger_path=out_dir / "refinement_ledger.jsonl", log=log,
+        )
+        state["posthoc_failed_batch_ids"] = pass_summary["failed_batch_ids"]
+        state["posthoc_failed_reflection_groups"] = pass_summary["failed_reflection_groups"]
         state["posthoc_reflection_complete"] = True
         working_skill = _checkpoint(
             out_dir, state, working_skill, base_reference, policy,
