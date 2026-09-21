@@ -13,6 +13,7 @@ from skill_mining.online_refinement import (
     build_online_evidence_packets,
     build_action_turn_samples,
     build_post_rollout_batches,
+    diagnose_rollout_batch,
     group_batch_reports,
     trace2skill_hybrid_reflect_report_group,
     build_guard_induction_context,
@@ -52,6 +53,42 @@ def _subgraph():
 
 
 class OnlineRefinementTest(unittest.TestCase):
+    @patch("skill_mining.online_refinement._online_refinement_chat")
+    def test_diagnosis_records_error_after_three_transient_failures(self, chat):
+        chat.side_effect = RuntimeError("HTTP 504")
+        state = initialize_skill_dag(_subgraph(), "account_access")
+        records = [{
+            "sample": {
+                "sample_id": "c1:0", "source_action": "enter-details",
+                "target_action": "send-link", "gold_slots": [],
+            },
+            "result": {"predicted_action": "send-link", "predicted_slots": []},
+        }]
+        result = diagnose_rollout_batch(
+            "batch", records, state, "# Skill\n", "model",
+            max_retries=3, retry_base_delay=0,
+        )
+        self.assertEqual(chat.call_count, 3)
+        self.assertEqual(result["status"], "error")
+        self.assertIn("HTTP 504", result["error"])
+
+    @patch("skill_mining.online_refinement._online_refinement_chat")
+    def test_hybrid_records_error_when_all_maps_fail(self, chat):
+        chat.side_effect = RuntimeError("HTTP 504")
+        state = initialize_skill_dag(_subgraph(), "account_access")
+        reports = [{
+            "batch_id": "1", "summary": "diagnosis",
+            "graph_footprint": {"nodes": ["enter-details"]},
+            "local_graph": {"nodes": [{"id": "a", "label": "enter-details"}]},
+        }]
+        result = trace2skill_hybrid_reflect_report_group(
+            reports, state, "# Skill\n", "model", map_batch_size=4,
+            max_retries=3, retry_base_delay=0,
+        )
+        self.assertEqual(chat.call_count, 3)
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["error"], "all_local_map_calls_failed")
+
     @patch("skill_mining.online_refinement._online_refinement_chat")
     def test_trace2skill_hybrid_maps_then_reduces_local_reports(self, chat):
         chat.side_effect = [

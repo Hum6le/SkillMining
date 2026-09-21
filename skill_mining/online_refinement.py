@@ -2261,10 +2261,38 @@ def _parse_json_object(raw: str) -> dict[str, Any]:
         return {}
 
 
+def _chat_for_json_with_retries(
+    messages: list[dict[str, str]], *, model: str, response_logger: Any,
+    call_tag: str, workflow_id: str | None, max_retries: int = 3,
+    retry_base_delay: float = 2.0,
+) -> tuple[dict[str, Any], str, str, int]:
+    """Return parsed JSON without letting a transient workflow error escape."""
+    raw = ""
+    last_error = ""
+    attempts = max(1, int(max_retries))
+    for attempt in range(1, attempts + 1):
+        try:
+            raw = _online_refinement_chat(
+                messages, model=model, api_key=None, base_url=None,
+                temperature=0.0, response_logger=response_logger,
+                call_tag=call_tag, workflow_id=workflow_id,
+            )
+            payload = _parse_json_object(raw)
+            if payload:
+                return payload, raw, "", attempt
+            last_error = "empty_or_invalid_json_response"
+        except Exception as exc:
+            last_error = repr(exc)
+        if attempt < attempts and retry_base_delay > 0:
+            time.sleep(float(retry_base_delay) * (2 ** (attempt - 1)))
+    return {}, raw, last_error, attempts
+
+
 def diagnose_rollout_batch(
     batch_id: str, records: list[dict[str, Any]], state: dict[str, Any], skill: str,
     model: str, response_logger: Any = None, workflow_id: str | None = None,
     reference: str = "", action_rules: str = "", slot_policies: str = "",
+    max_retries: int = 3, retry_base_delay: float = 2.0,
 ) -> dict[str, Any]:
     nodes = sorted({str(record.get("sample", {}).get(key, ""))
                     for record in records for key in ("source_action", "target_action") if record.get("sample", {}).get(key)})
@@ -2310,12 +2338,16 @@ def diagnose_rollout_batch(
         available_resources=json.dumps(available_resources, ensure_ascii=False, indent=2),
         rollouts=json.dumps(prompt_records, ensure_ascii=False, indent=2),
     )
-    raw = _online_refinement_chat([{"role": "user", "content": prompt}], model=model,
-        api_key=None, base_url=None, temperature=0.0, response_logger=response_logger,
-        call_tag="online_batch_root_cause", workflow_id=workflow_id)
-    report = _parse_json_object(raw)
+    report, raw, error, attempts = _chat_for_json_with_retries(
+        [{"role": "user", "content": prompt}], model=model,
+        response_logger=response_logger, call_tag="online_batch_root_cause",
+        workflow_id=workflow_id, max_retries=max_retries,
+        retry_base_delay=retry_base_delay,
+    )
     report.update({"batch_id": batch_id, "sample_ids": [item["sample"]["sample_id"] for item in records],
-                   "local_graph": local_graph, "raw_response": raw})
+                   "local_graph": local_graph, "raw_response": raw,
+                   "status": "error" if error else "ok", "error": error,
+                   "attempts": attempts})
     return report
 
 
@@ -2351,6 +2383,7 @@ def group_batch_reports(reports: list[dict[str, Any]], max_reports: int = 16) ->
 def reflect_batch_report_group(
     reports: list[dict[str, Any]], state: dict[str, Any], skill: str, model: str,
     response_logger: Any = None, workflow_id: str | None = None,
+    max_retries: int = 3, retry_base_delay: float = 2.0,
 ) -> dict[str, Any]:
     reports = reports[:16]
     nodes = sorted({node for report in reports for node in
@@ -2368,12 +2401,16 @@ def reflect_batch_report_group(
     prompt = _GROUP_REFLECTION_PROMPT.format(skill=skill,
         local_graph=json.dumps(local_graph, ensure_ascii=False),
         batch_reports=json.dumps(compact, ensure_ascii=False, indent=2))
-    raw = _online_refinement_chat([{"role": "user", "content": prompt}], model=model,
-        api_key=None, base_url=None, temperature=0.0, response_logger=response_logger,
-        call_tag="online_group_reflection", workflow_id=workflow_id)
-    result = _parse_json_object(raw)
+    result, raw, error, attempts = _chat_for_json_with_retries(
+        [{"role": "user", "content": prompt}], model=model,
+        response_logger=response_logger, call_tag="online_group_reflection",
+        workflow_id=workflow_id, max_retries=max_retries,
+        retry_base_delay=retry_base_delay,
+    )
     result.update({"batch_ids": [report.get("batch_id") for report in reports],
-                   "local_graph": local_graph, "raw_response": raw, "prompt_chars": len(prompt)})
+                   "local_graph": local_graph, "raw_response": raw,
+                   "prompt_chars": len(prompt), "status": "error" if error else "ok",
+                   "error": error, "attempts": attempts})
     return result
 
 
@@ -2381,6 +2418,7 @@ def trace2skill_hybrid_reflect_report_group(
     reports: list[dict[str, Any]], state: dict[str, Any], skill: str, model: str,
     response_logger: Any = None, workflow_id: str | None = None,
     map_batch_size: int = 4,
+    max_retries: int = 3, retry_base_delay: float = 2.0,
 ) -> dict[str, Any]:
     """Run local success/failure MAP-REDUCE, then emit native graph updates."""
     reports = reports[:16]
@@ -2411,38 +2449,48 @@ def trace2skill_hybrid_reflect_report_group(
             local_graph=json.dumps(local_graph, ensure_ascii=False),
             batch_reports=json.dumps(compact, ensure_ascii=False, indent=2),
         )
-        raw = _online_refinement_chat(
+        mapped, raw, error, attempts = _chat_for_json_with_retries(
             [{"role": "user", "content": prompt}], model=model,
-            api_key=None, base_url=None, temperature=0.0,
-            response_logger=response_logger, call_tag="online_trace2skill_local_map",
-            workflow_id=workflow_id,
+            response_logger=response_logger,
+            call_tag="online_trace2skill_local_map", workflow_id=workflow_id,
+            max_retries=max_retries, retry_base_delay=retry_base_delay,
         )
-        mapped = _parse_json_object(raw)
         mapped.update({
             "map_index": len(map_outputs) + 1,
             "batch_ids": [report.get("batch_id") for report in report_batch],
             "raw_response": raw,
             "prompt_chars": len(prompt),
+            "status": "error" if error else "ok",
+            "error": error,
+            "attempts": attempts,
         })
         map_outputs.append(mapped)
 
+    successful_maps = [mapped for mapped in map_outputs if mapped.get("status") == "ok"]
     reduce_payload = [{key: mapped.get(key) for key in (
         "map_index", "batch_ids", "summary", "root_causes", "graph_footprint",
         "candidate_updates", "candidate_skill_operations", "preserved_successes",
         "unresolved_questions",
-    )} for mapped in map_outputs]
+    )} for mapped in successful_maps]
+    if not reduce_payload:
+        return {
+            "mode": "trace2skill_hybrid", "status": "error",
+            "error": "all_local_map_calls_failed",
+            "batch_ids": [report.get("batch_id") for report in reports],
+            "local_graph": local_graph, "map_outputs": map_outputs,
+            "updates": [], "skill_operations": [],
+        }
     prompt = _TRACE2SKILL_LOCAL_REDUCE_PROMPT.format(
         skill=skill,
         local_graph=json.dumps(local_graph, ensure_ascii=False),
         map_candidates=json.dumps(reduce_payload, ensure_ascii=False, indent=2),
     )
-    raw = _online_refinement_chat(
+    result, raw, error, attempts = _chat_for_json_with_retries(
         [{"role": "user", "content": prompt}], model=model,
-        api_key=None, base_url=None, temperature=0.0,
-        response_logger=response_logger, call_tag="online_trace2skill_local_reduce",
-        workflow_id=workflow_id,
+        response_logger=response_logger,
+        call_tag="online_trace2skill_local_reduce", workflow_id=workflow_id,
+        max_retries=max_retries, retry_base_delay=retry_base_delay,
     )
-    result = _parse_json_object(raw)
     result.update({
         "mode": "trace2skill_hybrid",
         "batch_ids": [report.get("batch_id") for report in reports],
@@ -2450,6 +2498,9 @@ def trace2skill_hybrid_reflect_report_group(
         "map_outputs": map_outputs,
         "raw_response": raw,
         "prompt_chars": len(prompt),
+        "status": "error" if error else "ok",
+        "error": error,
+        "attempts": attempts,
     })
     return result
 

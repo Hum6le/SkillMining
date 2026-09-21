@@ -73,6 +73,22 @@ def _append_jsonl(path: Path, record: dict) -> None:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def _load_successful_posthoc_artifact(path: Path, expected_ids: list[str]) -> dict | None:
+    """Load a completed artifact whose evidence identity still matches."""
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict) or payload.get("status") == "error" or payload.get("error"):
+        return None
+    actual_ids = payload.get("sample_ids", payload.get("batch_ids", []))
+    if [str(value) for value in actual_ids] != [str(value) for value in expected_ids]:
+        return None
+    return payload
+
+
 def _rollout_online_batch(agent: ABCDAgent, batch: list) -> list[dict]:
     """Run one online training batch in order under the current policy state."""
     rows: list[dict] = []
@@ -297,7 +313,7 @@ def main() -> None:
     parser.add_argument("--min-conflict-count", type=int, default=2)
     parser.add_argument("--max-skill-branches-per-source", type=int, default=3)
     parser.add_argument("--guard-retries", type=int, default=3,
-                        help="Retries for one local guard-induction call")
+                        help="Attempts for each guard, diagnosis, MAP, REDUCE, or reflection call")
     parser.add_argument(
         "--eval-workflow-ids", default="",
         help="Comma-separated workflow IDs used only for parallel held-out evaluation. "
@@ -326,6 +342,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.hybrid_map_batch_size <= 0:
         parser.error("--hybrid-map-batch-size must be positive")
+    if args.guard_retries <= 0:
+        parser.error("--guard-retries must be positive")
     if args.stop_on_error:
         os.environ["SKILLMINING_STOP_ON_ERROR"] = "1"
     eval_workflow_ids = [value.strip() for value in args.eval_workflow_ids.split(",") if value.strip()]
@@ -773,8 +791,17 @@ def main() -> None:
         log.info("Post-rollout refinement mode=%s evidence_batches=%d",
                  args.refinement_mode, len(evidence_batches))
         reports = []
+        failed_batch_ids = []
         for report_index, evidence_batch in enumerate(evidence_batches, start=1):
             batch_id = f"evidence_batch_{report_index:04d}"
+            report_path = out_dir / "batch_root_causes" / f"{batch_id}.json"
+            sample_ids = [str(item["sample"]["sample_id"]) for item in evidence_batch]
+            report = _load_successful_posthoc_artifact(report_path, sample_ids)
+            if report is not None:
+                reports.append(report)
+                log.info("Root-cause batch %d/%d reused from artifact",
+                         report_index, len(evidence_batches))
+                continue
             workflow_id = (
                 refine_workflow_ids[(report_index - 1) % len(refine_workflow_ids)]
                 if refine_workflow_ids else None
@@ -787,33 +814,56 @@ def main() -> None:
                 reference=base_reference + "\n" + render_online_resources(state)[1],
                 action_rules=action_rules + "\n" + render_online_action_rules(state),
                 slot_policies=slot_policies + "\n" + render_online_slot_policies(state),
+                max_retries=args.guard_retries,
             )
+            _write(report_path, json.dumps(report, indent=2, ensure_ascii=False))
+            if report.get("status") == "error":
+                failed_batch_ids.append(batch_id)
+                log.error("Root-cause batch %d/%d skipped after %d attempts: %s",
+                          report_index, len(evidence_batches), report.get("attempts", 0),
+                          report.get("error", "unknown error"))
+                continue
             reports.append(report)
-            _write(out_dir / "batch_root_causes" / f"{batch_id}.json",
-                   json.dumps(report, indent=2, ensure_ascii=False))
             log.info("Root-cause batch %d/%d completed", report_index, len(evidence_batches))
 
         reflection_groups = group_batch_reports(reports, max_reports=16)
         applied_ids = set(state.get("applied_skill_operation_ids", []))
+        failed_reflection_groups = []
         for reflection_index, report_group in enumerate(reflection_groups, start=1):
+            reflection_path = out_dir / "group_reflections" / f"reflection_{reflection_index:04d}.json"
+            group_batch_ids = [str(report.get("batch_id")) for report in report_group]
+            reflection = _load_successful_posthoc_artifact(reflection_path, group_batch_ids)
             workflow_id = (
                 refine_workflow_ids[(reflection_index - 1) % len(refine_workflow_ids)]
                 if refine_workflow_ids else None
             )
-            log.info("Reflection group %d/%d started mode=%s reports=%d",
-                     reflection_index, len(reflection_groups),
-                     args.refinement_mode, len(report_group))
-            if args.refinement_mode == "trace2skill-hybrid":
-                reflection = trace2skill_hybrid_reflect_report_group(
-                    report_group, state, working_skill, args.model,
-                    response_logger=response_logger, workflow_id=workflow_id,
-                    map_batch_size=args.hybrid_map_batch_size,
-                )
+            if reflection is not None:
+                log.info("Reflection group %d/%d reused from artifact",
+                         reflection_index, len(reflection_groups))
             else:
-                reflection = reflect_batch_report_group(
-                    report_group, state, working_skill, args.model,
-                    response_logger=response_logger, workflow_id=workflow_id,
-                )
+                log.info("Reflection group %d/%d started mode=%s reports=%d",
+                         reflection_index, len(reflection_groups),
+                         args.refinement_mode, len(report_group))
+                if args.refinement_mode == "trace2skill-hybrid":
+                    reflection = trace2skill_hybrid_reflect_report_group(
+                        report_group, state, working_skill, args.model,
+                        response_logger=response_logger, workflow_id=workflow_id,
+                        map_batch_size=args.hybrid_map_batch_size,
+                        max_retries=args.guard_retries,
+                    )
+                else:
+                    reflection = reflect_batch_report_group(
+                        report_group, state, working_skill, args.model,
+                        response_logger=response_logger, workflow_id=workflow_id,
+                        max_retries=args.guard_retries,
+                    )
+                _write(reflection_path, json.dumps(reflection, indent=2, ensure_ascii=False))
+            if reflection.get("status") == "error":
+                failed_reflection_groups.append(reflection_index)
+                log.error("Reflection group %d/%d skipped after retries: %s",
+                          reflection_index, len(reflection_groups),
+                          reflection.get("error", "unknown error"))
+                continue
             accepted, rejected = apply_reflection_updates_to_state(
                 state, reflection.get("updates", []),
             )
@@ -823,8 +873,7 @@ def main() -> None:
             reflection["accepted_updates"] = accepted
             reflection["rejected_updates"] = rejected
             reflection["applied_skill_operations"] = text_operations
-            _write(out_dir / "group_reflections" / f"reflection_{reflection_index:04d}.json",
-                   json.dumps(reflection, indent=2, ensure_ascii=False))
+            _write(reflection_path, json.dumps(reflection, indent=2, ensure_ascii=False))
             _append_jsonl(out_dir / "refinement_ledger.jsonl", {
                 "timestamp_utc": datetime.now(timezone.utc).isoformat(),
                 "reflection_index": reflection_index,
@@ -839,6 +888,8 @@ def main() -> None:
                      reflection_index, len(reflection_groups), len(accepted),
                      len(rejected), len(text_operations))
         state["applied_skill_operation_ids"] = sorted(applied_ids)
+        state["posthoc_failed_batch_ids"] = failed_batch_ids
+        state["posthoc_failed_reflection_groups"] = failed_reflection_groups
         state["posthoc_reflection_complete"] = True
         working_skill = _checkpoint(
             out_dir, state, working_skill, base_reference, policy,
