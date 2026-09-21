@@ -27,6 +27,7 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 
 from awm import MemoryStore, WorkflowStore
 from eval_tod.abcd.agent import ABCDAgent
+from eval_tod.abcd.metrics import slot_match_profile
 from skill_mining.online_refinement import (
     RefinementPolicy,
     autonomous_resource_reflection,
@@ -44,6 +45,7 @@ from skill_mining.online_refinement import (
     render_online_slot_policies,
     save_skill_dag,
     schedule_contrastive_batches,
+    schedule_constrained_repair_batches,
     schedule_action_turn_batches,
     build_action_turn_samples,
     build_post_rollout_batches,
@@ -280,18 +282,80 @@ def _checkpoint(
     return working_skill
 
 
+def _replay_candidate(
+    args, candidate_skill: str, candidate_state: dict, source_samples: list[dict],
+    sample_ids: set[str], base_reference: str, action_rules: str,
+    slot_policies: str, response_logger, workflow_id: str | None,
+) -> dict:
+    """Replay only the candidate's local evidence and return compact metrics."""
+    selected = [sample for sample in source_samples
+                if str(sample.get("sample_id")) in sample_ids]
+    if not selected:
+        return {"num_samples": 0, "action_correct": 0, "joint_correct": 0,
+                "slot_correct": 0, "error": "no_replay_samples"}
+    agent = _build_agent(args, candidate_skill, base_reference, action_rules,
+                         slot_policies, candidate_state,
+                         response_logger=response_logger, workflow_id=workflow_id)
+    rows = _rollout_online_batch(agent, selected)
+    def row_key(item: dict) -> tuple[str, int]:
+        try:
+            turn_index = int(item.get("turn_index", -1))
+        except (TypeError, ValueError):
+            turn_index = -1
+        return (str(item.get("conversation_id", item.get("convo_id", "?"))), turn_index)
+
+    # The replay API may return fewer rows after a transient/model failure.
+    # Keep those samples in the denominator and score them as incorrect; a
+    # candidate must never pass by silently dropping difficult examples.
+    returned = {row_key(row): row for row in rows}
+    action_correct = joint_correct = slot_correct = 0
+    total = len(selected)
+    for sample in selected:
+        row = returned.get(row_key(sample))
+        if row is None:
+            continue
+        action_ok = str(row.get("predicted_action", "")) == str(sample.get("target_action", ""))
+        profile = slot_match_profile(
+            [str(value) for value in sample.get("gold_slots", [])],
+            [str(value) for value in row.get("predicted_slots", [])],
+        )
+        slot_ok = bool(profile.get("strict_ordered"))
+        action_correct += int(action_ok)
+        slot_correct += int(slot_ok)
+        joint_correct += int(action_ok and slot_ok)
+    return {
+        "num_samples": total,
+        "action_correct": action_correct,
+        "joint_correct": joint_correct,
+        "slot_correct": slot_correct,
+        "action_accuracy": action_correct / max(total, 1),
+        "joint_accuracy": joint_correct / max(total, 1),
+        "slot_accuracy": slot_correct / max(total, 1),
+    }
+
+
 def _run_refinement_pass(
     *, artifact_root: Path, pass_id: str, records: list[dict], state: dict,
     working_skill: str, base_reference: str, action_rules: str,
     slot_policies: str, model: str, response_logger, workflow_ids: list[str],
     batch_size: int, refinement_mode: str, hybrid_map_batch_size: int,
     max_retries: int, ledger_path: Path, log: logging.Logger,
+    runner_args=None, replay_source: list[dict] | None = None,
 ) -> tuple[str, dict]:
     """Diagnose and apply one frozen-snapshot refinement pass."""
     evidence_batches = build_post_rollout_batches(records, max_batch_size=batch_size)
     log.info("Refinement pass=%s mode=%s evidence_batches=%d",
              pass_id, refinement_mode, len(evidence_batches))
     reports = []
+    replay_samples_by_id = {}
+    if refinement_mode == "constrained-repair" and replay_source:
+        # Action-turn samples are the supervision-bearing source of truth. Do
+        # this once per pass; raw conversations do not contain sample_id or
+        # target_action fields suitable for replay gating.
+        replay_samples_by_id = {
+            str(sample.get("sample_id")): sample
+            for sample in build_action_turn_samples(replay_source)
+        }
     failed_batch_ids = []
     for report_index, evidence_batch in enumerate(evidence_batches, start=1):
         batch_id = f"evidence_batch_{report_index:04d}"
@@ -340,7 +404,7 @@ def _run_refinement_pass(
             log.info("Reflection pass=%s group=%d/%d started mode=%s reports=%d",
                      pass_id, reflection_index, len(reflection_groups),
                      refinement_mode, len(report_group))
-            if refinement_mode == "trace2skill-hybrid":
+            if refinement_mode in {"trace2skill-hybrid", "constrained-repair"}:
                 reflection = trace2skill_hybrid_reflect_report_group(
                     report_group, state, working_skill, model,
                     response_logger=response_logger, workflow_id=workflow_id,
@@ -360,15 +424,92 @@ def _run_refinement_pass(
                       pass_id, reflection_index, len(reflection_groups),
                       reflection.get("error", "unknown error"))
             continue
-        accepted, rejected = apply_reflection_updates_to_state(
-            state, reflection.get("updates", []),
+        candidate_state = copy.deepcopy(state)
+        candidate_accepted, candidate_rejected = apply_reflection_updates_to_state(
+            candidate_state, reflection.get("updates", []),
         )
-        working_skill, text_operations = apply_dynamic_skill_operations(
-            working_skill, reflection.get("skill_operations", []), applied_ids,
+        candidate_skill, candidate_text_operations = apply_dynamic_skill_operations(
+            working_skill, reflection.get("skill_operations", []), set(applied_ids),
         )
+        accepted, rejected = candidate_accepted, candidate_rejected
+        text_operations = candidate_text_operations
+        replay = None
+        replay_decision = "apply"
+        if refinement_mode == "constrained-repair" and runner_args is not None and replay_source:
+            replay_ids = {
+                str(sample_id)
+                for report in report_group
+                for sample_id in report.get("sample_ids", [])
+            }
+            # Build the local action-turn set from the conversations, but use
+            # the derived samples as the sole source of truth.  The frozen
+            # wave records are diagnosis evidence only; they are not a valid
+            # baseline for a sequential candidate decision.
+            replay_samples = [replay_samples_by_id[sample_id]
+                              for sample_id in sorted(replay_ids)
+                              if sample_id in replay_samples_by_id]
+            baseline = _replay_candidate(
+                runner_args, working_skill, state, replay_samples, replay_ids,
+                base_reference, action_rules, slot_policies,
+                response_logger,
+                workflow_ids[(reflection_index - 1) % len(workflow_ids)]
+                if workflow_ids else None,
+            )
+            replay = _replay_candidate(
+                runner_args, candidate_skill, candidate_state,
+                replay_samples, replay_ids,
+                base_reference, action_rules, slot_policies,
+                response_logger,
+                workflow_ids[(reflection_index - 1) % len(workflow_ids)]
+                if workflow_ids else None,
+            )
+            replay["baseline"] = baseline
+            replay["comparison"] = {
+                "type": "sequential_paired_replay",
+                "sample_ids": sorted(replay_ids),
+                "baseline_skill_sha256": hashlib.sha256(working_skill.encode("utf-8")).hexdigest(),
+                "candidate_skill_sha256": hashlib.sha256(candidate_skill.encode("utf-8")).hexdigest(),
+            }
+            # A candidate must not lose action correctness; among non-degrading
+            # candidates, apply only if it improves action or joint accuracy.
+            replay_decision = (
+                "apply" if replay.get("action_correct", 0) >= baseline.get("action_correct", 0)
+                and replay.get("joint_correct", 0) >= baseline.get("joint_correct", 0)
+                and (replay.get("action_correct", 0) > baseline.get("action_correct", 0)
+                     or replay.get("joint_correct", 0) > baseline.get("joint_correct", 0))
+                else "reject"
+            )
+            if replay_decision == "reject":
+                accepted, rejected = [], [
+                    {"update": update, "reason": "candidate_replay_no_improvement"}
+                    for update in reflection.get("updates", [])
+                ]
+                text_operations = []
+            else:
+                state.clear(); state.update(candidate_state)
+                working_skill = candidate_skill
+                applied_ids.update(
+                    str(item.get("operation_id")) for item in text_operations
+                    if item.get("applied") and item.get("operation_id")
+                )
+            log.info(
+                "Replay gate pass=%s group=%d/%d decision=%s baseline(action=%d joint=%d) "
+                "candidate(action=%d joint=%d) samples=%d",
+                pass_id, reflection_index, len(reflection_groups), replay_decision,
+                baseline.get("action_correct", 0), baseline.get("joint_correct", 0),
+                replay.get("action_correct", 0), replay.get("joint_correct", 0),
+                baseline.get("num_samples", 0),
+            )
+        else:
+            accepted, rejected = apply_reflection_updates_to_state(state, reflection.get("updates", []))
+            working_skill, text_operations = apply_dynamic_skill_operations(
+                working_skill, reflection.get("skill_operations", []), applied_ids,
+            )
         reflection["accepted_updates"] = accepted
         reflection["rejected_updates"] = rejected
         reflection["applied_skill_operations"] = text_operations
+        reflection["candidate_replay"] = replay
+        reflection["candidate_replay_decision"] = replay_decision
         _write(reflection_path, json.dumps(reflection, indent=2, ensure_ascii=False))
         _append_jsonl(ledger_path, {
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
@@ -380,6 +521,8 @@ def _run_refinement_pass(
             "rejected_updates": rejected,
             "skill_operations": text_operations,
             "refinement_mode": refinement_mode,
+            "candidate_replay": reflection.get("candidate_replay"),
+            "candidate_replay_decision": reflection.get("candidate_replay_decision", "apply"),
         })
         log.info("Reflection pass=%s group=%d/%d completed accepted=%d rejected=%d text_ops=%d",
                  pass_id, reflection_index, len(reflection_groups), len(accepted),
@@ -440,9 +583,9 @@ def main() -> None:
              "Their evidence is merged before one reflection/update.",
     )
     parser.add_argument(
-        "--refinement-mode", choices=("standard", "trace2skill-hybrid"),
+        "--refinement-mode", choices=("standard", "trace2skill-hybrid", "constrained-repair"),
         default="standard",
-        help="Post-rollout synthesis: direct group reflection or local Trace2Skill-style MAP/REDUCE.",
+        help="Post-rollout synthesis: direct reflection, Trace2Skill hybrid, or constrained local repair.",
     )
     parser.add_argument(
         "--hybrid-map-batch-size", type=int, default=4,
@@ -644,12 +787,22 @@ def main() -> None:
                 raise RuntimeError(f"Saved schedule references sessions absent from this train split: {missing[:3]}")
             batches.append([by_id[sid] for sid in ids])
     else:
-        # Roll out every action turn first under one frozen skill snapshot.
-        # These are execution micro-batches only; evidence batches are formed
-        # afterwards from observed trajectories and outcomes.
-        samples = build_action_turn_samples(train)
-        batches = [samples[index:index + args.batch_size]
-                   for index in range(0, len(samples), args.batch_size)]
+        # Roll out action-turn samples under one frozen skill snapshot.  The
+        # constrained mode uses an uncertainty/locality budget; other modes
+        # retain the historical full action-turn schedule.
+        if args.refinement_mode == "constrained-repair":
+            batches = schedule_constrained_repair_batches(
+                train, state, batch_size=args.batch_size,
+                per_transition_cap=args.per_transition_cap,
+                target_selection_rate=args.target_selection_rate,
+                max_batches=args.max_batches,
+            )
+            schedule_unit = "action_turn_uncertainty_local"
+        else:
+            samples = build_action_turn_samples(train)
+            batches = [samples[index:index + args.batch_size]
+                       for index in range(0, len(samples), args.batch_size)]
+            schedule_unit = "action_turn"
         if args.max_batches is not None:
             batches = batches[:args.max_batches]
         _write(schedule_path, json.dumps({
@@ -659,6 +812,8 @@ def main() -> None:
             "batch_size": args.batch_size,
             "per_transition_cap": args.per_transition_cap,
             "target_selection_rate": args.target_selection_rate,
+            "selection_unit": schedule_unit,
+            "refinement_mode": args.refinement_mode,
             "max_batches": args.max_batches,
             "batches": [
                 {"batch_index": index, "samples": [
@@ -695,7 +850,7 @@ def main() -> None:
                                rollout_record_log.read_text(encoding="utf-8").splitlines()
                                if line.strip()]
     pending_hybrid = state.get("pending_hybrid_refinement")
-    if (args.refinement_mode == "trace2skill-hybrid" and not args.skip_guard_llm
+    if (args.refinement_mode in {"trace2skill-hybrid", "constrained-repair"} and not args.skip_guard_llm
             and isinstance(pending_hybrid, dict)):
         pending_records_path = out_dir / str(pending_hybrid.get("records_path", ""))
         if not pending_records_path.is_file():
@@ -717,6 +872,7 @@ def main() -> None:
             hybrid_map_batch_size=args.hybrid_map_batch_size,
             max_retries=args.guard_retries,
             ledger_path=out_dir / "refinement_ledger.jsonl", log=log,
+            runner_args=args, replay_source=train,
         )
         state.setdefault("iterative_refinement_history", []).append(pass_summary)
         state["hybrid_refined_through_batch"] = int(pending_hybrid["wave_end"])
@@ -901,7 +1057,7 @@ def main() -> None:
                     reflection.get("model_decision", "missing"),
                     reflection.get("model_no_update_reason", "")[:180], reflection.get("prompt_chars", 0),
                 )
-        if (args.refinement_mode == "trace2skill-hybrid" and not args.skip_guard_llm
+        if (args.refinement_mode in {"trace2skill-hybrid", "constrained-repair"} and not args.skip_guard_llm
                 and wave_rollout_records):
             pass_id = f"wave_{wave_start:04d}_{wave_end:04d}"
             pass_root = out_dir / "iterative_refinement" / pass_id
@@ -930,6 +1086,7 @@ def main() -> None:
                 hybrid_map_batch_size=args.hybrid_map_batch_size,
                 max_retries=args.guard_retries,
                 ledger_path=out_dir / "refinement_ledger.jsonl", log=log,
+                runner_args=args, replay_source=train,
             )
             state.setdefault("iterative_refinement_history", []).append(pass_summary)
             state["hybrid_refined_through_batch"] = wave_end
@@ -968,7 +1125,7 @@ def main() -> None:
     # Compatibility for a hybrid run created before iterative wave refinement
     # existed. Its completed rollouts cannot be replayed historically without
     # new model calls, so resume them once as a catch-up pass and continue.
-    if (args.refinement_mode == "trace2skill-hybrid" and all_rollout_records
+    if (args.refinement_mode in {"trace2skill-hybrid", "constrained-repair"} and all_rollout_records
             and not args.skip_guard_llm
             and not state.get("iterative_refinement_history")
             and not state.get("posthoc_reflection_complete", False)):
@@ -983,6 +1140,7 @@ def main() -> None:
             hybrid_map_batch_size=args.hybrid_map_batch_size,
             max_retries=args.guard_retries,
             ledger_path=out_dir / "refinement_ledger.jsonl", log=log,
+            runner_args=args, replay_source=train,
         )
         state.setdefault("iterative_refinement_history", []).append(pass_summary)
         state["posthoc_reflection_complete"] = True
@@ -1004,6 +1162,7 @@ def main() -> None:
             hybrid_map_batch_size=args.hybrid_map_batch_size,
             max_retries=args.guard_retries,
             ledger_path=out_dir / "refinement_ledger.jsonl", log=log,
+            runner_args=args, replay_source=train,
         )
         state["posthoc_failed_batch_ids"] = pass_summary["failed_batch_ids"]
         state["posthoc_failed_reflection_groups"] = pass_summary["failed_reflection_groups"]

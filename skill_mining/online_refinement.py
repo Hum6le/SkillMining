@@ -895,6 +895,82 @@ def build_action_turn_samples(conversations: list[dict[str, Any]]) -> list[dict[
     return samples
 
 
+def schedule_constrained_repair_batches(
+    conversations: list[dict[str, Any]], state: dict[str, Any],
+    batch_size: int = 8, per_transition_cap: int = 3,
+    target_selection_rate: float = 0.30,
+    max_batches: int | None = None,
+) -> list[list[dict[str, Any]]]:
+    """Select action-turn evidence around uncertain offline graph transitions.
+
+    Unlike the legacy session sampler, the unit of budget is an action-turn
+    (a turn plus its prefix).  We retain a small sibling contrast for each
+    high-value source node, then fill the remaining budget with prefix-diverse
+    examples.  The LLM still decides the repair location/content; this
+    function only controls evidence locality and cost.
+    """
+    if batch_size < 2:
+        raise ValueError("batch_size must be at least 2")
+    if not 0.0 < target_selection_rate <= 1.0:
+        raise ValueError("target_selection_rate must be in (0, 1]")
+    if per_transition_cap <= 0:
+        raise ValueError("per_transition_cap must be positive")
+    samples = build_action_turn_samples(conversations)
+    if not samples:
+        return []
+    node_ids = {str(node.get("label")): str(node.get("id", node.get("label")))
+                for node in state.get("nodes", [])}
+    def uncertainty(sample: dict[str, Any]) -> float:
+        source = node_ids.get(str(sample.get("source_action")), str(sample.get("source_action")))
+        target = node_ids.get(str(sample.get("target_action")), str(sample.get("target_action")))
+        edge = state.get("edges", {}).get(_edge_id(source, target))
+        confidence = edge_confidence(edge) if edge else 0.5
+        outgoing = [edge_item for edge_item in state.get("edges", {}).values()
+                    if str(edge_item.get("source")) == source]
+        sibling_count = len({str(item.get("target")) for item in outgoing})
+        # Low confidence, sparse support, and sibling ambiguity are valuable.
+        support = (edge or {}).get("rollout_success", 0) + (edge or {}).get("rollout_failure", 0)
+        return (1.0 - confidence) + (0.15 if sibling_count > 1 else 0.0) + (0.10 if support < 3 else 0.0)
+
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for sample in samples:
+        groups[(str(sample.get("source_action")), str(sample.get("target_action")))].append(sample)
+    ranked_groups = sorted(groups.items(), key=lambda item: max(map(uncertainty, item[1])), reverse=True)
+    budget = max(1, math.ceil(len(samples) * target_selection_rate))
+    selected: list[dict[str, Any]] = []
+    used: set[str] = set()
+    # First pass: keep the strongest few examples per uncertain transition.
+    for (source, _target), members in ranked_groups:
+        if len(selected) >= budget:
+            break
+        members = sorted(members, key=lambda item: (-uncertainty(item), str(item.get("sample_id"))))
+        take = min(per_transition_cap, len(members), budget - len(selected))
+        chosen = members[:take]
+        selected.extend(chosen)
+        used.update(str(item.get("sample_id")) for item in chosen)
+    # Fill with prefix-diverse samples, preserving local source neighborhoods.
+    remaining = [item for item in samples if str(item.get("sample_id")) not in used]
+    seen_prefix: set[tuple[str, ...]] = set()
+    for item in sorted(remaining, key=lambda value: (-uncertainty(value), str(value.get("sample_id")))):
+        if len(selected) >= budget:
+            break
+        prefix = tuple(str(value) for value in item.get("prefix_action_sequence", []))
+        key = (str(item.get("source_action")),) + prefix[-3:]
+        if key in seen_prefix and len(selected) + 1 < budget:
+            continue
+        seen_prefix.add(key)
+        selected.append(item)
+    selected.sort(key=lambda item: (str(item.get("source_action")), str(item.get("target_action")),
+                                      tuple(item.get("prefix_action_sequence", [])), str(item.get("sample_id"))))
+    # Pack sibling transitions together; each batch remains a local graph view.
+    batches: list[list[dict[str, Any]]] = []
+    for start in range(0, len(selected), batch_size):
+        chunk = selected[start:start + batch_size]
+        if chunk:
+            batches.append(chunk)
+    return batches[:max_batches] if max_batches else batches
+
+
 def schedule_action_turn_batches(conversations: list[dict[str, Any]], batch_size: int = 8,
                                  max_batches: int | None = None) -> list[list[dict[str, Any]]]:
     """Schedule independent action turns; one session may occur in many batches."""

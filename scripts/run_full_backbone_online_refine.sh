@@ -44,7 +44,7 @@ Options:
   --subflow-mode MODE      `parallel` (default) assigns subflows to workers;
                             `serial` runs subflows one by one while retaining
                             parallelism inside each subflow.
-  --refinement-mode MODE    Forward `standard` or `trace2skill-hybrid` to every subflow.
+  --refinement-mode MODE    Forward `standard`, `trace2skill-hybrid`, or `constrained-repair` to every subflow.
   --hybrid-map-batch-size N Diagnosed reports per hybrid MAP call (default: 4).
   --conda-env NAME          Default: skillmining310
   --hf-endpoint URL         Default: https://hf-mirror.com
@@ -127,8 +127,8 @@ case "$SUBFLOW_MODE" in
     *) echo "Invalid --subflow-mode: $SUBFLOW_MODE (expected parallel or serial)" >&2; exit 2 ;;
 esac
 case "$REFINEMENT_MODE" in
-    standard|trace2skill-hybrid) ;;
-    *) echo "Invalid --refinement-mode: $REFINEMENT_MODE (expected standard or trace2skill-hybrid)" >&2; exit 2 ;;
+    standard|trace2skill-hybrid|constrained-repair) ;;
+    *) echo "Invalid --refinement-mode: $REFINEMENT_MODE (expected standard, trace2skill-hybrid, or constrained-repair)" >&2; exit 2 ;;
 esac
 [[ "$HYBRID_MAP_BATCH_SIZE" =~ ^[1-9][0-9]*$ ]] || {
     echo "Invalid --hybrid-map-batch-size: $HYBRID_MAP_BATCH_SIZE (expected a positive integer)" >&2; exit 2;
