@@ -27,6 +27,17 @@ bash scripts/launch_full_abcd_experiments.sh --method expel
 bash scripts/launch_full_abcd_experiments.sh --method trace2skill
 bash scripts/launch_full_abcd_experiments.sh --method asi
 bash scripts/launch_full_abcd_experiments.sh --subflow recover_username
+
+# Start Trace2Skill for one subflow from an existing offline skill.
+bash scripts/launch_full_abcd_experiments.sh --method trace2skill \
+  --subflow recover_username \
+  --offline-skill outputs/offline_skills/recover_username
+
+# Seed Trace2Skill from a graph/online-refinement artifact directory. The action
+# cards in action_rules.md and slot_policies.md remain available at rollout time.
+bash scripts/launch_full_abcd_experiments.sh --method trace2skill \
+  --subflow recover_username \
+  --graph-seed-dir outputs/backbone_online_refine/recover_username
 ```
 
 ASI online induction can be configured independently:

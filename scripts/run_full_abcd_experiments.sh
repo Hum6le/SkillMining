@@ -16,6 +16,8 @@ CONDA_ENV="skillmining310"
 HF_MIRROR="https://hf-mirror.com"
 METHOD="all"
 ONE_SUBFLOW=""
+OFFLINE_SKILL=""
+GRAPH_SEED_DIR=""
 MIN_SESSIONS=0
 GRAPH_MINING_METHOD="backbone"
 BACKBONE_COVERAGE_LAMBDA="0.2"
@@ -86,6 +88,10 @@ Usage: bash scripts/run_full_abcd_experiments.sh [options]
 Options:
   --method NAME              all, awm, expel, trace2skill, asi, skill_disco, or graph (default: all)
   --subflow NAME             Run one subflow instead of all complete split directories
+  --offline-skill PATH       Trace2Skill seed skill file, or a directory containing
+                             SKILL.md/skill.md. Only affects Trace2Skill.
+  --graph-seed-dir DIR       Trace2Skill graph seed artifact directory containing base_skill.md,
+                             base_reference.md, and graph action-card resources. Only affects Trace2Skill.
   --workflow-ids IDS         Comma-separated workflow IDs. One balanced, serial worker is
                              started per ID; workers run in parallel. Example: id_a,id_b,id_c
   --resume-run DIR           Resume an existing outputs/full_abcd_* run. Reuses its load
@@ -135,6 +141,8 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --method) METHOD="$2"; shift 2 ;;
         --subflow) ONE_SUBFLOW="$2"; shift 2 ;;
+        --offline-skill) OFFLINE_SKILL="$2"; shift 2 ;;
+        --graph-seed-dir) GRAPH_SEED_DIR="$2"; shift 2 ;;
         --workflow-ids) WORKFLOW_IDS_RAW="$2"; shift 2 ;;
         --resume-run) RESUME_RUN="$2"; shift 2 ;;
         --min-sessions) MIN_SESSIONS="$2"; shift 2 ;;
@@ -177,6 +185,37 @@ case "$METHOD" in all|awm|expel|trace2skill|asi|skill_disco|graph) ;; *) echo "I
 case "$AWM_INDUCTION_MODE" in online|offline) ;; *) echo "Invalid --awm-induction-mode: $AWM_INDUCTION_MODE" >&2; exit 2 ;; esac
 case "$GRAPH_MINING_METHOD" in legacy|sequence|backbone|backbone_coverage|semantic_router) ;; *) echo "Invalid --graph-mining-method: $GRAPH_MINING_METHOD" >&2; exit 2 ;; esac
 case "$BACKBONE_COMPILER" in organized|unordered|compare) ;; *) echo "Invalid --backbone-compiler: $BACKBONE_COMPILER" >&2; exit 2 ;; esac
+
+if [[ -n "$OFFLINE_SKILL" ]]; then
+    if [[ -d "$OFFLINE_SKILL" ]]; then
+        if [[ -f "$OFFLINE_SKILL/SKILL.md" ]]; then
+            OFFLINE_SKILL="$OFFLINE_SKILL/SKILL.md"
+        elif [[ -f "$OFFLINE_SKILL/skill.md" ]]; then
+            OFFLINE_SKILL="$OFFLINE_SKILL/skill.md"
+        else
+            echo "--offline-skill directory must contain SKILL.md or skill.md: $OFFLINE_SKILL" >&2
+            exit 2
+        fi
+    elif [[ ! -f "$OFFLINE_SKILL" ]]; then
+        echo "--offline-skill does not exist or is not a file: $OFFLINE_SKILL" >&2
+        exit 2
+    fi
+    OFFLINE_SKILL="$(cd "$(dirname "$OFFLINE_SKILL")" && pwd)/$(basename "$OFFLINE_SKILL")"
+fi
+if [[ -n "$GRAPH_SEED_DIR" ]]; then
+    [[ -d "$GRAPH_SEED_DIR" ]] || { echo "--graph-seed-dir is not a directory: $GRAPH_SEED_DIR" >&2; exit 2; }
+    for required_file in base_skill.md base_reference.md; do
+        [[ -f "$GRAPH_SEED_DIR/$required_file" ]] || { echo "--graph-seed-dir is missing $required_file: $GRAPH_SEED_DIR" >&2; exit 2; }
+    done
+    [[ -f "$GRAPH_SEED_DIR/action_rules.md" || -f "$GRAPH_SEED_DIR/slot_policies.md" ]] || {
+        echo "--graph-seed-dir must contain action_rules.md and/or slot_policies.md: $GRAPH_SEED_DIR" >&2; exit 2;
+    }
+    GRAPH_SEED_DIR="$(cd "$GRAPH_SEED_DIR" && pwd)"
+fi
+if [[ -n "$OFFLINE_SKILL" && -n "$GRAPH_SEED_DIR" ]]; then
+    echo "--offline-skill and --graph-seed-dir are mutually exclusive" >&2
+    exit 2
+fi
 [[ "$ASI_BATCH_SIZE" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --asi-batch-size: $ASI_BATCH_SIZE" >&2; exit 2; }
 [[ "$ANALYSIS_BATCH_SIZE" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --analysis-batch-size: $ANALYSIS_BATCH_SIZE" >&2; exit 2; }
 [[ "$ASI_HELDOUT_SIZE" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --asi-heldout-size: $ASI_HELDOUT_SIZE" >&2; exit 2; }
@@ -496,6 +535,8 @@ run_worker() {
                 [[ "$SKIP_TRACE2SKILL_SEED_TEST" -eq 1 ]] && trace_extra_args+=(--skip-seed-test)
                 [[ "$SKIP_TRACE2SKILL_TEXT_EVAL" -eq 1 ]] && trace_extra_args+=(--skip-text-eval)
                 [[ -n "$EVAL_WORKFLOW_IDS_RAW" ]] && trace_extra_args+=(--skip-test-eval)
+                [[ -n "$OFFLINE_SKILL" ]] && trace_extra_args+=(--skill-path "$OFFLINE_SKILL")
+                [[ -n "$GRAPH_SEED_DIR" ]] && trace_extra_args+=(--graph-seed-dir "$GRAPH_SEED_DIR")
                 SKILLMINING_WORKFLOW_ID="$workflow_id" "$PYTHON_BIN" scripts/run_trace2skill_abcd.py \
                     --subflow "$subflow" --train-file "$SPLITS_DIR/$subflow/train.json" \
                     --test-file "$SPLITS_DIR/$subflow/test.json" --output-dir "$RUN_ROOT/trace2skill/$subflow" \

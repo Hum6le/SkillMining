@@ -385,6 +385,8 @@ def _build_agent(
     workflow_text: str,
     response_logger: ResponseLogger,
     reference_text: str = "",
+    action_rules_text: str = "",
+    slot_policies_text: str = "",
     expose_scenario_labels: bool = True,
 ) -> ABCDAgent:
     from awm import MemoryStore, WorkflowStore
@@ -398,8 +400,38 @@ def _build_agent(
         workflow_max_chars=None,
         memory=MemoryStore(),
         reference_text=reference_text,
+        action_rules_text=action_rules_text,
+        slot_policies_text=slot_policies_text,
         expose_scenario_labels=expose_scenario_labels,
         response_logger=response_logger,
+    )
+
+
+def _load_graph_seed_artifacts(artifact_dir: Path) -> tuple[Path, str, str, str]:
+    """Load a graph seed and retain both components of its action cards."""
+    artifact_dir = artifact_dir.resolve()
+    required = {
+        "base_skill.md": artifact_dir / "base_skill.md",
+        "base_reference.md": artifact_dir / "base_reference.md",
+    }
+    missing = [name for name, path in required.items() if not path.is_file()]
+    if missing:
+        raise FileNotFoundError(
+            "--graph-seed-dir is missing required artifact(s): "
+            + ", ".join(missing) + f" in {artifact_dir}"
+        )
+    action_rules_path = artifact_dir / "action_rules.md"
+    slot_policies_path = artifact_dir / "slot_policies.md"
+    if not action_rules_path.is_file() and not slot_policies_path.is_file():
+        raise FileNotFoundError(
+            "--graph-seed-dir must contain action_rules.md and/or slot_policies.md: "
+            f"{artifact_dir}"
+        )
+    return (
+        required["base_skill.md"],
+        required["base_reference.md"].read_text(encoding="utf-8"),
+        action_rules_path.read_text(encoding="utf-8") if action_rules_path.is_file() else "",
+        slot_policies_path.read_text(encoding="utf-8") if slot_policies_path.is_file() else "",
     )
 
 
@@ -1826,6 +1858,8 @@ def run_pipeline(args) -> PipelineOutputs:
         "failure_analysis_enabled": args.enable_failure_analysis,
         "skip_evolution": args.skip_evolution,
         "direct_memory_update": args.direct_memory_update,
+        "skill_path": str(Path(args.skill_path).resolve()) if not args.graph_seed_dir else None,
+        "graph_seed_dir": str(Path(args.graph_seed_dir).resolve()) if args.graph_seed_dir else None,
         "reuse_analysis_dir": str(Path(args.reuse_analysis_dir).resolve()) if args.reuse_analysis_dir else None,
         "reuse_rollout_dir": str(Path(args.reuse_rollout_dir).resolve()) if args.reuse_rollout_dir else None,
     }
@@ -1843,10 +1877,21 @@ def run_pipeline(args) -> PipelineOutputs:
                 + "\n".join(f"- {item}" for item in mismatches)
             )
 
-    seed_skill_path = Path(args.skill_path).resolve()
+    graph_seed_dir = Path(args.graph_seed_dir).resolve() if args.graph_seed_dir else None
+    if graph_seed_dir:
+        seed_skill_path, seed_reference_text, seed_action_rules_text, seed_slot_policies_text = (
+            _load_graph_seed_artifacts(graph_seed_dir)
+        )
+        log.info("Loading graph seed artifacts from %s", graph_seed_dir)
+    else:
+        seed_skill_path = Path(args.skill_path).resolve()
+        seed_reference_text = ""
+        seed_action_rules_text = ""
+        seed_slot_policies_text = ""
     seed_skill_text = _load_skill_text(seed_skill_path)
     from eval_tod.reference_lookup import load_trace2skill_references
-    seed_reference_text = load_trace2skill_references(seed_skill_path)
+    if not graph_seed_dir:
+        seed_reference_text = load_trace2skill_references(seed_skill_path)
     evolved_skill_dir = out_dir / "evolved_skill"
     evolved_skill_dir.mkdir(parents=True, exist_ok=True)
     evolved_skill_path = evolved_skill_dir / "SKILL.md"
@@ -1861,6 +1906,15 @@ def run_pipeline(args) -> PipelineOutputs:
     evolved_reference_file = evolved_skill_dir / "reference.md"
     if seed_reference_file.exists() and not evolved_reference_file.exists():
         shutil.copy2(seed_reference_file, evolved_reference_file)
+    if graph_seed_dir and not evolved_reference_file.exists():
+        evolved_reference_file.write_text(seed_reference_text, encoding="utf-8")
+    for name, content in (
+        ("action_rules.md", seed_action_rules_text),
+        ("slot_policies.md", seed_slot_policies_text),
+    ):
+        destination = evolved_skill_dir / name
+        if content and not destination.exists():
+            destination.write_text(content, encoding="utf-8")
 
     if source_info["mode"] == "files":
         log.info(
@@ -1912,6 +1966,7 @@ def run_pipeline(args) -> PipelineOutputs:
         log.info("Stage 1: seed run on training set")
         seed_train_agent = _build_agent(
             model, seed_skill_text, response_logger, seed_reference_text,
+            seed_action_rules_text, seed_slot_policies_text,
             expose_scenario_labels=False,
         )
         seed_train_turns = seed_train_agent.generate_all_turn_predictions(
@@ -1997,6 +2052,8 @@ def run_pipeline(args) -> PipelineOutputs:
 
         current_skill_text = evolved_skill_path.read_text(encoding="utf-8")
         current_reference_text = load_trace2skill_references(evolved_skill_path)
+        current_action_rules_text = (evolved_skill_dir / "action_rules.md").read_text(encoding="utf-8") if (evolved_skill_dir / "action_rules.md").is_file() else ""
+        current_slot_policies_text = (evolved_skill_dir / "slot_policies.md").read_text(encoding="utf-8") if (evolved_skill_dir / "slot_policies.md").is_file() else ""
         pre_skill_lines = len(current_skill_text.splitlines())
         log.info(
             "Stage 2.%d: %s with %d conversations (pre-skill lines=%d)",
@@ -2011,6 +2068,8 @@ def run_pipeline(args) -> PipelineOutputs:
             current_skill_text,
             response_logger,
             current_reference_text,
+            current_action_rules_text,
+            current_slot_policies_text,
             expose_scenario_labels=False,
         )
         if args.reuse_rollout_dir:
@@ -2239,6 +2298,7 @@ def run_pipeline(args) -> PipelineOutputs:
         log.info("Stage 4: seed evaluation on test")
         seed_test_agent = _build_agent(
             model, seed_skill_text, response_logger, seed_reference_text,
+            seed_action_rules_text, seed_slot_policies_text,
             expose_scenario_labels=False,
         )
         seed_test_turns = seed_test_agent.generate_all_turn_predictions(
@@ -2264,11 +2324,15 @@ def run_pipeline(args) -> PipelineOutputs:
     log.info("Stage 5: evolved evaluation on test")
     evolved_skill_text = evolved_skill_path.read_text(encoding="utf-8")
     evolved_reference_text = load_trace2skill_references(evolved_skill_path)
+    evolved_action_rules_text = (evolved_skill_dir / "action_rules.md").read_text(encoding="utf-8") if (evolved_skill_dir / "action_rules.md").is_file() else ""
+    evolved_slot_policies_text = (evolved_skill_dir / "slot_policies.md").read_text(encoding="utf-8") if (evolved_skill_dir / "slot_policies.md").is_file() else ""
     evolved_test_agent = _build_agent(
         model,
         evolved_skill_text,
         response_logger,
         evolved_reference_text,
+        evolved_action_rules_text,
+        evolved_slot_policies_text,
         expose_scenario_labels=False,
     )
     evolved_test_turns = evolved_test_agent.generate_all_turn_predictions(
@@ -2306,6 +2370,7 @@ def run_pipeline(args) -> PipelineOutputs:
             "llm_max_retries": args.llm_max_retries,
             "llm_retry_base_delay": args.llm_retry_base_delay,
             "skill_path": str(seed_skill_path),
+            "graph_seed_dir": str(graph_seed_dir) if graph_seed_dir else None,
             "seed_reference_chars": len(seed_reference_text),
             "skip_seed_test": args.skip_seed_test,
             "evolution_batch_size": args.evolution_batch_size,
@@ -2479,7 +2544,17 @@ def main() -> None:
         default=2.0,
         help="Base delay in seconds for exponential LLM retry backoff",
     )
-    parser.add_argument("--skill-path", default=DEFAULT_SKILL_PATH)
+    seed_group = parser.add_mutually_exclusive_group()
+    seed_group.add_argument("--skill-path", default=DEFAULT_SKILL_PATH)
+    seed_group.add_argument(
+        "--graph-seed-dir",
+        default=None,
+        help=(
+            "Graph/online-refinement artifact directory containing base_skill.md, "
+            "base_reference.md, and action_rules.md and/or slot_policies.md. "
+            "Uses the base skill and preserves action-card retrieval during Trace2Skill rollout."
+        ),
+    )
     parser.add_argument("--output-dir", default="outputs")
     parser.add_argument(
         "--resume-dir",
