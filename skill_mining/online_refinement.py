@@ -244,8 +244,11 @@ semantic explanations.
 Each record contains the model's final prediction and, when retrieval was
 used, only the generated retrieval query and returned retrieval content from
 the ReAct trace. The raw trace, tool arguments, and duplicated messages are
-never supplied. The dialogue context and gold action/slots or gold agent
-response are supplied separately in that same record.
+never supplied. For trajectory-based hybrid batches, `full_trajectory`
+contains the complete bounded turn-level conversation evidence; use it to
+explain cross-turn state and preserve successful behavior. The dialogue
+context and gold action/slots or gold agent response are supplied separately
+in that same record.
 {rollout_supervision}
 </rollout_supervision>
 
@@ -721,6 +724,57 @@ def _representative_groups(
 def _representatives(conversations: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
     """Flatten grouped representatives while preserving group contiguity."""
     return [conversation for group in _representative_groups(conversations, limit) for conversation in group]
+
+
+def _sequence_similarity(left: list[str], right: list[str]) -> float:
+    """Compare ordered action sequences for trajectory-local batching."""
+    if not left or not right:
+        return 0.0
+    table = [[0] * (len(right) + 1) for _ in range(len(left) + 1)]
+    for i, left_action in enumerate(left, 1):
+        for j, right_action in enumerate(right, 1):
+            table[i][j] = (
+                table[i - 1][j - 1] + 1
+                if left_action == right_action
+                else max(table[i - 1][j], table[i][j - 1])
+            )
+    lcs = table[-1][-1] / max(len(left), len(right), 1)
+    positional = sum(
+        1 for index, action in enumerate(left[:len(right)])
+        if action == right[index]
+    ) / max(len(left), len(right), 1)
+    return 0.75 * lcs + 0.25 * positional
+
+
+def schedule_trace2skill_conversation_batches(
+    conversations: list[dict[str, Any]], batch_size: int = 25,
+    max_batches: int | None = None,
+) -> list[list[dict[str, Any]]]:
+    """Batch complete conversations by ordered action-sequence similarity."""
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    pending = list(conversations)
+    sequences = {id(conv): _actions(conv) for conv in pending}
+    batches: list[list[dict[str, Any]]] = []
+    while pending:
+        seed = pending.pop(0)
+        seed_sequence = sequences[id(seed)]
+        ranked = sorted(
+            pending,
+            key=lambda conv: (
+                _sequence_similarity(seed_sequence, sequences[id(conv)]),
+                -abs(len(seed_sequence) - len(sequences[id(conv)])),
+                str(conv.get("convo_id", "?")),
+            ),
+            reverse=True,
+        )
+        selected = ranked[:max(0, batch_size - 1)]
+        chosen = {id(conv) for conv in selected}
+        pending = [conv for conv in pending if id(conv) not in chosen]
+        batches.append([seed, *selected])
+        if max_batches is not None and len(batches) >= max_batches:
+            break
+    return batches
 
 
 def schedule_contrastive_batches(
@@ -2413,6 +2467,7 @@ def diagnose_rollout_batch(
                 resource_name, resource_text, resource_query, 2,
             ))
     prompt_records = []
+    seen_trajectory_ids: set[str] = set()
     for record in records:
         sample = record.get("sample", {})
         result = record.get("result", {})
@@ -2420,8 +2475,23 @@ def diagnose_rollout_batch(
         predicted_slots = [str(value) for value in result.get("predicted_slots", [])]
         slot_profile = slot_match_profile(gold_slots, predicted_slots)
         action_ok = str(result.get("predicted_action", "")) == str(sample.get("target_action", ""))
+        conversation_id = str(sample.get("conversation_id", sample.get("convo_id", "?")))
+        trajectory = record.get("trajectory") or []
+        trajectory_view = [
+            {
+                "turn_index": item.get("turn_index"),
+                "target_type": item.get("target_type", "utterance"),
+                "context": str(item.get("context", ""))[-2000:],
+                "prediction": str(item.get("prediction", ""))[:1200],
+                "predicted_action": item.get("predicted_action"),
+                "predicted_slots": item.get("predicted_slots", []),
+            }
+            for item in trajectory
+        ] if conversation_id not in seen_trajectory_ids else []
+        seen_trajectory_ids.add(conversation_id)
         prompt_records.append({
             "sample_id": sample.get("sample_id"),
+            "conversation_id": conversation_id,
             "prefix_action_sequence": sample.get("prefix_action_sequence", []),
             "source_action": sample.get("source_action"),
             "gold_target": sample.get("target_action"),
@@ -2436,6 +2506,7 @@ def diagnose_rollout_batch(
             ),
             "slot_match_profile": slot_profile,
             "context": str(result.get("context", ""))[-1800:],
+            "full_trajectory": trajectory_view,
             **_react_model_output_projection(result.get("react_trace")),
         })
     prompt = _BATCH_ROOT_CAUSE_PROMPT.format(

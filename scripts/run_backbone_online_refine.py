@@ -11,6 +11,7 @@ import argparse
 import atexit
 import copy
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import defaultdict
 import hashlib
 import json
 import logging
@@ -30,6 +31,7 @@ from eval_tod.abcd.agent import ABCDAgent
 from eval_tod.abcd.metrics import slot_match_profile
 from skill_mining.online_refinement import (
     RefinementPolicy,
+    _actions,
     autonomous_resource_reflection,
     apply_dynamic_skill_operations,
     apply_working_skill_operations,
@@ -46,11 +48,13 @@ from skill_mining.online_refinement import (
     save_skill_dag,
     schedule_contrastive_batches,
     schedule_constrained_repair_batches,
+    schedule_trace2skill_conversation_batches,
     schedule_action_turn_batches,
     build_action_turn_samples,
     build_post_rollout_batches,
     diagnose_rollout_batch,
     group_batch_reports,
+    lookup_graph_neighborhood,
     reflect_batch_report_group,
     trace2skill_hybrid_reflect_report_group,
     apply_reflection_updates_to_state,
@@ -62,6 +66,7 @@ from scripts.run_subflow_eval import (
     load_subflow_data,
     mine_subflow_skill_backbone,
 )
+from scripts import run_trace2skill_abcd as trace2skill_impl
 
 
 def _write(path: Path, text: str) -> None:
@@ -73,6 +78,141 @@ def _append_jsonl(path: Path, record: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def _run_trace2skill_hybrid_batch(
+    *, batch_index: int, conversations: list[dict], turns: list[dict],
+    out_dir: Path, working_skill: str, base_reference: str,
+    action_rules: str, slot_policies: str, model: str, response_logger,
+    state: dict, rollout_workers: int = 1,
+    analysis_batch_size: int = 8, map_batch_size: int = 8,
+) -> tuple[str, dict]:
+    """Run the original Trace2Skill analysis/evolution path on one batch.
+
+    The online runner only adapts the resource context. Case construction,
+    success/failure analysis, MAP/REDUCE/TRANSLATE/APPLY, and patch parsing are
+    delegated to the existing Trace2Skill implementation.
+    """
+    batch_root = out_dir / "trace2skill_hybrid_batches" / f"batch_{batch_index:04d}"
+    batch_root.mkdir(parents=True, exist_ok=True)
+    skill_dir = out_dir / "trace2skill_hybrid_skill"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    skill_path = skill_dir / "SKILL.md"
+    skill_path.write_text(working_skill, encoding="utf-8")
+    # Make graph-compiled resources available to the original evolver through
+    # the same linked-resource files it already understands.
+    (skill_dir / "reference.md").write_text(base_reference, encoding="utf-8")
+    (skill_dir / "action_rules.md").write_text(action_rules, encoding="utf-8")
+    (skill_dir / "slot_policies.md").write_text(slot_policies, encoding="utf-8")
+    ast_scores = trace2skill_impl.compute_ast_from_turn_results(conversations, turns)
+    failures = trace2skill_impl._build_ast_failure_cases(
+        conversations, turns, ast_scores,
+        log_dir=batch_root / "failure_logs", hide_scenario_labels=False,
+    )
+    successes = trace2skill_impl._build_ast_success_cases(
+        conversations, turns, ast_scores,
+        log_dir=batch_root / "success_logs", hide_scenario_labels=False,
+    )
+    # Attach a typed bridge record to the original Trace2Skill cases. The
+    # original trajectory remains intact; this adds ToD decision scope and
+    # lets its analysis/evolver use graph evidence without a second reflector.
+    turns_by_convo: dict[str, list[dict]] = defaultdict(list)
+    for row in turns:
+        turns_by_convo[str(row.get("convo_id", "?"))].append(row)
+    conv_by_id = {str(conv.get("convo_id", "?")): conv for conv in conversations}
+    evidence_records = []
+    for conv, ast in zip(conversations, ast_scores):
+        convo_id = str(conv.get("convo_id", "?"))
+        conv_turns = sorted(turns_by_convo.get(convo_id, []), key=lambda row: int(row.get("turn_index", -1)))
+        mismatches, _ = trace2skill_impl._build_ast_mismatch_report(conv, conv_turns)
+        first = mismatches[0] if mismatches else None
+        actions = _actions(conv)
+        nodes = [value for value in (
+            first.get("gold_action") if first else None,
+            first.get("predicted_action") if first else None,
+            actions[-1] if actions else None,
+        ) if value]
+        graph_context = lookup_graph_neighborhood(state, [str(value) for value in nodes], radius=1)
+        protected = [
+            {"conversation_id": str(item.get("convo_id", "?")), "ast_score": float(score.get("ast_score", 0.0))}
+            for item, score in zip(conversations, ast_scores)
+            if float(score.get("ast_score", 0.0)) >= 1.0
+        ][:8]
+        record = {
+            "conversation_id": convo_id,
+            "trajectory": conv_turns,
+            "first_divergence": first,
+            "error_type": (
+                "route" if first and first.get("predicted_action") != first.get("gold_action")
+                else "slot" if first else "none"
+            ),
+            "action_sequence": actions,
+            "graph_context": graph_context,
+            "protected_successes": protected,
+        }
+        evidence_records.append(record)
+    _write(batch_root / "trajectory_evidence.json", json.dumps(evidence_records, indent=2, ensure_ascii=False))
+    evidence_by_id = {item["conversation_id"]: item for item in evidence_records}
+    for case in failures + successes:
+        cid = str(case.get("dialogue_id", case.get("instance_id", "")).removeprefix("abcd-"))
+        evidence = evidence_by_id.get(cid)
+        if not evidence:
+            continue
+        case["hybrid_evidence"] = evidence
+        case["trajectory"] = (
+            str(case.get("trajectory", ""))
+            + "\n\n## Typed ToD Decision Evidence\n"
+            + json.dumps(evidence, ensure_ascii=False, indent=2)
+        )
+    error_path = None
+    success_path = None
+    if failures and successes:
+        # Error and success analyses are independent and write separate
+        # artifact trees, so overlap their network-bound LLM calls.
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            error_future = executor.submit(
+                trace2skill_impl._run_error_analysis,
+                failures, batch_root / "error_analysis", model, response_logger,
+                batch_size=analysis_batch_size,
+            )
+            success_future = executor.submit(
+                trace2skill_impl._run_success_analysis,
+                successes, batch_root / "success_analysis", model, response_logger,
+                batch_size=analysis_batch_size,
+            )
+            error_path = error_future.result()
+            success_path = success_future.result()
+    elif failures:
+        error_path = trace2skill_impl._run_error_analysis(
+            failures, batch_root / "error_analysis", model, response_logger,
+            batch_size=analysis_batch_size,
+        )
+    elif successes:
+        success_path = trace2skill_impl._run_success_analysis(
+            successes, batch_root / "success_analysis", model, response_logger,
+            batch_size=analysis_batch_size,
+        )
+    changelog = []
+    if error_path or success_path:
+        changelog = trace2skill_impl._run_skill_evolution(
+            error_path, success_path, skill_path,
+            batch_root / "evolution", model, response_logger,
+            map_batch_size=map_batch_size,
+        )
+    updated_skill = skill_path.read_text(encoding="utf-8")
+    summary = {
+        "batch_index": batch_index,
+        "num_conversations": len(conversations),
+        "num_turns": len(turns),
+        "rollout_workers": rollout_workers,
+        "analysis_workers": 2 if failures and successes else 1,
+        "failed_cases": len(failures),
+        "successful_cases": len(successes),
+        "changelog": changelog,
+        "skill_path": str(skill_path),
+    }
+    _write(batch_root / "batch_summary.json", json.dumps(summary, indent=2, ensure_ascii=False))
+    return updated_skill, summary
 
 
 def _load_successful_posthoc_artifact(path: Path, expected_ids: list[str]) -> dict | None:
@@ -129,6 +269,37 @@ def _run_parallel_online_wave(
             "batch": batch,
             "turns": turns,
         }
+
+    # A transplanted Trace2Skill batch must remain one semantic unit: all
+    # conversations are rolled out against the same frozen skill and then fed
+    # to one analysis/evolution pass. Split only the rollout work across
+    # workflow workers and merge the turn rows before returning.
+    if args.refinement_mode == "trace2skill-hybrid" and len(batches) == 1 and len(ids) > 1:
+        batch = batches[0]
+        chunks = [
+            batch[start:start + (len(batch) + len(ids) - 1) // len(ids)]
+            for start in range(0, len(batch), (len(batch) + len(ids) - 1) // len(ids))
+        ]
+        chunks = [chunk for chunk in chunks if chunk]
+        results: dict[int, dict] = {}
+        with ThreadPoolExecutor(max_workers=min(len(ids), len(chunks))) as executor:
+            futures = {
+                executor.submit(run_one, index, chunk, ids[index % len(ids)]): index
+                for index, chunk in enumerate(chunks)
+            }
+            for future in as_completed(futures):
+                item = future.result()
+                results[item["batch_index"]] = item
+        merged_turns = [
+            row for index in sorted(results) for row in results[index]["turns"]
+        ]
+        return [{
+            "batch_index": 0,
+            "workflow_id": ",".join(str(item["workflow_id"]) for item in results.values()),
+            "batch": batch,
+            "turns": merged_turns,
+            "parallel_rollout_workers": len(chunks),
+        }]
 
     if len(batches) == 1:
         return [run_one(0, batches[0], ids[0])]
@@ -246,6 +417,10 @@ def _build_agent(args, working_skill: str, base_reference: str, action_rules: st
     return ABCDAgent(
         model=args.model,
         workflow=workflow,
+        # Keep the full evolving skill visible to the runtime. Trace2Skill's
+        # agent uses the same unbounded workflow prompt; the ABCDAgent default
+        # of 8000 chars would silently truncate later online additions.
+        workflow_max_chars=None,
         memory=MemoryStore(),
         reference_text=base_reference.rstrip() + "\n\n" + online_reference,
         action_rules_text=action_rules.rstrip() + "\n\n" + render_online_action_rules(state),
@@ -550,7 +725,11 @@ def main() -> None:
         "--batch-size",
         type=int,
         default=8,
-        help="Representative rollout sessions per online update batch (default: 8).",
+        help="Rollout batch size for the standard online-refine path (default: 8).",
+    )
+    parser.add_argument(
+        "--trace2skill-batch-size", type=int, default=25,
+        help="Complete conversations per transplanted Trace2Skill batch (default: 25).",
     )
     parser.add_argument("--per-transition-cap", type=int, default=3)
     parser.add_argument(
@@ -560,6 +739,10 @@ def main() -> None:
     parser.add_argument("--max-batches", type=int, default=None)
     parser.add_argument("--max-train", type=int, default=None)
     parser.add_argument("--max-test", type=int, default=None)
+    parser.add_argument(
+        "--analysis-batch-size", type=int, default=8,
+        help="Trace2Skill-compatible success/error analysis batch size (default: 8).",
+    )
     parser.add_argument(
         "--skip-utterance-eval", action="store_true",
         help="Final held-out evaluation only predicts/evaluates action turns; text metrics are left empty.",
@@ -588,8 +771,8 @@ def main() -> None:
         help="Post-rollout synthesis: direct reflection, Trace2Skill hybrid, or constrained local repair.",
     )
     parser.add_argument(
-        "--hybrid-map-batch-size", type=int, default=4,
-        help="Diagnosed reports per local MAP call in trace2skill-hybrid mode (default: 4).",
+        "--hybrid-map-batch-size", type=int, default=8,
+        help="Trace2Skill MAP records per call in trace2skill-hybrid mode (default: 8).",
     )
     parser.add_argument("--skip-guard-llm", action="store_true",
                         help="Only collect graph evidence and deterministic patches")
@@ -600,6 +783,10 @@ def main() -> None:
     args = parser.parse_args()
     if args.hybrid_map_batch_size <= 0:
         parser.error("--hybrid-map-batch-size must be positive")
+    if args.analysis_batch_size <= 0:
+        parser.error("--analysis-batch-size must be positive")
+    if args.trace2skill_batch_size <= 0:
+        parser.error("--trace2skill-batch-size must be positive")
     if args.guard_retries <= 0:
         parser.error("--guard-retries must be positive")
     if args.stop_on_error:
@@ -790,7 +977,12 @@ def main() -> None:
         # Roll out action-turn samples under one frozen skill snapshot.  The
         # constrained mode uses an uncertainty/locality budget; other modes
         # retain the historical full action-turn schedule.
-        if args.refinement_mode == "constrained-repair":
+        if args.refinement_mode == "trace2skill-hybrid":
+            batches = schedule_trace2skill_conversation_batches(
+                train, batch_size=args.trace2skill_batch_size, max_batches=args.max_batches,
+            )
+            schedule_unit = "conversation_sequence_similarity"
+        elif args.refinement_mode == "constrained-repair":
             batches = schedule_constrained_repair_batches(
                 train, state, batch_size=args.batch_size,
                 per_transition_cap=args.per_transition_cap,
@@ -810,24 +1002,31 @@ def main() -> None:
             "num_train_sessions": len(train),
             "num_selected_samples": sum(len(batch) for batch in batches),
             "batch_size": args.batch_size,
+            "trace2skill_batch_size": args.trace2skill_batch_size,
             "per_transition_cap": args.per_transition_cap,
             "target_selection_rate": args.target_selection_rate,
             "selection_unit": schedule_unit,
             "refinement_mode": args.refinement_mode,
             "max_batches": args.max_batches,
             "batches": [
-                {"batch_index": index, "samples": [
-                    {k: value for k, value in item.items() if k != "conversation"}
-                    for item in batch
-                ]}
+                (
+                    {"batch_index": index, "conversation_ids": [
+                        str(item.get("convo_id", "?")) for item in batch
+                    ]}
+                    if args.refinement_mode == "trace2skill-hybrid"
+                    else {"batch_index": index, "samples": [
+                        {k: value for k, value in item.items() if k != "conversation"}
+                        for item in batch
+                    ]}
+                )
                 for index, batch in enumerate(batches, start=1)
             ],
         }, indent=2, ensure_ascii=False))
     selected_sessions = sum(len(batch) for batch in batches)
     log.info(
-        "Contrastive rollout schedule: selected=%d/%d sessions (%.1f%%; target=%.1f%%), batches=%d, per_transition_cap=%d",
+        "Rollout schedule: selected=%d/%d sessions (%.1f%%; target=%.1f%%), batches=%d, unit=%s",
         selected_sessions, len(train), 100 * selected_sessions / max(len(train), 1),
-        100 * args.target_selection_rate, len(batches), args.per_transition_cap,
+        100 * args.target_selection_rate, len(batches), schedule_unit,
     )
     policy = RefinementPolicy(
         min_gold_support=args.min_gold_support,
@@ -841,7 +1040,13 @@ def main() -> None:
 
     # Rollouts may run concurrently on independent workflow agents. The
     # parent process still localizes and applies updates in batch order.
-    wave_size = max(1, len(refine_workflow_ids)) if refine_workflow_ids else 1
+    # The transplanted Trace2Skill path updates the skill after each complete
+    # conversation batch, so batches must be serialized even with workflow
+    # sharding. Standard online refinement retains its parallel waves.
+    wave_size = (
+        1 if args.refinement_mode == "trace2skill-hybrid"
+        else (max(1, len(refine_workflow_ids)) if refine_workflow_ids else 1)
+    )
     remaining_batches = batches[completed:]
     rollout_record_log = out_dir / "post_rollout_records.jsonl"
     all_rollout_records: list[dict] = []
@@ -908,20 +1113,95 @@ def main() -> None:
             batch_index = completed + item["batch_index"] + 1
             batch = item["batch"]
             turns = item["turns"]
-            result_by_key = {
-                (str(row.get("convo_id", "?")), int(row.get("turn_index", -1))): row
-                for row in turns
-            }
-            for sample in batch:
-                result = result_by_key.get((str(sample.get("conversation_id", "?")), int(sample.get("turn_index", -1))))
-                if result is not None:
+            if args.refinement_mode == "trace2skill-hybrid":
+                working_skill, hybrid_summary = _run_trace2skill_hybrid_batch(
+                    batch_index=batch_index, conversations=batch, turns=turns,
+                    out_dir=out_dir, working_skill=working_skill,
+                    base_reference=base_reference,
+                    action_rules=action_rules + "\n" + render_online_action_rules(state),
+                    slot_policies=slot_policies + "\n" + render_online_slot_policies(state),
+                    state=state,
+                    rollout_workers=item.get("parallel_rollout_workers", 1),
+                    model=args.model, response_logger=response_logger,
+                    analysis_batch_size=args.analysis_batch_size,
+                    map_batch_size=args.hybrid_map_batch_size,
+                )
+                state["batches_processed"] = batch_index
+                state.setdefault("trace2skill_hybrid_history", []).append(hybrid_summary)
+                working_skill = _checkpoint(
+                    out_dir, state, working_skill, base_reference, policy,
+                    slot_policies, action_rules,
+                )
+                log.info(
+                    "Trace2Skill hybrid batch=%d conversations=%d rollout_workers=%d failures=%d successes=%d changes=%d",
+                    batch_index, hybrid_summary["num_conversations"],
+                    item.get("parallel_rollout_workers", 1),
+                    hybrid_summary["failed_cases"], hybrid_summary["successful_cases"],
+                    len(hybrid_summary["changelog"]),
+                )
+                continue
+            # Trace2Skill-hybrid rolls out complete conversations. Preserve the
+            # full turn trajectory on every action record so diagnosis/MAP can
+            # reason over the same evidence as Trace2Skill's analyzers.
+            if args.refinement_mode == "trace2skill-hybrid" and batch and "turn_index" not in batch[0]:
+                conversations_by_id = {
+                    str(conv.get("convo_id", "?")): conv for conv in batch
+                }
+                turns_by_id = defaultdict(list)
+                for row in turns:
+                    turns_by_id[str(row.get("convo_id", "?"))].append(row)
+                for row in turns:
+                    if row.get("target_type") != "action":
+                        continue
+                    convo_id = str(row.get("convo_id", "?"))
+                    conversation = conversations_by_id.get(convo_id, {})
+                    turn_index = int(row.get("turn_index", -1))
+                    delexed = conversation.get("delexed", [])
+                    target_turn = delexed[turn_index] if 0 <= turn_index < len(delexed) else {}
+                    targets = target_turn.get("targets", []) if isinstance(target_turn, dict) else []
+                    prefix_actions = [
+                        str(turn.get("targets", [None, None, ""])[2])
+                        for turn in delexed[:turn_index]
+                        if isinstance(turn, dict)
+                        and len(turn.get("targets", [])) >= 3
+                        and turn.get("targets", [None, None])[1] == "take_action"
+                    ]
+                    source_action = prefix_actions[-1] if prefix_actions else "ROOT"
+                    sample = {
+                        "sample_id": f"{convo_id}:{turn_index}",
+                        "conversation_id": convo_id,
+                        "convo_id": convo_id,
+                        "turn_index": turn_index,
+                        "source_action": source_action,
+                        "source_turn": None,
+                        "prefix_action_sequence": prefix_actions,
+                        "target_action": str(targets[2]) if len(targets) >= 3 else "",
+                        "gold_slots": targets[3] if len(targets) > 3 and isinstance(targets[3], list) else [],
+                        "conversation": conversation,
+                    }
                     rollout_record = {
                         "sample": {key: value for key, value in sample.items() if key != "conversation"},
-                        "result": result,
+                        "result": row,
+                        "trajectory": turns_by_id[convo_id],
                     }
                     all_rollout_records.append(rollout_record)
                     wave_rollout_records.append(rollout_record)
                     _append_jsonl(rollout_record_log, rollout_record)
+            else:
+                result_by_key = {
+                    (str(row.get("convo_id", "?")), int(row.get("turn_index", -1))): row
+                    for row in turns
+                }
+                for sample in batch:
+                    result = result_by_key.get((str(sample.get("conversation_id", "?")), int(sample.get("turn_index", -1))))
+                    if result is not None:
+                        rollout_record = {
+                            "sample": {key: value for key, value in sample.items() if key != "conversation"},
+                            "result": result,
+                        }
+                        all_rollout_records.append(rollout_record)
+                        wave_rollout_records.append(rollout_record)
+                        _append_jsonl(rollout_record_log, rollout_record)
             _write(out_dir / "rollouts" / f"batch_{batch_index:04d}.json",
                    json.dumps(turns, indent=2, ensure_ascii=False))
             localized = localize_rollout_batch(batch, turns, state)
