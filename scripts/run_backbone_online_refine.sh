@@ -44,6 +44,9 @@ Options:
   --hf-endpoint URL          Default: https://hf-mirror.com
   --python-bin PATH          Default: python
   --batch-size N             Online rollout batch size (default: 8)
+  --trace2skill-batch-size N Complete conversations per hybrid batch (default: 25)
+  --analysis-batch-size N    Max cases per Trace2Skill analysis request (default: 8;
+                             also bounded by the prompt-size safety budget)
   --per-transition-cap N     Max representative sessions per transition (default: 3)
   --target-selection-rate R  Target fraction of train sessions for online rollout (default: 0.30)
   --refinement-mode MODE     standard, trace2skill-hybrid, or constrained-repair

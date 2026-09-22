@@ -80,6 +80,27 @@ def _append_jsonl(path: Path, record: dict) -> None:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def _trace2skill_turn_view(row: dict) -> dict:
+    """Project a rollout row to the trajectory Trace2Skill is allowed to see.
+
+    The trajectory is the dialogue prefix plus the current-turn prediction.
+    Runtime ReAct/tool diagnostics are deliberately excluded: ``react_trace``,
+    reference-planning messages, action-selection messages, and prompt-budget
+    fields can contain the complete LLM prompt (including the whole skill).
+    """
+    allowed = (
+        "convo_id", "turn_index", "agent_turn_num", "target_type",
+        "total_agent_turns", "subflow", "flow", "context", "context_view",
+        "prediction", "predicted_action",
+        "predicted_slots", "action_schema_validation",
+    )
+    return {
+        key: row.get(key)
+        for key in allowed
+        if key in row
+    }
+
+
 def _run_trace2skill_hybrid_batch(
     *, batch_index: int, conversations: list[dict], turns: list[dict],
     out_dir: Path, working_skill: str, base_reference: str,
@@ -104,22 +125,24 @@ def _run_trace2skill_hybrid_batch(
     (skill_dir / "reference.md").write_text(base_reference, encoding="utf-8")
     (skill_dir / "action_rules.md").write_text(action_rules, encoding="utf-8")
     (skill_dir / "slot_policies.md").write_text(slot_policies, encoding="utf-8")
-    ast_scores = trace2skill_impl.compute_ast_from_turn_results(conversations, turns)
+    # Keep the full prefix/current-prediction trajectory, but never pass the
+    # runtime's complete ReAct trace into the transplanted Trace2Skill path.
+    trace_turns = [_trace2skill_turn_view(row) for row in turns]
+    ast_scores = trace2skill_impl.compute_ast_from_turn_results(conversations, trace_turns)
     failures = trace2skill_impl._build_ast_failure_cases(
-        conversations, turns, ast_scores,
+        conversations, trace_turns, ast_scores,
         log_dir=batch_root / "failure_logs", hide_scenario_labels=False,
     )
     successes = trace2skill_impl._build_ast_success_cases(
-        conversations, turns, ast_scores,
+        conversations, trace_turns, ast_scores,
         log_dir=batch_root / "success_logs", hide_scenario_labels=False,
     )
-    # Attach a typed bridge record to the original Trace2Skill cases. The
-    # original trajectory remains intact; this adds ToD decision scope and
-    # lets its analysis/evolver use graph evidence without a second reflector.
+    # Attach a typed bridge record to the Trace2Skill cases. The trajectory
+    # passed to the analyzer is exactly the prefix/current-prediction view;
+    # graph evidence is an additional compact ToD resource, not a ReAct dump.
     turns_by_convo: dict[str, list[dict]] = defaultdict(list)
-    for row in turns:
+    for row in trace_turns:
         turns_by_convo[str(row.get("convo_id", "?"))].append(row)
-    conv_by_id = {str(conv.get("convo_id", "?")): conv for conv in conversations}
     evidence_records = []
     for conv, ast in zip(conversations, ast_scores):
         convo_id = str(conv.get("convo_id", "?"))
@@ -153,16 +176,42 @@ def _run_trace2skill_hybrid_batch(
         evidence_records.append(record)
     _write(batch_root / "trajectory_evidence.json", json.dumps(evidence_records, indent=2, ensure_ascii=False))
     evidence_by_id = {item["conversation_id"]: item for item in evidence_records}
+    # The case trajectory above is the only trajectory sent to Trace2Skill:
+    # complete dialogue prefixes plus current-turn predictions.  The runtime
+    # ReAct/tool records are intentionally absent from this evidence bridge.
+    def _analysis_evidence(record: dict) -> dict:
+        first = record.get("first_divergence")
+        if isinstance(first, dict):
+            first = {
+                key: first.get(key)
+                for key in (
+                    "action_turn_index", "source_agent_turn_index",
+                    "predicted_action", "predicted_slots", "gold_action",
+                    "gold_slots", "action_match", "slots_match",
+                    "source_agent_response", "reference_agent_response",
+                )
+                if key in first
+            }
+        return {
+            "conversation_id": record.get("conversation_id"),
+            "first_divergence": first,
+            "error_type": record.get("error_type"),
+            "action_sequence": record.get("action_sequence", []),
+            "graph_context": record.get("graph_context", {}),
+            "protected_successes": record.get("protected_successes", []),
+        }
+
     for case in failures + successes:
         cid = str(case.get("dialogue_id", case.get("instance_id", "")).removeprefix("abcd-"))
         evidence = evidence_by_id.get(cid)
         if not evidence:
             continue
-        case["hybrid_evidence"] = evidence
+        prompt_evidence = _analysis_evidence(evidence)
+        case["hybrid_evidence"] = prompt_evidence
         case["trajectory"] = (
             str(case.get("trajectory", ""))
             + "\n\n## Typed ToD Decision Evidence\n"
-            + json.dumps(evidence, ensure_ascii=False, indent=2)
+            + json.dumps(prompt_evidence, ensure_ascii=False, indent=2)
         )
     error_path = None
     success_path = None

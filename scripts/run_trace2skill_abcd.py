@@ -56,6 +56,10 @@ DEFAULT_SKILL_PATH = "eval_tod/skills/abcd_trace2skill/SKILL.md"
 DEFAULT_MODEL = "deepseek-chat"
 DEFAULT_LLM_QPS = 3.0
 ABCD_ERROR_ANALYSIS_BATCH_SIZE = 8
+# The provider used by the online runs accepts a very large context, but the
+# effective limit is still finite (and varies by deployment). Batch size is
+# therefore a case-count ceiling, not a promise that every request fits.
+ABCD_ANALYSIS_PROMPT_CHAR_BUDGET = 400_000
 log = logging.getLogger("abcd_trace2skill")
 _REPORT_ITEM_PATTERN = re.compile(
     r"^#\s+(Failure Cause Item|Failure Memory Item)\s+(\d+)\s*\n",
@@ -629,8 +633,12 @@ def _build_annotated_conversation_trajectory(
             "Dialogue context:",
             row.get("context", ""),
             f"Agent response: {row.get('prediction', '')}",
-            f"Reference response: {row.get('reference', '')}",
         ])
+        # Reference text is optional diagnostic evidence. Hybrid's sanitized
+        # trajectory intentionally omits it, so the online analyzer receives
+        # only the dialogue prefix and the current prediction.
+        if row.get("reference"):
+            parts.append(f"Reference response: {row.get('reference', '')}")
         if truth is None:
             parts.extend(["Turn type: non-action / not scored for AST", ""])
             continue
@@ -850,7 +858,60 @@ def _build_parseable_report_suffix(
     ])
 
 
+def _analysis_case_for_prompt(case: dict[str, Any]) -> dict[str, Any]:
+    """Return the complete prefix/current-prediction view for a prompt.
+
+    Hybrid preprocessing already removes runtime ReAct/tool diagnostics. Do
+    not truncate the trajectory here: Trace2Skill's evidence contract is the
+    complete dialogue prefix plus the current prediction. The batch splitter
+    controls request size by reducing the number of cases, not by deleting
+    valid trajectory evidence.
+    """
+    return dict(case)
+
+
+def _split_analysis_batches(
+    cases: list[dict[str, Any]],
+    batch_size: int,
+    prompt_builder,
+) -> list[list[dict[str, Any]]]:
+    """Split by both configured case count and serialized prompt size."""
+    limit = max(1, int(batch_size))
+    batches: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    for case in cases:
+        candidate = current + [case]
+        too_many = len(candidate) > limit
+        too_large = bool(current) and len(prompt_builder(candidate)) > ABCD_ANALYSIS_PROMPT_CHAR_BUDGET
+        if current and (too_many or too_large):
+            batches.append(current)
+            current = [case]
+        else:
+            current = candidate
+    if current:
+        batches.append(current)
+    return batches
+
+
+def _build_success_analysis_batch_prompt(cases: list[dict[str, Any]]) -> str:
+    parts = [
+        "## ABCD Successful-Target Batch",
+        f"Analyze exactly {len(cases)} conversations independently.",
+        "",
+    ]
+    for case_index, case in enumerate(cases, start=1):
+        prompt_case = _analysis_case_for_prompt(case)
+        parts.extend([
+            f"===== CASE {case_index}: {prompt_case['instance_id']} =====",
+            _ABCD_SUCCESS_ANALYSIS_USER_TEMPLATE.format(**prompt_case),
+            f"===== END CASE {case_index} =====",
+            "",
+        ])
+    return "\n".join(parts)
+
+
 def _build_verified_analysis_prompt(case: dict[str, Any], feedback: str | None = None) -> str:
+    case = _analysis_case_for_prompt(case)
     prompt = "\n".join([
         "## Failed ABCD Dialogue",
         f"Dialogue ID: {case.get('dialogue_id', 'N/A')}",
@@ -1107,10 +1168,14 @@ def _run_verified_abcd_error_analysis(
     output_paths: list[str] = []
 
     batch_size = max(1, int(batch_size))
-    for batch_index, batch in enumerate(_chunk_list(failed_cases, batch_size), start=1):
+    batches = _split_analysis_batches(
+        failed_cases, batch_size, _build_verified_analysis_batch_prompt
+    )
+    for batch_index, batch in enumerate(batches, start=1):
         print(
             f"  ABCD error-analysis batch {batch_index}/"
-            f"{(len(failed_cases) + batch_size - 1) // batch_size}: {len(batch)} cases"
+            f"{len(batches)}: {len(batch)} cases "
+            f"(prompt_chars={len(_build_verified_analysis_batch_prompt(batch))})"
         )
         raw = ""
         payload: dict[str, Any] | None = None
@@ -1332,23 +1397,16 @@ def _run_success_analysis(
     output_dir.mkdir(parents=True, exist_ok=True)
     records: list[dict[str, Any]] = []
     batch_size = max(1, int(batch_size))
-    batches = _chunk_list(success_cases, batch_size)
+    batches = _split_analysis_batches(
+        success_cases, batch_size, _build_success_analysis_batch_prompt
+    )
     for batch_index, batch in enumerate(batches, start=1):
-        log.info("Success analysis batch %d/%d: %d conversations (batch_size=%d)",
-                 batch_index, len(batches), len(batch), batch_size)
-        parts = [
-            "## ABCD Successful-Target Batch",
-            f"Analyze exactly {len(batch)} conversations independently.",
-            "",
-        ]
-        for case_index, case in enumerate(batch, start=1):
-            parts.extend([
-                f"===== CASE {case_index}: {case['instance_id']} =====",
-                _ABCD_SUCCESS_ANALYSIS_USER_TEMPLATE.format(**case),
-                f"===== END CASE {case_index} =====",
-                "",
-            ])
-        batch_prompt = "\n".join(parts)
+        batch_prompt = _build_success_analysis_batch_prompt(batch)
+        log.info(
+            "Success analysis batch %d/%d: %d conversations "
+            "(case_limit=%d, prompt_chars=%d)",
+            batch_index, len(batches), len(batch), batch_size, len(batch_prompt),
+        )
         expected_ids = {str(case["instance_id"]) for case in batch}
         payload: dict[str, Any] = {}
         feedback: str | None = None
@@ -1413,7 +1471,7 @@ def _run_success_analysis(
             report = "\n\n".join(report_parts)
             prompt_path.write_text(
                 "===== SYSTEM MESSAGE =====\n\n" + _ABCD_SUCCESS_ANALYSIS_BATCH_SYSTEM.rstrip()
-                + "\n\n===== USER MESSAGE =====\n\n" + "\n".join(parts).rstrip() + "\n",
+                + "\n\n===== USER MESSAGE =====\n\n" + batch_prompt.rstrip() + "\n",
                 encoding="utf-8",
             )
             report_path.write_text(report, encoding="utf-8")
