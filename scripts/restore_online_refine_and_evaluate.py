@@ -21,8 +21,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from awm import MemoryStore, WorkflowStore
+from eval_tod.abcd.agent import ABCDAgent
 from eval_tod.response_logger import ResponseLogger
-from scripts.run_backbone_online_refine import _build_agent, _write
 from scripts.run_subflow_eval import evaluate_agent_on_subflow, load_subflow_data
 from skill_mining.online_refinement import (
     apply_dynamic_skill_operations,
@@ -36,6 +37,34 @@ from skill_mining.online_refinement import (
     render_online_slot_policies,
     save_skill_dag,
 )
+
+
+def _write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def _build_agent(args, working_skill: str, base_reference: str,
+                 action_rules: str, slot_policies: str, state: dict,
+                 response_logger=None, workflow_id: str | None = None):
+    """Build an ABCD agent without importing the newer online runner."""
+    _, online_reference = render_online_resources(state)
+    workflow = WorkflowStore()
+    workflow.update(working_skill)
+    return ABCDAgent(
+        model=args.model,
+        workflow=workflow,
+        workflow_max_chars=None,
+        memory=MemoryStore(),
+        reference_text=base_reference.rstrip() + "\n\n" + online_reference,
+        action_rules_text=action_rules.rstrip() + "\n\n" + render_online_action_rules(state),
+        slot_policies_text=slot_policies.rstrip() + "\n\n" + render_online_slot_policies(state),
+        response_logger=response_logger,
+        reference_top_k=args.reference_top_k,
+        reference_max_chars=args.reference_max_chars,
+        expose_scenario_labels=False,
+        workflow_id=workflow_id,
+    )
 
 # The repair/evaluation ResponseLogger creates this subdirectory inside the
 # output directory before restore() runs, so it must not be mistaken for

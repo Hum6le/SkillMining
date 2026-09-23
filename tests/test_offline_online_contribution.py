@@ -50,6 +50,37 @@ def test_audit_reports_resource_update_card_and_paired_prediction_changes(tmp_pa
     assert "c1|2" in _json_safe(report)["card_runtime"]["per_turn"]
 
 
+def test_hybrid_batch_inventory_separates_update_samples_from_eval_rows(tmp_path: Path):
+    run = tmp_path / "run"
+    run.mkdir()
+    batch_root = run / "trace2skill_hybrid_batches"
+    first = batch_root / "batch_0001"
+    second = batch_root / "batch_0002"
+    for path, count in ((first, 2), (second, 1)):
+        path.mkdir(parents=True)
+        (path / "batch_summary.json").write_text(json.dumps({
+            "num_conversations": count, "num_turns": count * 3,
+            "failed_cases": count, "successful_cases": 0, "changelog": ["updated"],
+        }), encoding="utf-8")
+        (path / "trajectory_evidence.json").write_text(json.dumps([
+            {"conversation_id": f"c{i}", "trajectory": [{}, {}, {}]}
+            for i in range(count)
+        ]), encoding="utf-8")
+    (run / "rollout_schedule.json").write_text(json.dumps({
+        "num_selected_samples": 3, "batch_size": 2, "batches": [{}, {}],
+    }), encoding="utf-8")
+
+    report = analyze(run)
+
+    hybrid = report["trace2skill_hybrid"]
+    assert hybrid["batch_count"] == 2
+    assert hybrid["scheduled_selected_samples"] == 3
+    assert [row["trajectory_evidence_turns"] for row in hybrid["batches"]] == [6, 3]
+    rendered = render_markdown(report)
+    assert "autonomous-reflection" in rendered
+    assert "held-out prediction/action-turn counts are different denominators" in rendered
+
+
 def test_plan_execute_tools_are_read_only_and_confined(tmp_path: Path):
     run_dir = tmp_path / "run"
     run_dir.mkdir()

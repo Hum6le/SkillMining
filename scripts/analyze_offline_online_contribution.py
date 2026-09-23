@@ -167,6 +167,66 @@ def _evidence_stats(run_dir: Path) -> dict[str, Any]:
     }
 
 
+def _hybrid_batch_stats(run_dir: Path) -> dict[str, Any]:
+    """Count hybrid update batches and their actual conversation-level evidence."""
+    root = run_dir / "trace2skill_hybrid_batches"
+    batches = []
+    for batch_dir in sorted(root.glob("batch_*")) if root.is_dir() else []:
+        if not batch_dir.is_dir():
+            continue
+        summary = read_json(batch_dir / "batch_summary.json") or {}
+        evidence = read_json(batch_dir / "trajectory_evidence.json")
+        evidence_rows = evidence if isinstance(evidence, list) else []
+        parsed_counts = {}
+        parsed_ids = set()
+        for filename in ("error_analysis_parsed.json", "success_analysis_parsed.json"):
+            payload = read_json(batch_dir / filename)
+            rows = payload if isinstance(payload, list) else []
+            ids = {
+                str(row.get("conversation_id", row.get("dialogue_id", row.get("instance_id", ""))))
+                for row in rows if isinstance(row, dict)
+            }
+            parsed_ids.update(value for value in ids if value)
+            parsed_counts[filename] = len(rows)
+        unique_ids = {
+            str(row.get("conversation_id", "")) for row in evidence_rows
+            if isinstance(row, dict) and row.get("conversation_id") is not None
+        }
+        turns = sum(
+            len(row.get("trajectory", [])) for row in evidence_rows
+            if isinstance(row, dict) and isinstance(row.get("trajectory", []), list)
+        )
+        evolution = batch_dir / "evolution"
+        applied_diffs = sorted(evolution.glob("applied_diffs.patch"))
+        batches.append({
+            "batch": batch_dir.name,
+            "summary_exists": (batch_dir / "batch_summary.json").is_file(),
+            "num_conversations_summary": summary.get("num_conversations"),
+            "num_turns_summary": summary.get("num_turns"),
+            "failed_cases_summary": summary.get("failed_cases"),
+            "successful_cases_summary": summary.get("successful_cases"),
+            "changelog_entries": len(summary.get("changelog", [])) if isinstance(summary.get("changelog", []), list) else None,
+            "trajectory_evidence_conversations": len(unique_ids),
+            "trajectory_evidence_unique_ids": sorted(unique_ids),
+            "trajectory_evidence_turns": turns,
+            "parsed_analysis_records": parsed_counts,
+            "parsed_analysis_unique_conversations": len(parsed_ids),
+            "applied_diff_files": len(applied_diffs),
+            "applied_diff_chars": sum(len(read_text(path)) for path in applied_diffs),
+        })
+    schedule = read_json(run_dir / "rollout_schedule.json") or {}
+    scheduled_batches = schedule.get("batches", []) if isinstance(schedule, dict) else []
+    return {
+        "batch_count": len(batches),
+        "batches": batches,
+        "scheduled_batch_count": len(scheduled_batches) if isinstance(scheduled_batches, list) else None,
+        "scheduled_selected_samples": schedule.get("num_selected_samples") if isinstance(schedule, dict) else None,
+        "scheduled_batch_size": schedule.get("batch_size") if isinstance(schedule, dict) else None,
+        "schedule_file_exists": (run_dir / "rollout_schedule.json").is_file(),
+        "interpretation": "Hybrid batch count is the number of sequential skill-update batches, not the held-out evaluation sample count.",
+    }
+
+
 def _load_prediction_rows(run_dir: Path) -> list[dict[str, Any]]:
     for name in ("online_refined_predictions.json", "evolved_test_turns.json", "online_refine_predictions.json"):
         payload = read_json(run_dir / name)
@@ -280,6 +340,7 @@ def analyze(run_dir: Path, *, comparison_dir: Path | None = None, test_data: Pat
         "resources": _resource_inventory(run_dir),
         "online_updates": _online_update_stats(run_dir),
         "online_evidence": _evidence_stats(run_dir),
+        "trace2skill_hybrid": _hybrid_batch_stats(run_dir),
         "card_runtime": _card_stats(run_dir, test_data),
         "comparison": None,
         "causal_warning": "One run cannot establish the offline contribution. A valid paired comparison needs the same held-out turns, model/settings, and online procedure, differing only in the offline artifact condition.",
@@ -387,7 +448,7 @@ class AuditFileTools:
 PLAN_SYSTEM = """You are the planning phase of a Plan-Execute research agent diagnosing why offline ABCD/ToD mining adds little benefit to online refinement. Inspect the supplied artifact inventory and deterministic measurements. Return one JSON object only:
 {"plan":[{"question":"...","tool":"read_file|list_files|search_text","path":"primary/...","why":"..."}],"competing_hypotheses":["..."],"report_outline":["..."]}
 
-Plan 5-8 concrete read-only inspections in priority order. Cover resource generation/loading, actual online action-card retrieval on evaluation predictions, update acceptance/retention, Trace2Skill analysis/MAP/REDUCE/APPLY if present, and a matched comparison if supplied. Do not claim any finding before execution."""
+Plan 8-12 concrete read-only inspections in priority order. First reconcile every hybrid batch listed in deterministic audit counts with its summary/evidence. Cover resource generation/loading, actual online action-card retrieval on evaluation predictions, update acceptance/retention, Trace2Skill analysis/MAP/REDUCE/APPLY if present, and a matched comparison if supplied. Do not claim any finding before execution. Distinguish training/update conversations and turns from held-out evaluation rows. A zero autonomous_reflection batch count is not evidence that Trace2Skill hybrid did not update the skill when hybrid applied diffs/changelog exist."""
 
 EXECUTE_SYSTEM = """You are the execute phase of a Plan-Execute research agent. Use the current plan and observations to choose one next read-only file operation. You may adapt the plan when evidence contradicts a hypothesis. Do not infer unobserved facts. Return exactly one JSON object:
 {"action":"read_file","path":"primary/relative/path","start_line":1,"max_lines":140}
@@ -395,7 +456,7 @@ or {"action":"list_files","path":"primary/relative/dir","glob":"*.json","max_ite
 or {"action":"search_text","path":"primary/relative/dir","query":"regex","max_files":40}
 or {"action":"finish","reason":"enough evidence"}
 
-Allowed path prefixes: primary/, comparison/ (only if comparison was supplied), repo/. Inspect at least three distinct files before finishing. Prefer files that can discriminate competing hypotheses. Never write or execute files."""
+Allowed path prefixes: primary/, comparison/ (only if comparison was supplied), repo/. Inspect all listed Trace2Skill hybrid batch_summary.json files (or state which are missing), at least one trajectory_evidence.json per batch when available, plus files that discriminate competing hypotheses. Inspect at least three distinct files before finishing. Never write or execute files."""
 
 SYNTHESIS_SYSTEM = """You are the synthesis phase of a Plan-Execute research agent. Produce a thorough, evidence-grounded Chinese report, not JSON. Use Markdown with these sections: Executive Summary; Experimental Comparison (table with raw metrics/deltas and sample overlap); Evidence Chain (offline artifacts -> loaded resources -> online runtime/action-card retrieval -> online updates -> retained skill -> held-out outcomes); Key Findings (each separated into observation/evidence, interpretation, implication, next test); Competing Explanations; Recommended Minimal Next Experiment (controls, measured outputs, decision criteria); Limitations. Clearly label facts vs hypotheses. Cite exact artifact paths and quoted values. If there is no matched control, explicitly state the offline contribution is not causally identified. Do not hallucinate data or present proposals as findings."""
 
@@ -403,7 +464,7 @@ SYNTHESIS_SYSTEM = """You are the synthesis phase of a Plan-Execute research age
 def _compact_report(report: dict[str, Any]) -> dict[str, Any]:
     card = report["card_runtime"]
     compact = {key: report.get(key) for key in (
-        "run_dir", "metrics", "resources", "online_updates", "online_evidence",
+        "run_dir", "metrics", "resources", "online_updates", "online_evidence", "trace2skill_hybrid",
         "comparison", "causal_warning",
     )}
     compact["card_runtime"] = {
@@ -584,6 +645,14 @@ def render_markdown(report: dict[str, Any]) -> str:
     update = report["online_updates"]
     lines.extend(["", "## Online Learning", "",
         f"- Reflection batches: {update['reflection_batches']}; decisions: `{update['decisions']}`",
+        f"- Trace2Skill hybrid update batches: {report['trace2skill_hybrid']['batch_count']}; scheduled batches: {report['trace2skill_hybrid']['scheduled_batch_count']}; selected training samples: {report['trace2skill_hybrid']['scheduled_selected_samples']}",
+        "- Hybrid batch summaries (batch: conversations / turns / failed / successful): "
+        + "; ".join(
+            f"{row['batch']}: {row['num_conversations_summary']} / {row['num_turns_summary']} / "
+            f"{row['failed_cases_summary']} / {row['successful_cases_summary']}"
+            for row in report['trace2skill_hybrid']['batches']
+        ),
+        "- Interpretation: `reflection_batches` counts autonomous-reflection artifacts only; it does not count Trace2Skill hybrid MAP/REDUCE/APPLY updates. Use hybrid summaries and applied diffs for that path.",
         f"- Accepted updates: `{update['accepted_by_resource']}`; rejected: `{update['rejected_by_reason']}`",
         f"- Evidence: `{report['online_evidence']}`",
         "", "## Runtime Action Cards", "",
@@ -604,7 +673,9 @@ def render_markdown(report: dict[str, Any]) -> str:
             f"- Paired correctness buckets: `{paired['paired_correctness']}`",
             f"- Discordant examples saved in JSON: {len(paired['discordant_examples'])}",
         ])
-    lines.extend(["", "## Interpretation Boundary", "", report["causal_warning"]])
+    lines.extend(["", "## Interpretation Boundary", "",
+                  "Training/update sample counts, Trace2Skill batch counts, and held-out prediction/action-turn counts are different denominators; do not use one as a proxy for another.",
+                  report["causal_warning"]])
     return "\n".join(lines) + "\n"
 
 
@@ -615,11 +686,11 @@ def main() -> None:
     parser.add_argument("--test-data", type=Path, help="Held-out conversations for per-turn Action Card alignment")
     parser.add_argument("--llm-analysis", action="store_true", help="Call configured LLM for competing explanations and next experiment")
     parser.add_argument("--model", default="deepseek-chat")
-    parser.add_argument("--max-agent-steps", type=int, default=8, help="Maximum Plan-Execute file inspection steps (3-16)")
+    parser.add_argument("--max-agent-steps", type=int, default=16, help="Maximum Plan-Execute file inspection steps (3-32)")
     parser.add_argument("--output-dir", type=Path)
     args = parser.parse_args()
-    if not (3 <= args.max_agent_steps <= 16):
-        parser.error("--max-agent-steps must be between 3 and 16")
+    if not (3 <= args.max_agent_steps <= 32):
+        parser.error("--max-agent-steps must be between 3 and 32")
     run_dir = args.run_dir.resolve()
     if not run_dir.is_dir():
         parser.error(f"run directory does not exist: {run_dir}")
