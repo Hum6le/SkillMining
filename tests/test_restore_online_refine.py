@@ -3,10 +3,25 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.restore_online_refine_and_evaluate import _failed_edits
+from scripts.restore_online_refine_and_evaluate import _apply_llm_repair_payload, _failed_edits
 
 
 class RestoreOnlineRefineTest(unittest.TestCase):
+    def test_llm_repair_can_choose_a_new_current_skill_anchor(self):
+        skill = "# Skill\n\n## Routing\n- Verify identity before account recovery.\n"
+        payload = {"repairs": [{
+            "source_operation_ids": ["old-operation"],
+            "decision": "apply",
+            "op": "insert_after",
+            "match_text": "- Verify identity before account recovery.",
+            "new_text": "\n- Preserve the verified account details when selecting the next action.",
+            "rationale": "Adds the failed reusable constraint at the current routing rule.",
+        }]}
+        updated, results = _apply_llm_repair_payload(skill, payload)
+        self.assertIn("Preserve the verified account details", updated)
+        self.assertTrue(results[0]["applied"])
+        self.assertEqual(results[0]["source_operation_ids"], ["old-operation"])
+
     def test_collects_failed_dynamic_edits_from_legacy_root_group_reflections(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             run_dir = Path(temp_dir)
