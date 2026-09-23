@@ -157,19 +157,43 @@ def _audit_batch(batch_dir: Path, response_prompts: list[dict[str, Any]]) -> dic
     evolution_root = batch_dir / "evolution"
     prompt_samples = _files(batch_dir, ("*.md",))
     map_prompts = [p for p in prompt_samples if "prompt_samples" in p.parts and "map" in p.parts]
-    reduce_prompts = [p for p in prompt_samples if "prompt_samples" in p.parts and ("reduce" in p.parts or "merge" in p.parts)]
+    reduce_prompts = [
+        p for p in prompt_samples
+        if "prompt_samples" in p.parts
+        and any(part.lower().startswith("merge_level_") or part.lower().startswith("reduce") for part in p.parts)
+    ]
     translation_prompts = [p for p in prompt_samples if "prompt_samples" in p.parts and "translation" in p.parts]
     map_semantic_paths = _files(evolution_root, ("patch_*.md",))
     map_semantic_paths = [p for p in map_semantic_paths if "map_semantic" in p.parts]
     reduce_semantic_paths = _files(evolution_root, ("merged_*.md",))
     reduce_semantic_paths = [p for p in reduce_semantic_paths if any(part.lower().startswith("merge_level_") for part in p.parts)]
     map_text = "\n".join(_read_text(p) for p in map_prompts)
+    skill_root = batch_dir.parents[1] / "trace2skill_hybrid_skill"
+    resource_audit = {}
+    for name in RESOURCE_NAMES:
+        resource_path = skill_root / "references" / name
+        content = _read_text(resource_path) if resource_path.is_file() else ""
+        resource_audit[name] = {
+            "source_file_exists": resource_path.is_file(),
+            "source_bytes": resource_path.stat().st_size if resource_path.is_file() else 0,
+            "filename_in_map_prompt_count": map_text.count(name),
+            "section_header_in_map_prompt_count": map_text.count(f"### references/{name}"),
+            "full_content_in_map_prompt_count": sum(
+                _read_text(p).count(content) for p in map_prompts
+            ) if content.strip() else 0,
+        }
     map_patch_paths = [p for p in _files(evolution_root, ("patch_*.json",)) if "map_patches" in p.parts]
     reduce_patch_paths = [p for p in _files(evolution_root, ("merged_*.json",)) if any(part.lower().startswith("merge_level_") for part in p.parts)]
     final_paths = _files(evolution_root, ("final_patch.json", "final_semantic_patch.md"))
     translated_paths = _files(evolution_root, ("translated_final_patch.json",))
     translated_semantic_paths = _files(evolution_root, ("translated_final_semantic_patch.md",))
     applied_paths = _files(evolution_root, ("applied_diffs.patch",))
+    diff_texts = [_read_text(p) for p in applied_paths]
+    applied_file_headers = sorted(set(
+        match.group(1)
+        for diff_text in diff_texts
+        for match in re.finditer(r"^# (.+?) \([^\n]+\)$", diff_text, flags=re.MULTILINE)
+    ))
     parse_failures = _files(evolution_root, ("*_parse_failed.md",))
     summaries = [x for p in _files(batch_dir, ("batch_summary.json",)) if isinstance((x := _read_json(p)), dict)]
 
@@ -190,6 +214,7 @@ def _audit_batch(batch_dir: Path, response_prompts: list[dict[str, Any]]) -> dic
             "prompt_sample_count": len(map_prompts),
             "prompt_samples": [str(p) for p in map_prompts],
             "resource_names_mentioned": {name: name in map_text for name in RESOURCE_NAMES},
+            "resource_audit": resource_audit,
             "patches": _patch_stats(map_patch_paths),
             "semantic_patch_files": [str(p) for p in map_semantic_paths],
         },
@@ -209,8 +234,9 @@ def _audit_batch(batch_dir: Path, response_prompts: list[dict[str, Any]]) -> dic
             "translated_patch_paths": [str(p) for p in translated_paths],
             "translated_patch_stats": _patch_stats(translated_paths),
             "applied_diff_paths": [str(p) for p in applied_paths],
-            "applied_diff_chars": sum(len(_read_text(p)) for p in applied_paths),
-            "applied_diff_contains_tod_resource_paths": any("references/tod_" in _read_text(p) for p in applied_paths),
+            "applied_diff_chars": sum(len(text) for text in diff_texts),
+            "applied_file_headers": applied_file_headers,
+            "applied_diff_contains_tod_resource_paths": any("references/tod_" in text for text in diff_texts),
         },
         "batch_summaries": summaries,
     }
@@ -261,10 +287,10 @@ def render_markdown(report: dict[str, Any]) -> str:
             f"## {batch['batch_dir']}", "",
             f"- Evidence: {ev['conversation_count']} conversations, {ev['trajectory_turn_count']} turns, {ev['prefix_plus_prediction_chars']} chars; forbidden fields: {ev['forbidden_trajectory_fields'] or 'none'}",
             f"- Analysis: {analysis['saved_raw_prompt_calls_matched']} raw calls, {analysis['unique_conversations_in_analysis_prompts']}/{ev['conversation_count']} conversations represented; parsed outputs: {analysis['parsed_analysis_artifacts']}; unmatched: {analysis['evidence_gap_ids']}",
-            f"- MAP: {map_info['prompt_sample_count']} prompt samples, resource mentions {map_info['resource_names_mentioned']}, JSON patches {map_info['patches']['file_count']} / {map_info['patches']['total_edits']} edits; semantic patches {len(map_info['semantic_patch_files'])}",
+            f"- MAP: {map_info['prompt_sample_count']} prompt samples, resource checks {map_info['resource_audit']}, JSON patches {map_info['patches']['file_count']} / {map_info['patches']['total_edits']} edits; semantic patches {len(map_info['semantic_patch_files'])}",
             f"- REDUCE: {reduce['prompt_sample_count']} prompt samples, JSON merged patches {reduce['merged_patch_files']['file_count']} / {reduce['merged_patch_files']['total_edits']} edits; semantic patches {len(reduce['semantic_patch_files'])}; {reduce['parse_failure_count']} parse failures",
             f"- TRANSLATE: {batch['translation']['prompt_sample_count']} prompt samples; semantic translated artifacts {len(batch['translation']['translated_semantic_patch_paths'])}",
-            f"- Apply: final patch {app['final_patch_stats']['file_count']} file(s), translated {app['translated_patch_stats']['file_count']} file(s) / {app['translated_patch_stats']['total_edits']} edits; applied diff {app['applied_diff_chars']} chars",
+            f"- Apply: final patch {app['final_patch_stats']['file_count']} file(s), translated {app['translated_patch_stats']['file_count']} file(s) / {app['translated_patch_stats']['total_edits']} edits; applied diff {app['applied_diff_chars']} chars across {app['applied_file_headers']}",
             "",
         ])
     lines.extend(["## Limitations", ""])

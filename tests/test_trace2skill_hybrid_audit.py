@@ -59,6 +59,8 @@ def test_hybrid_audit_detects_prompt_wiring_and_forbidden_fields(tmp_path: Path)
     batch = tmp_path / "trace2skill_hybrid_batches" / "batch_0001"
     (batch / "error_analysis" / "abcd-1").mkdir(parents=True)
     (batch / "evolution" / "prompt_samples" / "map").mkdir(parents=True)
+    (batch / "evolution" / "prompt_samples" / "merge_level_1").mkdir(parents=True)
+    (tmp_path / "trace2skill_hybrid_skill" / "references").mkdir(parents=True)
     (batch / "trajectory_evidence.json").write_text(json.dumps([{
         "conversation_id": "1",
         "trajectory": [{
@@ -80,6 +82,12 @@ def test_hybrid_audit_detects_prompt_wiring_and_forbidden_fields(tmp_path: Path)
     (batch / "evolution" / "prompt_samples" / "map" / "batch_0001.md").write_text(
         "references/tod_reference.md", encoding="utf-8"
     )
+    (batch / "evolution" / "prompt_samples" / "merge_level_1" / "batch_0001.md").write_text(
+        "merge sample", encoding="utf-8"
+    )
+    (tmp_path / "trace2skill_hybrid_skill" / "references" / "tod_reference.md").write_text(
+        "reference body", encoding="utf-8"
+    )
 
     report = audit_run(tmp_path)
     item = report["batches"][0]
@@ -89,3 +97,5 @@ def test_hybrid_audit_detects_prompt_wiring_and_forbidden_fields(tmp_path: Path)
     assert item["analysis"]["calls"][0]["has_gold_slots"] is True
     assert item["analysis"]["parsed_analysis_artifacts"][0]["records_with_ast_evidence"] == 1
     assert item["map"]["resource_names_mentioned"]["tod_reference.md"] is True
+    assert item["map"]["resource_audit"]["tod_reference.md"]["source_file_exists"] is True
+    assert item["reduce"]["prompt_sample_count"] == 1
