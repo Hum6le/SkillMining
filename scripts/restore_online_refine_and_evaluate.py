@@ -185,7 +185,7 @@ def _failed_edits(run_dir: Path) -> tuple[list[dict], list[dict], list[dict], li
 
 _FAILED_EDIT_REPAIR_PROMPT = """You are repairing failed edits to an executable ABCD task-oriented dialogue skill.
 
-The recorded operations below failed because their old match_text anchors were not found in the CURRENT skill. Do not retry those anchors blindly. Inspect the current skill and decide where each supported correction belongs. You may consolidate duplicate or compatible edits. Preserve existing valid routing and ordered-slot behavior. Do not invent facts. If an operation is unsupported, redundant, conflicts with stronger skill evidence, or cannot be placed safely, mark it skip and explain why.
+The recorded operation below failed because its old match_text anchor was not found in the CURRENT skill. Do not retry that anchor blindly. Inspect the current skill and decide where this correction belongs. Preserve existing valid routing and ordered-slot behavior. Do not invent facts. If this operation is unsupported, redundant, conflicts with stronger skill evidence, or cannot be placed safely, mark it skip and explain why.
 
 For each repair operation, choose a short exact excerpt that exists exactly once in current_skill as match_text. Use op=replace for a local revision, insert_before/insert_after for a new rule, or delete only when the old rule is demonstrably harmful. The executor applies operations in order; later match_text values may refer to text introduced by earlier repairs. Prefer concise local edits, not a rewritten skill.
 
@@ -193,9 +193,9 @@ For each repair operation, choose a short exact excerpt that exists exactly once
 {skill}
 </current_skill>
 
-<failed_operations>
+<failed_operation>
 {operations}
-</failed_operations>
+</failed_operation>
 
 Return valid JSON only:
 {{"repairs":[{{"source_operation_ids":["original operation ids"],
@@ -242,37 +242,66 @@ def _llm_repair_failed_edits(
 ) -> tuple[str, list[dict], dict]:
     if not failed_edits:
         return skill, [], {"attempts": 0, "error": "no_failed_edits"}
-    prompt = _FAILED_EDIT_REPAIR_PROMPT.format(
-        skill=skill,
-        operations=json.dumps(failed_edits, ensure_ascii=False, indent=2),
-    )
-    raw = ""
-    last_error = ""
-    attempts = max(1, int(max_retries))
-    for attempt in range(1, attempts + 1):
-        try:
-            raw = _online_refinement_chat(
-                [{"role": "user", "content": prompt}], model=model,
-                response_logger=response_logger,
-                call_tag="online_refine_failed_edit_repair",
-                workflow_id=workflow_id,
-            )
-            payload = _parse_json_object(raw)
-            if isinstance(payload.get("repairs"), list):
-                updated, results = _apply_llm_repair_payload(skill, payload)
-                return updated, results, {
-                    "attempts": attempt,
-                    "prompt_chars": len(prompt),
-                    "model_repairs": len(payload["repairs"]),
-                    "error": "",
-                }
-            last_error = "empty_or_invalid_repair_json"
-        except Exception as exc:
-            last_error = repr(exc)
-        if attempt < attempts:
-            time.sleep(min(2 ** (attempt - 1), 4))
-    return skill, [], {"attempts": attempts, "prompt_chars": len(prompt),
-                       "error": last_error or "repair_call_failed"}
+    # Repair one historical operation per request.  Besides keeping prompts
+    # bounded, this lets each subsequent request inspect the skill after the
+    # previous edit was applied and prevents unrelated edits from being
+    # silently merged or omitted by the model.
+    current = skill
+    all_results: list[dict] = []
+    total_attempts = 0
+    calls = 0
+    successful_calls = 0
+    call_errors: list[str] = []
+    applied_ids: set[str] = set()
+    attempts_limit = max(1, int(max_retries))
+    for source_operation in failed_edits:
+        calls += 1
+        prompt = _FAILED_EDIT_REPAIR_PROMPT.format(
+            skill=current,
+            operations=json.dumps([source_operation], ensure_ascii=False, indent=2),
+        )
+        last_error = ""
+        repaired = False
+        for attempt in range(1, attempts_limit + 1):
+            total_attempts += 1
+            try:
+                raw = _online_refinement_chat(
+                    [{"role": "user", "content": prompt}], model=model,
+                    response_logger=response_logger,
+                    call_tag="online_refine_failed_edit_repair",
+                    workflow_id=workflow_id,
+                )
+                payload = _parse_json_object(raw)
+                if isinstance(payload.get("repairs"), list):
+                    updated, results = _apply_llm_repair_payload(current, payload)
+                    current = updated
+                    for result in results:
+                        result.setdefault("source_operation_id", source_operation.get("operation_id", ""))
+                        result.setdefault("source_operation", source_operation)
+                    all_results.extend(results)
+                    successful_calls += 1
+                    repaired = True
+                    break
+                last_error = "empty_or_invalid_repair_json"
+            except Exception as exc:
+                last_error = repr(exc)
+            if attempt < attempts_limit:
+                time.sleep(min(2 ** (attempt - 1), 4))
+        if not repaired:
+            call_errors.append(last_error or "repair_call_failed")
+            all_results.append({
+                "source_operation_id": source_operation.get("operation_id", ""),
+                "source_operation": source_operation,
+                "error": last_error or "repair_call_failed",
+            })
+    return current, all_results, {
+        "attempts": total_attempts,
+        "calls": calls,
+        "successful_calls": successful_calls,
+        "model_repairs": len(all_results),
+        "prompt_mode": "one_failed_edit_per_call",
+        "error": "; ".join(call_errors),
+    }
 
 
 def _strip_rendered_suffix(combined: str, generated: str) -> str:
