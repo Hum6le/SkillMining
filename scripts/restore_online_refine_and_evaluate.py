@@ -9,6 +9,7 @@ from application status alone.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import sys
@@ -24,7 +25,23 @@ if str(ROOT) not in sys.path:
 from awm import MemoryStore, WorkflowStore
 from eval_tod.abcd.agent import ABCDAgent
 from eval_tod.response_logger import ResponseLogger
-from scripts.run_subflow_eval import evaluate_agent_on_subflow, load_subflow_data
+try:
+    from scripts.run_subflow_eval import evaluate_agent_on_subflow, load_subflow_data
+except ModuleNotFoundError as exc:
+    # Older deployments do not expose ``scripts`` as an importable namespace
+    # package. Load the sibling module by absolute repository path instead.
+    _SUBFLOW_EVAL_PATH = ROOT / "scripts" / "run_subflow_eval.py"
+    if not _SUBFLOW_EVAL_PATH.is_file():
+        raise ModuleNotFoundError(
+            f"Cannot import run_subflow_eval; expected {_SUBFLOW_EVAL_PATH}"
+        ) from exc
+    _spec = importlib.util.spec_from_file_location("_online_refine_run_subflow_eval", _SUBFLOW_EVAL_PATH)
+    if _spec is None or _spec.loader is None:
+        raise ImportError(f"Cannot load {_SUBFLOW_EVAL_PATH}") from exc
+    _module = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_module)
+    evaluate_agent_on_subflow = _module.evaluate_agent_on_subflow
+    load_subflow_data = _module.load_subflow_data
 from skill_mining.online_refinement import (
     apply_dynamic_skill_operations,
     apply_working_skill_operations,
