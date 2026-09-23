@@ -2363,7 +2363,11 @@ class ParallelSkillEvolver:
             )
             if merged is not None:
                 return merged
-            return current[0]
+            log.warning(
+                "REDUCE: forced semantic merge failed; deterministically preserving all %d patches",
+                len(current),
+            )
+            return self._coalesce_semantic_patches(current)
         return current[0]
 
     def run_reduce_phase(
@@ -2465,9 +2469,12 @@ class ParallelSkillEvolver:
             )
             if final is not None:
                 return final
-            # Ultimate fallback: return first patch
-            log.warning("REDUCE: forced merge failed, returning first patch")
-            return current[0]
+            # Do not silently discard every MAP patch except the first one.
+            log.warning(
+                "REDUCE: forced merge failed; deterministically preserving all %d patches",
+                len(current),
+            )
+            return self._coalesce_patches(current)
 
         return current[0]
 

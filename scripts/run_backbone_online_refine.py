@@ -101,6 +101,36 @@ def _trace2skill_turn_view(row: dict) -> dict:
     }
 
 
+def _install_hybrid_evolver_resources(
+    skill_dir: Path, working_skill: str, base_reference: str,
+    action_rules: str, slot_policies: str,
+) -> str:
+    """Put ToD resources where Trace2Skill's skill-state loader can read them."""
+    references_dir = skill_dir / "references"
+    references_dir.mkdir(parents=True, exist_ok=True)
+    resources = {
+        "tod_reference.md": base_reference,
+        "tod_action_rules.md": action_rules,
+        "tod_slot_policies.md": slot_policies,
+    }
+    for name, content in resources.items():
+        if content.strip():
+            (references_dir / name).write_text(content.rstrip() + "\n", encoding="utf-8")
+
+    marker = "## ToD Evidence Resources"
+    if marker not in working_skill:
+        links = [
+            "## ToD Evidence Resources",
+            "",
+            "Use these ABCD action, transition, and ordered-slot resources when analyzing evidence:",
+        ]
+        for name, content in resources.items():
+            if content.strip():
+                links.append(f"- [{name}](references/{name})")
+        working_skill = working_skill.rstrip() + "\n\n" + "\n".join(links) + "\n"
+    return working_skill
+
+
 def _run_trace2skill_hybrid_batch(
     *, batch_index: int, conversations: list[dict], turns: list[dict],
     out_dir: Path, working_skill: str, base_reference: str,
@@ -119,12 +149,15 @@ def _run_trace2skill_hybrid_batch(
     skill_dir = out_dir / "trace2skill_hybrid_skill"
     skill_dir.mkdir(parents=True, exist_ok=True)
     skill_path = skill_dir / "SKILL.md"
-    skill_path.write_text(working_skill, encoding="utf-8")
-    # Make graph-compiled resources available to the original evolver through
-    # the same linked-resource files it already understands.
+    # Keep the original resource copies for inspection and expose them under
+    # references/, the only auxiliary directory read by Trace2Skill's evolver.
     (skill_dir / "reference.md").write_text(base_reference, encoding="utf-8")
     (skill_dir / "action_rules.md").write_text(action_rules, encoding="utf-8")
     (skill_dir / "slot_policies.md").write_text(slot_policies, encoding="utf-8")
+    working_skill = _install_hybrid_evolver_resources(
+        skill_dir, working_skill, base_reference, action_rules, slot_policies,
+    )
+    skill_path.write_text(working_skill, encoding="utf-8")
     # Keep the full prefix/current-prediction trajectory, but never pass the
     # runtime's complete ReAct trace into the transplanted Trace2Skill path.
     trace_turns = [_trace2skill_turn_view(row) for row in turns]
