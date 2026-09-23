@@ -7,6 +7,32 @@ from scripts.restore_online_refine_and_evaluate import _failed_edits
 
 
 class RestoreOnlineRefineTest(unittest.TestCase):
+    def test_collects_failed_dynamic_edits_from_legacy_root_group_reflections(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_dir = Path(temp_dir)
+            reflection_dir = run_dir / "group_reflections"
+            reflection_dir.mkdir()
+            payload = {
+                "skill_operations": [{
+                    "operation_id": "legacy-edit", "op": "replace",
+                    "match_text": "old wording", "new_text": "correct wording",
+                }],
+                "applied_skill_operations": [{
+                    "operation_id": "legacy-edit", "op": "replace",
+                    "match_text": "old wording", "new_text": "correct wording",
+                    "error": "match_text was not found in current skill",
+                }],
+            }
+            (reflection_dir / "reflection_0001.json").write_text(
+                json.dumps(payload), encoding="utf-8",
+            )
+            dynamic, semantic, successful, unreplayable = _failed_edits(run_dir)
+            self.assertEqual(len(dynamic), 1)
+            self.assertEqual(dynamic[0]["operation_id"], "legacy-edit")
+            self.assertEqual(semantic, [])
+            self.assertEqual(successful, [])
+            self.assertEqual(unreplayable, [])
+
     def test_collects_failed_dynamic_edits_from_autonomous_log(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             run_dir = Path(temp_dir)

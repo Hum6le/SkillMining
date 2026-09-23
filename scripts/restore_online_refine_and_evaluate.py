@@ -46,6 +46,9 @@ def _json(path: Path) -> dict[str, Any] | None:
 
 def _reflection_paths(run_dir: Path) -> list[Path]:
     paths = list((run_dir / "autonomous_reflection").glob("batch_*.json"))
+    # Original online-refine runs stored post-hoc group reflections directly
+    # under RUN/group_reflections; newer runs nest them under iterative_refinement.
+    paths.extend((run_dir / "group_reflections").glob("reflection_*.json"))
     paths.extend((run_dir / "iterative_refinement").glob("**/group_reflections/reflection_*.json"))
     return sorted(paths, key=lambda path: str(path.relative_to(run_dir)).lower())
 
@@ -185,6 +188,10 @@ def restore(run_dir: Path, output_dir: Path, offline_dir: Path | None) -> dict[s
     report = {
         "source_run": str(run_dir),
         "restored_skill_source": str(skill_path),
+        "scanned_reflection_files": [
+            str(path.relative_to(run_dir)) for path in _reflection_paths(run_dir)
+        ],
+        "num_scanned_reflection_files": len(_reflection_paths(run_dir)),
         "attempted_dynamic_retries": len(dynamic_results),
         "dynamic_retry_results": dynamic_results,
         "attempted_semantic_retries": len(semantic_results),
