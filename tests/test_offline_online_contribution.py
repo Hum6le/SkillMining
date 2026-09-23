@@ -1,7 +1,15 @@
 import json
 from pathlib import Path
 
-from scripts.analyze_offline_online_contribution import analyze, render_markdown
+import pytest
+
+from scripts.analyze_offline_online_contribution import (
+    AuditFileTools,
+    _format_model_report,
+    _json_safe,
+    analyze,
+    render_markdown,
+)
 
 
 def _make_run(root: Path, *, action: str, slots: list[str], card: list[str]) -> None:
@@ -39,3 +47,25 @@ def test_audit_reports_resource_update_card_and_paired_prediction_changes(tmp_pa
     assert paired["prediction_changes"]["slots_changed"] == 1
     assert "offline contribution" in report["causal_warning"]
     assert "Primary run" in render_markdown(report)
+    assert "c1|2" in _json_safe(report)["card_runtime"]["per_turn"]
+
+
+def test_plan_execute_tools_are_read_only_and_confined(tmp_path: Path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "evidence.md").write_text("offline rule", encoding="utf-8")
+    tools = AuditFileTools(run_dir, None)
+
+    result = tools.execute({"action": "read_file", "path": "primary/evidence.md"})
+    assert "offline rule" in result["content"]
+    with pytest.raises(ValueError):
+        tools.execute({"action": "read_file", "path": "primary/../../secret.txt"})
+    with pytest.raises(ValueError):
+        tools.execute({"action": "read_file", "path": "comparison/result.json"})
+
+
+def test_json_llm_response_is_rendered_as_markdown():
+    report = _format_model_report('{"findings":["Cards are not always selected"],"next_step":"Compare matched turns"}')
+    assert report.startswith("# LLM Analysis")
+    assert "## Findings" in report
+    assert "Compare matched turns" in report

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Audit how offline ABCD mining artifacts flow into online refinement.
 
-The audit is read-only. It can compare paired online runs and optionally ask an
-LLM to propose explanations from the compact artifact report.
+The audit is read-only. It can compare paired online runs and optionally invoke
+a Plan-Execute-Synthesize LLM agent that reads selected artifacts before
+writing a detailed, evidence-grounded report.
 
 Example:
   python scripts/analyze_offline_online_contribution.py \
@@ -16,9 +17,15 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 
 RESOURCE_FILES = (
@@ -295,24 +302,267 @@ def analyze(run_dir: Path, *, comparison_dir: Path | None = None, test_data: Pat
     return result
 
 
-def _llm_synthesis(report: dict[str, Any], model: str) -> str:
-    from llm import chat
-    compact = {
-        key: report.get(key) for key in (
-            "run_dir", "metrics", "resources", "online_updates", "online_evidence",
-            "comparison", "causal_warning",
-        )
-    }
-    card = report["card_runtime"]
-    compact["card_runtime"] = {key: value for key, value in card.items() if key not in {"per_turn", "gold_turns"}}
-    prompt = """Analyze why offline mining artifacts appear to add little benefit to the online ToD method. Treat the JSON as artifact evidence, not causal proof. Explicitly distinguish: artifact generation, loading, runtime exposure/card retrieval, learning/update, retention, and held-out metric effect. Identify missing evidence; do not claim causality without a matched control. Propose up to three competing explanations, each with a falsifiable experiment, then recommend the smallest next experiment. Respond in Chinese with evidence paths/values.
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            ("|".join(map(str, key)) if isinstance(key, tuple) else str(key)): _json_safe(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    return value
 
-ARTIFACT AUDIT JSON:
-""" + json.dumps(compact, ensure_ascii=False, indent=2)
-    answer = chat(prompt, model=model, temperature=0.1, call_tag="offline_online_contribution_analysis")
-    if not answer.strip():
-        raise RuntimeError("LLM returned an empty analysis")
-    return answer.strip() + "\n"
+
+class AuditFileTools:
+    """Bounded read-only tools scoped to the supplied experiment/repo roots."""
+
+    def __init__(self, primary: Path, comparison: Path | None):
+        self.roots = {"primary": primary.resolve(), "repo": PROJECT_ROOT.resolve()}
+        if comparison:
+            self.roots["comparison"] = comparison.resolve()
+
+    def _resolve(self, virtual_path: str) -> Path:
+        prefix, separator, relative = virtual_path.partition("/")
+        if not separator or prefix not in self.roots:
+            raise ValueError("Path must start with primary/, comparison/, or repo/")
+        root = self.roots[prefix]
+        target = (root / relative).resolve()
+        if target != root and root not in target.parents:
+            raise ValueError("Requested path escapes its allowed root")
+        return target
+
+    def execute(self, request: dict[str, Any]) -> dict[str, Any]:
+        virtual_path = str(request.get("path", ""))
+        target = self._resolve(virtual_path)
+        action = request.get("action")
+        if action == "read_file":
+            if not target.is_file():
+                return {"error": "file not found", "path": virtual_path}
+            lines = read_text(target).splitlines()
+            start = max(1, int(request.get("start_line", 1)))
+            limit = min(240, max(1, int(request.get("max_lines", 140))))
+            excerpt = "\n".join(
+                f"{index}: {lines[index - 1]}"
+                for index in range(start, min(len(lines), start + limit - 1) + 1)
+            )[:9000]
+            return {"path": virtual_path, "total_lines": len(lines), "content": excerpt}
+        if action == "list_files":
+            if not target.is_dir():
+                return {"error": "directory not found", "path": virtual_path}
+            pattern = str(request.get("glob", "*"))
+            limit = min(120, max(1, int(request.get("max_items", 80))))
+            paths = sorted(target.rglob(pattern))[:limit]
+            return {"path": virtual_path, "items": [
+                virtual_path.rstrip("/") + "/" + p.relative_to(target).as_posix() + ("/" if p.is_dir() else "")
+                for p in paths
+            ]}
+        if action == "search_text":
+            if not target.is_dir():
+                return {"error": "search root is not a directory", "path": virtual_path}
+            query = str(request.get("query", ""))
+            if not query or len(query) > 160:
+                return {"error": "query must have 1-160 characters"}
+            regex = re.compile(query, re.IGNORECASE)
+            allowed_ext = {".md", ".txt", ".json", ".jsonl", ".patch", ".log", ".py"}
+            max_files = min(60, max(1, int(request.get("max_files", 40))))
+            matches = []
+            files = sorted(p for p in target.rglob("*") if p.is_file() and p.suffix.lower() in allowed_ext)[:max_files]
+            for path in files:
+                for line_no, line in enumerate(read_text(path).splitlines(), 1):
+                    if regex.search(line):
+                        matches.append({
+                            "path": virtual_path.rstrip("/") + "/" + path.relative_to(target).as_posix(),
+                            "line": line_no, "text": line[:500],
+                        })
+                        if len(matches) >= 60:
+                            break
+                if len(matches) >= 60:
+                    break
+            return {"query": query, "matches": matches}
+        return {"error": f"unsupported action {action!r}"}
+
+
+PLAN_SYSTEM = """You are the planning phase of a Plan-Execute research agent diagnosing why offline ABCD/ToD mining adds little benefit to online refinement. Inspect the supplied artifact inventory and deterministic measurements. Return one JSON object only:
+{"plan":[{"question":"...","tool":"read_file|list_files|search_text","path":"primary/...","why":"..."}],"competing_hypotheses":["..."],"report_outline":["..."]}
+
+Plan 5-8 concrete read-only inspections in priority order. Cover resource generation/loading, actual online action-card retrieval on evaluation predictions, update acceptance/retention, Trace2Skill analysis/MAP/REDUCE/APPLY if present, and a matched comparison if supplied. Do not claim any finding before execution."""
+
+EXECUTE_SYSTEM = """You are the execute phase of a Plan-Execute research agent. Use the current plan and observations to choose one next read-only file operation. You may adapt the plan when evidence contradicts a hypothesis. Do not infer unobserved facts. Return exactly one JSON object:
+{"action":"read_file","path":"primary/relative/path","start_line":1,"max_lines":140}
+or {"action":"list_files","path":"primary/relative/dir","glob":"*.json","max_items":80}
+or {"action":"search_text","path":"primary/relative/dir","query":"regex","max_files":40}
+or {"action":"finish","reason":"enough evidence"}
+
+Allowed path prefixes: primary/, comparison/ (only if comparison was supplied), repo/. Inspect at least three distinct files before finishing. Prefer files that can discriminate competing hypotheses. Never write or execute files."""
+
+SYNTHESIS_SYSTEM = """You are the synthesis phase of a Plan-Execute research agent. Produce a thorough, evidence-grounded Chinese report, not JSON. Use Markdown with these sections: Executive Summary; Experimental Comparison (table with raw metrics/deltas and sample overlap); Evidence Chain (offline artifacts -> loaded resources -> online runtime/action-card retrieval -> online updates -> retained skill -> held-out outcomes); Key Findings (each separated into observation/evidence, interpretation, implication, next test); Competing Explanations; Recommended Minimal Next Experiment (controls, measured outputs, decision criteria); Limitations. Clearly label facts vs hypotheses. Cite exact artifact paths and quoted values. If there is no matched control, explicitly state the offline contribution is not causally identified. Do not hallucinate data or present proposals as findings."""
+
+
+def _compact_report(report: dict[str, Any]) -> dict[str, Any]:
+    card = report["card_runtime"]
+    compact = {key: report.get(key) for key in (
+        "run_dir", "metrics", "resources", "online_updates", "online_evidence",
+        "comparison", "causal_warning",
+    )}
+    compact["card_runtime"] = {
+        key: value for key, value in card.items()
+        if key not in {"per_turn", "gold_turns"}
+    }
+    compact["online_updates"] = dict(compact["online_updates"])
+    compact["online_updates"]["accepted_examples"] = compact["online_updates"].get("accepted_examples", [])[:8]
+    if isinstance(compact.get("comparison"), dict):
+        compact["comparison"] = dict(compact["comparison"])
+        paired = compact["comparison"].get("paired_turns")
+        if isinstance(paired, dict):
+            paired = dict(paired)
+            paired["discordant_examples"] = paired.get("discordant_examples", [])[:10]
+            compact["comparison"]["paired_turns"] = paired
+    return compact
+
+
+def _artifact_inventory(primary: Path, comparison: Path | None) -> dict[str, list[str]]:
+    relative_patterns = (
+        "online_refine_result.json", "online_refine.log", "base_skill.md",
+        "base_reference.md", "action_rules.md", "slot_policies.md", "skill.md",
+        "working_skill.md", "online_refined_predictions.json",
+        "online_refined_react_traces.json", "skill_dag_state.json",
+        "online_evidence/*.json", "autonomous_reflection/*.json",
+        "trace2skill_hybrid_batches/batch_*/batch_summary.json",
+        "trace2skill_hybrid_batches/batch_*/error_analysis_parsed.json",
+        "trace2skill_hybrid_batches/batch_*/success_analysis_parsed.json",
+        "trace2skill_hybrid_batches/batch_*/evolution/prompt_samples/map/*.md",
+        "trace2skill_hybrid_batches/batch_*/evolution/map_patches/*.json",
+        "trace2skill_hybrid_batches/batch_*/evolution/final_patch.json",
+        "trace2skill_hybrid_batches/batch_*/evolution/translated_final_patch.json",
+        "trace2skill_hybrid_batches/batch_*/evolution/applied_diffs.patch",
+    )
+    inventory = {}
+    roots = {"primary": primary, "repo": PROJECT_ROOT}
+    if comparison:
+        roots["comparison"] = comparison
+    for label, root in roots.items():
+        found = set()
+        for pattern in relative_patterns:
+            found.update(p.relative_to(root).as_posix() for p in root.glob(pattern) if p.is_file())
+        for folder in ("offline_mining", "trace2skill_hybrid_skill/references"):
+            path = root / folder
+            if path.is_dir():
+                found.update(p.relative_to(root).as_posix() for p in path.rglob("*") if p.is_file())
+        inventory[label] = sorted(found)[:250]
+    return inventory
+
+
+def _parse_model_json(text: str) -> dict[str, Any] | None:
+    candidates = [text.strip()]
+    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL | re.IGNORECASE)
+    if fenced:
+        candidates.insert(0, fenced.group(1))
+    left, right = text.find("{"), text.rfind("}")
+    if left >= 0 and right > left:
+        candidates.append(text[left:right + 1])
+    for item in candidates:
+        try:
+            parsed = json.loads(item)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
+def _format_model_report(answer: str) -> str:
+    text = answer.strip()
+    parsed = _parse_model_json(text)
+    if parsed is None:
+        return text + "\n"
+    report_text = next((parsed.get(key) for key in ("report_markdown", "markdown", "report", "analysis", "answer", "content") if isinstance(parsed.get(key), str)), None)
+    if report_text:
+        return report_text.strip() + "\n"
+    sections = []
+    for key, value in parsed.items():
+        title = str(key).replace("_", " ").strip().title()
+        if isinstance(value, list):
+            body = "\n".join(f"- {item}" for item in value)
+        elif isinstance(value, dict):
+            body = "\n".join(f"- **{k}**: {v}" for k, v in value.items())
+        else:
+            body = str(value)
+        sections.append(f"## {title}\n\n{body}")
+    return "# LLM Analysis\n\n" + "\n\n".join(sections) + "\n"
+
+
+def _plan_execute_analysis(
+    report: dict[str, Any], *, primary: Path, comparison: Path | None,
+    model: str, max_steps: int,
+) -> tuple[str, dict[str, Any]]:
+    from llm import chat
+
+    inventory = _artifact_inventory(primary, comparison)
+    compact = _compact_report(report)
+    trace: dict[str, Any] = {
+        "model": model, "max_execute_steps": max_steps,
+        "inventory": inventory, "plan": None, "hypotheses": [],
+        "observations": [], "calls": [],
+    }
+    plan_raw = chat(
+        [{"role": "system", "content": PLAN_SYSTEM},
+         {"role": "user", "content": json.dumps({"audit": compact, "artifact_inventory": inventory}, ensure_ascii=False)}],
+        model=model, temperature=0.1, call_tag="offline_online_plan",
+    )
+    plan = _parse_model_json(plan_raw) or {}
+    trace["calls"].append({"phase": "plan", "raw": plan_raw, "parsed": plan})
+    trace["plan"] = plan.get("plan", [])
+    trace["hypotheses"] = plan.get("competing_hypotheses", [])
+
+    tools = AuditFileTools(primary, comparison)
+    successful_reads: set[str] = set()
+    for step in range(1, max_steps + 1):
+        context = {
+            "audit_summary": compact, "initial_plan": plan,
+            "observations": trace["observations"][-8:],
+            "successful_distinct_files_read": sorted(successful_reads),
+            "step": step, "max_steps": max_steps,
+            "instruction": "Execute the highest-value next file inspection, revising the plan if evidence warrants it.",
+        }
+        raw = chat(
+            [{"role": "system", "content": EXECUTE_SYSTEM},
+             {"role": "user", "content": json.dumps(context, ensure_ascii=False)}],
+            model=model, temperature=0.1, call_tag=f"offline_online_execute_{step:02d}",
+        )
+        request = _parse_model_json(raw) or {}
+        trace["calls"].append({"phase": "execute", "step": step, "raw": raw, "request": request})
+        if request.get("action") == "finish":
+            if len(successful_reads) >= 3:
+                trace["finish_reason"] = request.get("reason", "agent finished")
+                break
+            trace["observations"].append({"step": step, "request": request, "result": {"error": "Need three distinct successful file reads before finishing."}})
+            continue
+        try:
+            result = tools.execute(request)
+        except (ValueError, OSError, re.error) as exc:
+            result = {"error": str(exc)}
+        if request.get("action") == "read_file" and result.get("content"):
+            successful_reads.add(str(request.get("path")))
+        trace["observations"].append({"step": step, "request": request, "result": result})
+
+    final_context = {
+        "audit_summary": compact, "plan": plan,
+        "observations": trace["observations"],
+        "successful_distinct_files_read": sorted(successful_reads),
+        "execute_steps_used": len(trace["observations"]),
+        "instruction": "Write the full final Chinese Markdown report now. Include raw metrics, evidence chain, competing hypotheses, next experiment and explicit limitations. If fewer than three files were read, flag the report as preliminary.",
+    }
+    final_raw = chat(
+        [{"role": "system", "content": SYNTHESIS_SYSTEM},
+         {"role": "user", "content": json.dumps(final_context, ensure_ascii=False)}],
+        model=model, temperature=0.1, call_tag="offline_online_synthesis",
+    )
+    trace["calls"].append({"phase": "synthesis", "raw": final_raw})
+    if not final_raw.strip():
+        raise RuntimeError("LLM returned an empty final report")
+    return _format_model_report(final_raw), trace
 
 
 def render_markdown(report: dict[str, Any]) -> str:
@@ -346,7 +596,14 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- Most selected cards: `{card['selected_actions_top20']}`",
     ])
     if compare:
-        lines.extend(["", "## Paired Comparison", "", f"- {compare['paired_turns']}"])
+        paired = compare["paired_turns"]
+        lines.extend([
+            "", "## Paired Comparison", "",
+            f"- Shared action turns: {paired['shared_turns']}",
+            f"- Prediction changes: `{paired['prediction_changes']}`",
+            f"- Paired correctness buckets: `{paired['paired_correctness']}`",
+            f"- Discordant examples saved in JSON: {len(paired['discordant_examples'])}",
+        ])
     lines.extend(["", "## Interpretation Boundary", "", report["causal_warning"]])
     return "\n".join(lines) + "\n"
 
@@ -358,8 +615,11 @@ def main() -> None:
     parser.add_argument("--test-data", type=Path, help="Held-out conversations for per-turn Action Card alignment")
     parser.add_argument("--llm-analysis", action="store_true", help="Call configured LLM for competing explanations and next experiment")
     parser.add_argument("--model", default="deepseek-chat")
+    parser.add_argument("--max-agent-steps", type=int, default=8, help="Maximum Plan-Execute file inspection steps (3-16)")
     parser.add_argument("--output-dir", type=Path)
     args = parser.parse_args()
+    if not (3 <= args.max_agent_steps <= 16):
+        parser.error("--max-agent-steps must be between 3 and 16")
     run_dir = args.run_dir.resolve()
     if not run_dir.is_dir():
         parser.error(f"run directory does not exist: {run_dir}")
@@ -370,12 +630,19 @@ def main() -> None:
     output_dir = args.output_dir.resolve() if args.output_dir else run_dir / "offline_online_audit"
     output_dir.mkdir(parents=True, exist_ok=True)
     markdown = render_markdown(report)
-    (output_dir / "audit.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    (output_dir / "audit.json").write_text(json.dumps(_json_safe(report), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     (output_dir / "audit.md").write_text(markdown, encoding="utf-8")
     print(markdown, end="")
     if args.llm_analysis:
-        answer = _llm_synthesis(report, args.model)
+        answer, agent_trace = _plan_execute_analysis(
+            report, primary=run_dir,
+            comparison=args.comparison_dir.resolve() if args.comparison_dir else None,
+            model=args.model, max_steps=args.max_agent_steps,
+        )
         (output_dir / "llm_analysis.md").write_text(answer, encoding="utf-8")
+        (output_dir / "plan_execute_trace.json").write_text(
+            json.dumps(_json_safe(agent_trace), indent=2, ensure_ascii=False) + "\n", encoding="utf-8",
+        )
         print("\n## LLM Analysis\n\n" + answer)
     print(f"\nSaved artifacts: {output_dir}")
 
