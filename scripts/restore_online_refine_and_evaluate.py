@@ -187,7 +187,9 @@ _FAILED_EDIT_REPAIR_PROMPT = """You are repairing failed edits to an executable 
 
 The recorded operation below failed because its old match_text anchor was not found in the CURRENT skill. Do not retry that anchor blindly. Inspect the current skill and decide where this correction belongs. Preserve existing valid routing and ordered-slot behavior. Do not invent facts. If this operation is unsupported, redundant, conflicts with stronger skill evidence, or cannot be placed safely, mark it skip and explain why.
 
-For each repair operation, choose a short exact excerpt that exists exactly once in current_skill as match_text. Use op=replace for a local revision, insert_before/insert_after for a new rule, or delete only when the old rule is demonstrably harmful. The executor applies operations in order; later match_text values may refer to text introduced by earlier repairs. Prefer concise local edits, not a rewritten skill.
+For this request you must return exactly ONE repair object. Choose a short exact excerpt copied verbatim from current_skill as match_text; do not reconstruct or paraphrase it. It must occur exactly once. If it occurs more than once, include a 1-based integer occurrence field. Use op=replace for a local revision, insert_before/insert_after for a new rule, or delete only when the old rule is demonstrably harmful. Prefer concise local edits, not a rewritten skill.
+
+The Python executor will validate and apply your proposal. If it returns an executor error in a later round, treat that error as authoritative: choose a different exact anchor or add occurrence. Do not repeat the rejected proposal.
 
 <current_skill>
 {skill}
@@ -196,6 +198,10 @@ For each repair operation, choose a short exact excerpt that exists exactly once
 <failed_operation>
 {operations}
 </failed_operation>
+
+<executor_feedback>
+{feedback}
+</executor_feedback>
 
 Return valid JSON only:
 {{"repairs":[{{"source_operation_ids":["original operation ids"],
@@ -256,14 +262,17 @@ def _llm_repair_failed_edits(
     attempts_limit = max(1, int(max_retries))
     for source_operation in failed_edits:
         calls += 1
-        prompt = _FAILED_EDIT_REPAIR_PROMPT.format(
-            skill=current,
-            operations=json.dumps([source_operation], ensure_ascii=False, indent=2),
-        )
+        feedback = "(no previous executor feedback; propose the first repair)"
         last_error = ""
         repaired = False
+        operation_history: list[dict[str, Any]] = []
         for attempt in range(1, attempts_limit + 1):
             total_attempts += 1
+            prompt = _FAILED_EDIT_REPAIR_PROMPT.format(
+                skill=current,
+                operations=json.dumps([source_operation], ensure_ascii=False, indent=2),
+                feedback=feedback,
+            )
             try:
                 raw = _online_refinement_chat(
                     [{"role": "user", "content": prompt}], model=model,
@@ -272,19 +281,61 @@ def _llm_repair_failed_edits(
                     workflow_id=workflow_id,
                 )
                 payload = _parse_json_object(raw)
-                if isinstance(payload.get("repairs"), list):
+                repairs = payload.get("repairs") if isinstance(payload, dict) else None
+                if not isinstance(repairs, list):
+                    last_error = "repairs_not_a_list"
+                    operation_history.append({
+                        "repair_attempt": attempt,
+                        "error": last_error,
+                    })
+                elif len(repairs) == 0:
+                    last_error = "empty_repairs_for_operation"
+                    operation_history.append({
+                        "repair_attempt": attempt,
+                        "error": last_error,
+                    })
+                elif len(repairs) != 1:
+                    last_error = f"expected_exactly_one_repair_got_{len(repairs)}"
+                    operation_history.append({
+                        "repair_attempt": attempt,
+                        "error": last_error,
+                    })
+                else:
                     updated, results = _apply_llm_repair_payload(current, payload)
-                    current = updated
-                    for result in results:
-                        result.setdefault("source_operation_id", source_operation.get("operation_id", ""))
-                        result.setdefault("source_operation", source_operation)
-                    all_results.extend(results)
-                    successful_calls += 1
-                    repaired = True
-                    break
-                last_error = "empty_or_invalid_repair_json"
+                    result = results[0] if results else {"error": "empty_executor_result"}
+                    result.setdefault("source_operation_id", source_operation.get("operation_id", ""))
+                    result.setdefault("source_operation", source_operation)
+                    result["repair_attempt"] = attempt
+                    operation_history.append(dict(result))
+                    if result.get("applied"):
+                        current = updated
+                        all_results.append(result)
+                        successful_calls += 1
+                        repaired = True
+                        break
+                    if result.get("skipped"):
+                        all_results.append(result)
+                        successful_calls += 1
+                        repaired = True
+                        break
+                    last_error = result.get("error", "executor_rejected_repair")
+                feedback = (
+                    "The previous proposal was rejected. Executor error: "
+                    + str(last_error)
+                    + "\nReturn exactly one corrected repair. Copy match_text verbatim "
+                      "from current_skill and provide occurrence if it is duplicated."
+                )
             except Exception as exc:
                 last_error = repr(exc)
+                operation_history.append({
+                    "repair_attempt": attempt,
+                    "error": last_error,
+                })
+                feedback = (
+                    "The previous repair request failed before application. Error: "
+                    + last_error
+                    + "\nReturn exactly one valid JSON repair object."
+                )
             if attempt < attempts_limit:
                 time.sleep(min(2 ** (attempt - 1), 4))
         if not repaired:
@@ -293,13 +344,14 @@ def _llm_repair_failed_edits(
                 "source_operation_id": source_operation.get("operation_id", ""),
                 "source_operation": source_operation,
                 "error": last_error or "repair_call_failed",
+                "repair_attempts": operation_history,
             })
     return current, all_results, {
         "attempts": total_attempts,
         "calls": calls,
         "successful_calls": successful_calls,
         "model_repairs": len(all_results),
-        "prompt_mode": "one_failed_edit_per_call",
+        "prompt_mode": "one_failed_edit_per_call_with_executor_feedback",
         "error": "; ".join(call_errors),
     }
 
