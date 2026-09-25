@@ -254,6 +254,13 @@ customer response, an explanation, or a second candidate action. The next
 stage will retrieve the exact action card and bind values under that action's
 slot contract.
 
+When candidate Action Cards appear in the system message, compare their
+action-selection rules before deciding. They are a retrieved shortlist, not a
+closed action set: choose another canonical action when the dialogue and
+workflow support it more strongly. Do not let a candidate's slot-binding
+details determine the action; use those details only after its action rule is
+applicable.
+
 Return only valid JSON:
 {{"action":"canonical-action-name"}}
 
@@ -427,6 +434,8 @@ class ABCDAgent(AbstractTodAgent):
         slot_policies_text: str | None = None,
         workflow_max_chars: int | None = 8000,
         exemplar_max_chars: int = 3000,
+        competitive_action_cards: bool = True,
+        action_selection_candidate_limit: int = 3,
         delay: float = 0.3,
         response_logger=None,
         expose_scenario_labels: bool = True,
@@ -453,6 +462,10 @@ class ABCDAgent(AbstractTodAgent):
             None if workflow_max_chars is None else max(1000, workflow_max_chars)
         )
         self.exemplar_max_chars = max(500, exemplar_max_chars)
+        self.competitive_action_cards = bool(competitive_action_cards)
+        self.action_selection_candidate_limit = max(
+            1, int(action_selection_candidate_limit)
+        )
         self._response_logger = response_logger
         self.expose_scenario_labels = expose_scenario_labels
         self.action_schema = load_action_schema()
@@ -574,11 +587,26 @@ class ABCDAgent(AbstractTodAgent):
 
     def _select_action_for_grounding(
         self, scenario: dict[str, Any], context: str, reference: str,
+        candidate_actions: list[str] | None = None,
     ) -> tuple[str, str, dict[str, Any]]:
-        """Run stage 1 and return one canonical action for exact-card lookup."""
+        """Compare candidate cards in stage 1, then return one action.
+
+        Candidate cards are evidence rather than a closed classifier label
+        set. The model may still select any canonical action, which prevents
+        an imperfect retrieval plan from making the correct action
+        unreachable.
+        """
         from llm import chat
 
-        system = self._build_system_prompt(scenario, context, candidate_actions=[])
+        candidates = list(candidate_actions or [])
+        if not self.competitive_action_cards:
+            candidates = []
+        system = self._build_system_prompt(
+            scenario, context, candidate_actions=candidates,
+        )
+        candidate_card_lookup = copy.deepcopy(
+            getattr(self, "_last_action_card_lookup", {})
+        )
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": _ACTION_SELECTION_PROMPT.format(
@@ -615,7 +643,55 @@ class ABCDAgent(AbstractTodAgent):
             )
         if selected not in self.action_schema.get("actions", set()):
             selected = ""
-        return selected, raw_output, {"messages": messages, "system": system}
+        return selected, raw_output, {
+            "messages": messages,
+            "system": system,
+            "candidate_actions": candidates,
+            "candidate_card_lookup": candidate_card_lookup,
+        }
+
+    def _action_selection_candidates(
+        self,
+        reference_plan: dict[str, Any],
+        reference_lookup: dict[str, Any],
+    ) -> list[str]:
+        """Build a bounded, recall-oriented shortlist for stage-1 comparison.
+
+        The reference planner supplies dialogue-conditioned candidates. A
+        matched transition can add its target action when the planner omitted
+        it. Only actions with cards are useful here, and this shortlist never
+        constrains the action-selection output vocabulary.
+        """
+        if not self.competitive_action_cards or not self.action_cards:
+            return []
+
+        candidates: list[str] = []
+
+        def add(value: Any) -> None:
+            action, _ = canonical_action_name(
+                value, self.action_schema.get("actions"),
+            )
+            if (
+                action in self.action_cards
+                and action in self.action_schema.get("actions", set())
+                and action not in candidates
+            ):
+                candidates.append(action)
+
+        for value in reference_plan.get("candidate_actions", []):
+            add(value)
+
+        for section in reference_lookup.get("selected_sections", []):
+            transition = str(section.get("transition_title", ""))
+            if " -> " in transition:
+                _source, target = transition.rsplit(" -> ", 1)
+                add(target)
+            else:
+                add(section.get("canonical_title", ""))
+            if len(candidates) >= self.action_selection_candidate_limit:
+                break
+
+        return candidates[:self.action_selection_candidate_limit]
 
     def _fixed_action_slot_contract(self, action: str) -> str:
         """Give stage 2 a deterministic count guard alongside its action card."""
@@ -802,22 +878,27 @@ class ABCDAgent(AbstractTodAgent):
                 reference_lookup["observation"]
                 or "No reference snippet was retrieved for this turn."
             )
+            action_selection_candidates = self._action_selection_candidates(
+                reference_plan, reference_lookup,
+            )
 
             from llm import chat
             raw_output = ""
             action_selection_raw = ""
             action_selection_meta: dict[str, Any] = {}
             selected_action = ""
-            use_two_stage_grounding = (
+            action_selection_attempted = (
                 predict_actions
                 and turn_idx in action_indices
                 and bool(self.action_cards)
             )
+            use_two_stage_grounding = action_selection_attempted
 
-            if use_two_stage_grounding:
+            if action_selection_attempted:
                 selected_action, action_selection_raw, action_selection_meta = (
                     self._select_action_for_grounding(
                         scenario, context, reference_observation,
+                        candidate_actions=action_selection_candidates,
                     )
                 )
                 # A selected action without a mined card cannot benefit from
@@ -904,41 +985,70 @@ class ABCDAgent(AbstractTodAgent):
                     "observation": reference_lookup["observation"],
                     "selected_sections": reference_lookup["selected_sections"],
                 },
-                {
-                    "turn": 4,
-                    "thought": "Retrieve the complete action card for the action used to bind slots.",
-                    "action": "retrieve_action_card",
-                    "action_input": getattr(self, "_last_action_card_lookup", {}).get("query", []),
-                    "executed": getattr(self, "_last_action_card_lookup", {}).get("executed", False),
-                    "selected_actions": getattr(self, "_last_action_card_lookup", {}).get("selected_actions", []),
-                },
             ]
-            if use_two_stage_grounding:
+            if action_selection_attempted:
                 react_trace.extend([
                     {
+                        "turn": 4,
+                        "thought": "Compare the retrieved candidate Action Cards before selecting one canonical backend action.",
+                        "action": "retrieve_candidate_action_cards",
+                        "action_input": action_selection_meta.get("candidate_actions", []),
+                        "executed": action_selection_meta.get("candidate_card_lookup", {}).get("executed", False),
+                        "selected_actions": action_selection_meta.get("candidate_card_lookup", {}).get("selected_actions", []),
+                    },
+                    {
                         "turn": 5,
-                        "thought": "Select one canonical backend action before slot grounding.",
+                        "thought": "Select one canonical backend action before slot grounding; the shortlist is not restrictive.",
                         "action": "llm_select_action",
                         "action_input": {"messages": action_selection_meta.get("messages", [])},
                         "observation": action_selection_raw,
                         "selected_action": selected_action,
                     },
-                    {
+                ])
+                if use_two_stage_grounding:
+                    react_trace.extend([
+                        {
+                            "turn": 6,
+                            "thought": "Retrieve the complete Action Card for the selected action.",
+                            "action": "retrieve_action_card",
+                            "action_input": getattr(self, "_last_action_card_lookup", {}).get("query", []),
+                            "executed": getattr(self, "_last_action_card_lookup", {}).get("executed", False),
+                            "selected_actions": getattr(self, "_last_action_card_lookup", {}).get("selected_actions", []),
+                        },
+                        {
+                            "turn": 7,
+                            "thought": "Bind ordered values and write a response under the fixed action card.",
+                            "action": "llm_ground_slots_and_response",
+                            "action_input": {"messages": messages},
+                            "observation": raw_output,
+                        },
+                    ])
+                else:
+                    react_trace.append({
                         "turn": 6,
-                        "thought": "Bind ordered values and write a response under the fixed action card.",
-                        "action": "llm_ground_slots_and_response",
+                        "thought": "The selected action has no Action Card; fall back to joint action, slot, and response generation.",
+                        "action": "llm_generate_without_selected_card",
+                        "action_input": {"messages": messages},
+                        "observation": raw_output,
+                    })
+            else:
+                react_trace.extend([
+                    {
+                        "turn": 4,
+                        "thought": "Retrieve candidate Action Cards when the reference planner proposed plausible actions.",
+                        "action": "retrieve_action_card",
+                        "action_input": getattr(self, "_last_action_card_lookup", {}).get("query", []),
+                        "executed": getattr(self, "_last_action_card_lookup", {}).get("executed", False),
+                        "selected_actions": getattr(self, "_last_action_card_lookup", {}).get("selected_actions", []),
+                    },
+                    {
+                        "turn": 5,
+                        "thought": "Predict the backend action, ordered slots, and response using the workflow, scenario, dialogue context, and retrieved snippets.",
+                        "action": "llm_generate",
                         "action_input": {"messages": messages},
                         "observation": raw_output,
                     },
                 ])
-            else:
-                react_trace.append({
-                    "turn": 5,
-                    "thought": "Predict the backend action, ordered slots, and response using the workflow, scenario, dialogue context, and retrieved snippets.",
-                    "action": "llm_generate",
-                    "action_input": {"messages": messages},
-                    "observation": raw_output,
-                })
 
             entry = {
                 "convo_id": convo_id,
@@ -982,8 +1092,11 @@ class ABCDAgent(AbstractTodAgent):
                 entry["predicted_slots"] = slots
                 entry["action_schema_validation"] = validation
                 entry["action_selection"] = {
+                    "attempted": action_selection_attempted,
                     "two_stage_applied": use_two_stage_grounding,
                     "selected_action": selected_action,
+                    "candidate_actions": action_selection_meta.get("candidate_actions", []),
+                    "candidate_card_lookup": action_selection_meta.get("candidate_card_lookup", {}),
                     "stage2_reported_action": raw_action if use_two_stage_grounding else "",
                     "action_locked": bool(
                         use_two_stage_grounding and action == selected_action
@@ -1729,6 +1842,103 @@ def _extract_action_sequence(conv: dict) -> list[str]:
                 action_name += ":" + ",".join(str(s)[:20] for s in slots)
             actions.append(action_name)
     return actions
+
+
+def summarize_action_selection_runtime(
+    conversations: list[dict[str, Any]],
+    turn_results: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Summarize the stage-1 action shortlist and selection behavior.
+
+    Candidate recall is conditioned on a non-empty shortlist. Selection
+    accuracy is reported separately for shortlist hits, misses, and empty
+    shortlists so a runtime gain can be attributed to retrieval or reasoning.
+    """
+    gold_by_turn: dict[tuple[str, int], str] = {}
+    for conversation in conversations:
+        convo_id = str(conversation.get("convo_id", "?"))
+        for turn_index, turn in enumerate(conversation.get("delexed", [])):
+            targets = turn.get("targets", [])
+            if len(targets) >= 3 and targets[1] == "take_action" and targets[2]:
+                gold_by_turn[(convo_id, turn_index)] = str(targets[2]).strip()
+
+    attempted = applied = with_candidates = candidate_hits = 0
+    selected_correct = selected_nonempty = fallback_no_card = 0
+    candidate_count = 0
+    bucket_totals = {"hit": 0, "miss": 0, "empty": 0}
+    bucket_correct = {"hit": 0, "miss": 0, "empty": 0}
+
+    for row in turn_results:
+        selection = row.get("action_selection") or {}
+        # Backward compatibility: old prediction files do not contain the
+        # explicit attempted bit, but a non-empty stage-1 raw result means it
+        # was attempted.
+        was_attempted = bool(selection.get("attempted")) or bool(
+            selection.get("raw_output") or selection.get("selected_action")
+        )
+        if not was_attempted:
+            continue
+        try:
+            turn_index = int(row.get("turn_index"))
+        except (TypeError, ValueError):
+            continue
+        gold_action = gold_by_turn.get((str(row.get("convo_id", "?")), turn_index))
+        if not gold_action:
+            continue
+
+        attempted += 1
+        applied += int(bool(selection.get("two_stage_applied")))
+        fallback_no_card += int(not bool(selection.get("two_stage_applied")))
+        candidates = [
+            str(action).strip()
+            for action in (selection.get("candidate_actions") or [])
+            if str(action).strip()
+        ]
+        selected_action = str(selection.get("selected_action", "") or "").strip()
+        candidate_count += len(candidates)
+        selected_nonempty += int(bool(selected_action))
+        is_correct = selected_action == gold_action
+        selected_correct += int(is_correct)
+
+        if not candidates:
+            bucket = "empty"
+        elif gold_action in candidates:
+            bucket = "hit"
+            with_candidates += 1
+            candidate_hits += 1
+        else:
+            bucket = "miss"
+            with_candidates += 1
+        bucket_totals[bucket] += 1
+        bucket_correct[bucket] += int(is_correct)
+
+    def _rate(numerator: int, denominator: int) -> float | None:
+        return round(numerator / denominator, 4) if denominator else None
+
+    return {
+        "num_stage1_attempts": attempted,
+        "num_two_stage_applied": applied,
+        "num_fallback_no_selected_card": fallback_no_card,
+        "num_nonempty_selections": selected_nonempty,
+        "selection_coverage": _rate(selected_nonempty, attempted),
+        "selection_accuracy": _rate(selected_correct, attempted),
+        "num_turns_with_candidates": with_candidates,
+        "mean_candidate_count": round(candidate_count / attempted, 4) if attempted else None,
+        "candidate_recall": _rate(candidate_hits, with_candidates),
+        "candidate_hit_turns": bucket_totals["hit"],
+        "candidate_miss_turns": bucket_totals["miss"],
+        "empty_candidate_turns": bucket_totals["empty"],
+        "selection_accuracy_candidate_hit": _rate(
+            bucket_correct["hit"], bucket_totals["hit"]
+        ),
+        "selection_accuracy_candidate_miss": _rate(
+            bucket_correct["miss"], bucket_totals["miss"]
+        ),
+        "selection_accuracy_empty_candidates": _rate(
+            bucket_correct["empty"], bucket_totals["empty"]
+        ),
+        "correct_outside_shortlist": bucket_correct["miss"],
+    }
 
 
 def _build_abcd_turn_trajectory(

@@ -510,6 +510,12 @@ def _build_agent(args, working_skill: str, base_reference: str, action_rules: st
         response_logger=response_logger,
         reference_top_k=args.reference_top_k,
         reference_max_chars=args.reference_max_chars,
+        competitive_action_cards=not getattr(
+            args, "disable_competitive_action_cards", False,
+        ),
+        action_selection_candidate_limit=getattr(
+            args, "action_selection_candidate_limit", 3,
+        ),
         expose_scenario_labels=False,
         workflow_id=workflow_id,
     )
@@ -831,6 +837,14 @@ def main() -> None:
     )
     parser.add_argument("--reference-top-k", type=int, default=3)
     parser.add_argument("--reference-max-chars", type=int, default=1800)
+    parser.add_argument(
+        "--disable-competitive-action-cards", action="store_true",
+        help="Ablation: hide candidate Action Cards during stage-1 action selection",
+    )
+    parser.add_argument(
+        "--action-selection-candidate-limit", type=int, default=3,
+        help="Maximum candidate Action Cards compared before action selection (default: 3)",
+    )
     parser.add_argument("--min-gold-support", type=int, default=3)
     parser.add_argument("--min-confidence", type=float, default=0.60)
     parser.add_argument("--min-conflict-count", type=int, default=2)

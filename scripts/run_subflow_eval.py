@@ -593,6 +593,7 @@ def evaluate_agent_on_subflow(
     # AST from turn results
     from eval_tod.abcd.agent import (
         compute_ast_from_turn_results,
+        summarize_action_selection_runtime,
         turn_results_to_abcd_predictions,
     )
     from eval_tod.abcd.data import extract_ground_truth
@@ -600,6 +601,9 @@ def evaluate_agent_on_subflow(
 
     ast_scores = compute_ast_from_turn_results(test_convs, turn_results)
     ast_mean = sum(s["ast_score"] for s in ast_scores) / max(len(ast_scores), 1)
+    runtime_action_selection = summarize_action_selection_runtime(
+        test_convs, turn_results,
+    )
     abcd_preds = turn_results_to_abcd_predictions(turn_results, test_convs)
     all_gt = [extract_ground_truth(conv) for conv in test_convs]
     abcd_eval = evaluate_abcd(all_gt, abcd_preds)
@@ -665,6 +669,7 @@ def evaluate_agent_on_subflow(
             "num_action_turns": abcd_eval.ast.total_action_turns,
             "num_action_correct_turns": abcd_eval.ast.action_correct_turns,
         },
+        "runtime_action_selection": runtime_action_selection,
     }
     if workflow_ids:
         output["_evaluation_worker_usage"] = worker_usage
@@ -697,6 +702,14 @@ def main():
                         help="Number of reference.md operator sections to retrieve per turn")
     parser.add_argument("--reference-max-chars", type=int, default=1800,
                         help="Max characters of retrieved reference snippets injected per turn")
+    parser.add_argument(
+        "--disable-competitive-action-cards", action="store_true",
+        help="Ablation: hide candidate Action Cards during stage-1 action selection",
+    )
+    parser.add_argument(
+        "--action-selection-candidate-limit", type=int, default=3,
+        help="Maximum candidate Action Cards compared before action selection (default: 3)",
+    )
     parser.add_argument("--mining-method", choices=["backbone", "backbone_coverage", "semantic_router", "sequence", "legacy"],
                         default="legacy",
                         help="Skill mining method; backbone and legacy backbone_coverage both use discriminative session-aware arborescence")
@@ -1005,6 +1018,8 @@ def main():
                 slot_policies_text=slot_policies_text,
                 reference_top_k=args.reference_top_k,
                 reference_max_chars=args.reference_max_chars,
+                competitive_action_cards=not args.disable_competitive_action_cards,
+                action_selection_candidate_limit=args.action_selection_candidate_limit,
                 expose_scenario_labels=False,
             )
         mined_result = evaluate_agent_on_subflow(
@@ -1039,6 +1054,8 @@ def main():
                 slot_policies_text=slot_policies_text,
                 reference_top_k=args.reference_top_k,
                 reference_max_chars=args.reference_max_chars,
+                competitive_action_cards=not args.disable_competitive_action_cards,
+                action_selection_candidate_limit=args.action_selection_candidate_limit,
                 expose_scenario_labels=False,
             )
             unordered_result = evaluate_agent_on_subflow(

@@ -25,6 +25,8 @@ BACKBONE_DISCRIMINATIVE_LAMBDA="1.0"
 BACKBONE_DISCRIMINATIVE_CLIP="3.0"
 BACKBONE_COMPILER="organized"
 BACKBONE_ABLATION_ONLY=0
+DISABLE_COMPETITIVE_ACTION_CARDS=0
+ACTION_SELECTION_CANDIDATE_LIMIT=3
 SEMANTIC_MAX_SKILLS=4
 SEMANTIC_MIN_SESSIONS=20
 SUBFLOW_DISCOVERY=0
@@ -104,6 +106,8 @@ Options:
   --backbone-discriminative-clip N    Upper clip for cohort log-odds (default: 3.0)
   --backbone-compiler NAME   organized, unordered, or compare (default: organized)
   --backbone-ablation-only   Only run unordered compiler ablation; skip organized original
+  --disable-competitive-action-cards  Graph ablation: hide candidate cards during action selection
+  --action-selection-candidate-limit N  Candidate cards compared before action selection (default: 3)
   --semantic-max-skills N    Maximum latent skills per 10-flow scene (default: 4)
   --semantic-min-sessions N  Minimum training sessions per latent skill (default: 20)
   --subflow-discovery        Discover latent session subflows before the selected graph miner
@@ -152,6 +156,8 @@ while [[ $# -gt 0 ]]; do
         --backbone-discriminative-clip) BACKBONE_DISCRIMINATIVE_CLIP="$2"; shift 2 ;;
         --backbone-compiler) BACKBONE_COMPILER="$2"; shift 2 ;;
         --backbone-ablation-only) BACKBONE_ABLATION_ONLY=1; shift ;;
+        --disable-competitive-action-cards) DISABLE_COMPETITIVE_ACTION_CARDS=1; shift ;;
+        --action-selection-candidate-limit) ACTION_SELECTION_CANDIDATE_LIMIT="$2"; shift 2 ;;
         --semantic-max-skills) SEMANTIC_MAX_SKILLS="$2"; shift 2 ;;
         --semantic-min-sessions) SEMANTIC_MIN_SESSIONS="$2"; shift 2 ;;
         --subflow-discovery) SUBFLOW_DISCOVERY=1; shift ;;
@@ -223,6 +229,7 @@ python -c 'import sys; value=float(sys.argv[1]); sys.exit(0 if 0.0 <= value <= 1
 [[ "$ASI_MAX_INDUCTION_EPISODES" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --asi-max-induction-episodes: $ASI_MAX_INDUCTION_EPISODES" >&2; exit 2; }
 [[ "$SKILL_DISCO_BATCH_SIZE" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --skill-disco-batch-size: $SKILL_DISCO_BATCH_SIZE" >&2; exit 2; }
 [[ "$SKILL_DISCO_MIN_SUPPORT" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --skill-disco-min-support: $SKILL_DISCO_MIN_SUPPORT" >&2; exit 2; }
+[[ "$ACTION_SELECTION_CANDIDATE_LIMIT" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --action-selection-candidate-limit: $ACTION_SELECTION_CANDIDATE_LIMIT" >&2; exit 2; }
 if [[ "$BACKBONE_ABLATION_ONLY" -eq 1 ]]; then
     [[ "$BACKBONE_COMPILER" != "compare" ]] || { echo "--backbone-ablation-only cannot be combined with --backbone-compiler compare" >&2; exit 2; }
     BACKBONE_COMPILER="unordered"
@@ -590,8 +597,10 @@ run_worker() {
                 --backbone-discriminative-lambda "$BACKBONE_DISCRIMINATIVE_LAMBDA"
                 --backbone-discriminative-clip "$BACKBONE_DISCRIMINATIVE_CLIP"
                 --backbone-compiler "$BACKBONE_COMPILER"
+                --action-selection-candidate-limit "$ACTION_SELECTION_CANDIDATE_LIMIT"
                 --semantic-max-skills "$SEMANTIC_MAX_SKILLS"
                 --semantic-min-sessions "$SEMANTIC_MIN_SESSIONS")
+            [[ "$DISABLE_COMPETITIVE_ACTION_CARDS" -eq 1 ]] && graph_args+=(--disable-competitive-action-cards)
             [[ -n "$EVAL_WORKFLOW_IDS_RAW" ]] && graph_args+=(--eval-workflow-ids "$EVAL_WORKFLOW_IDS_RAW")
             [[ "$SUBFLOW_DISCOVERY" -eq 1 ]] && graph_args+=(--subflow-discovery)
             [[ "$SKIP_GRAPH_SEED" -eq 1 ]] && graph_args+=(--skip-seed)

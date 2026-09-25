@@ -79,6 +79,12 @@ def _build_agent(args, working_skill: str, base_reference: str,
         response_logger=response_logger,
         reference_top_k=args.reference_top_k,
         reference_max_chars=args.reference_max_chars,
+        competitive_action_cards=not getattr(
+            args, "disable_competitive_action_cards", False,
+        ),
+        action_selection_candidate_limit=getattr(
+            args, "action_selection_candidate_limit", 3,
+        ),
         expose_scenario_labels=False,
         workflow_id=workflow_id,
     )
@@ -478,6 +484,8 @@ def main() -> None:
                         help="Optional comma-separated evaluation workflows (fork-capable Linux only)")
     parser.add_argument("--reference-top-k", type=int, default=3)
     parser.add_argument("--reference-max-chars", type=int, default=1800)
+    parser.add_argument("--disable-competitive-action-cards", action="store_true")
+    parser.add_argument("--action-selection-candidate-limit", type=int, default=3)
     parser.add_argument("--skip-utterance-eval", action="store_true")
     parser.add_argument("--no-evaluate", action="store_true", help="Restore and report only")
     args = parser.parse_args()
@@ -512,6 +520,8 @@ def main() -> None:
         model=args.model,
         reference_top_k=args.reference_top_k,
         reference_max_chars=args.reference_max_chars,
+        disable_competitive_action_cards=args.disable_competitive_action_cards,
+        action_selection_candidate_limit=args.action_selection_candidate_limit,
     )
     agent = _build_agent(
         agent_args, restored["skill"], restored["base_reference"],
