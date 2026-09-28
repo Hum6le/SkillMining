@@ -1,4 +1,4 @@
-"""Offline SKILL-DISCO components for ABCD trajectory distillation."""
+"""ABCD-adapted Skill-DisCo distillation, compilation, and callable runtime."""
 
 from .abcd_trace import (
     NormalizedABCDTrace,
@@ -22,7 +22,10 @@ from .skill_specification import (
     SkillContract,
     build_skill_specification_prompt,
     specify_skill_contract,
+    skill_contract_from_dict,
 )
+from .compiled_pipeline import run_compiled_abcd_pipeline
+from .callable_runtime import CompiledSkillLibrary
 
 __all__ = [
     "NormalizedABCDTrace",
@@ -41,4 +44,7 @@ __all__ = [
     "SkillContract",
     "build_skill_specification_prompt",
     "specify_skill_contract",
+    "skill_contract_from_dict",
+    "run_compiled_abcd_pipeline",
+    "CompiledSkillLibrary",
 ]

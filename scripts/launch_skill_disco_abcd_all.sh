@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 
-# Launch the complete multi-subflow SKILL-DISCO ABCD runner in the background.
-# All arguments are forwarded to run_skill_disco_abcd_all.sh.
+# Launch the current 10-flow Skill-DisCo ABCD protocol using the same worker
+# scheduler as AWM and Trace2Skill. All arguments are forwarded to the shared
+# runner, including --workflow-ids.
 
 set -u
 
@@ -10,15 +11,18 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUTPUT_DIR="$ROOT_DIR/outputs"
 LAUNCH_ID="$(date +%Y-%m-%d_%H-%M-%S)"
 LOG_PATH="$OUTPUT_DIR/skill_disco_abcd_all_nohup_${LAUNCH_ID}.log"
+PID_PATH="$OUTPUT_DIR/skill_disco_abcd_all_nohup_${LAUNCH_ID}.pid"
 
 mkdir -p "$OUTPUT_DIR"
 
-nohup bash "$SCRIPT_DIR/run_skill_disco_abcd_all.sh" "$@" > "$LOG_PATH" 2>&1 &
+nohup bash "$SCRIPT_DIR/run_full_abcd_experiments.sh" --method skill_disco "$@" > "$LOG_PATH" 2>&1 &
 PID=$!
+printf '%s\n' "$PID" > "$PID_PATH"
 
 echo "Started complete multi-subflow SKILL-DISCO ABCD run with nohup."
 echo "PID:          $PID"
+echo "PID file:     $PID_PATH"
 echo "Log:          $LOG_PATH"
 echo "Output root:  $OUTPUT_DIR"
 echo "Monitor:      tail -f $LOG_PATH"
-echo "The batch manifest and per-subflow logs will be printed at the end of the log."
+echo "The worker logs and aggregate summary paths will be printed at the end of the log."

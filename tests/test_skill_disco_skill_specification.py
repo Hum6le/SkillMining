@@ -47,7 +47,7 @@ class SkillSpecificationTest(unittest.TestCase):
             "canonical_action_sequence": ["pull-up-account(username)", "make-password()"], "abstraction_level": "composite",
         })
         contract, _ = specify_skill_contract(self.cluster, [self.operation], lambda *_args, **_kwargs: response)
-        self.assertEqual(contract.return_type, "SkillResult")
+        self.assertEqual(contract.return_type, "dict")
         self.assertEqual(contract.confidence_score, 0.5)
         self.assertEqual(contract.estimated_actions_saved, 1)
         self.assertEqual(contract.parameters[0].name, "username")
@@ -67,6 +67,7 @@ class SkillSpecificationTest(unittest.TestCase):
             )
 
         self.assertEqual(contract.canonical_action_sequence, self.operation.action_sequence)
+        self.assertEqual([parameter.name for parameter in contract.parameters], ["username"])
         self.assertTrue(any("Recovered an invalid LLM skill contract" in str(item.message) for item in caught))
 
 

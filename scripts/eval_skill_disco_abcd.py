@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Evaluate a rendered SKILL-DISCO pseudocode library on a frozen ABCD test split."""
+"""Evaluate Skill-DisCo guidance or callable skills on a frozen ABCD test split."""
 
 from __future__ import annotations
 
@@ -17,11 +17,15 @@ from eval_tod.cli import evaluate_abcd_bundle
 from eval_tod.response_logger import ResponseLogger
 from scripts.llm_usage_utils import get_usage, reset_usage, split_usage_summary
 from skill_disco.runtime import create_skill_disco_abcd_agent, load_skill_library
+from skill_disco.abcd_runtime import CompiledSkillDiscoABCDAgent, summarize_skill_invocations
+from skill_disco.callable_runtime import CompiledSkillLibrary
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Evaluate offline SKILL-DISCO pseudocode on ABCD")
+    parser = argparse.ArgumentParser(description="Evaluate Skill-DisCo guidance or callable skills on ABCD")
     parser.add_argument("--skill-library", required=True)
+    parser.add_argument("--generation-artifact", default=None,
+                        help="Use verified compiled skills as callable ABCD action predictors")
     parser.add_argument("--test-file", required=True, help="Frozen ABCD test JSON array")
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--model", default="deepseek-chat")
@@ -51,10 +55,18 @@ def main() -> None:
         conversations = conversations[:args.max_test]
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    agent = create_skill_disco_abcd_agent(
-        load_skill_library(args.skill_library), model=args.model,
-        response_logger=ResponseLogger(str(output_dir / "llm_responses")),
-    )
+    response_logger = ResponseLogger(str(output_dir / "llm_responses"))
+    if args.generation_artifact:
+        agent = CompiledSkillDiscoABCDAgent(
+            CompiledSkillLibrary.load(args.generation_artifact),
+            load_skill_library(args.skill_library), model=args.model,
+            response_logger=response_logger,
+        )
+    else:
+        agent = create_skill_disco_abcd_agent(
+            load_skill_library(args.skill_library), model=args.model,
+            response_logger=response_logger,
+        )
     turn_results = agent.generate_all_turn_predictions(conversations, predict_actions=True)
     grouped = turn_results_to_abcd_predictions(turn_results, conversations)
     abcd_records = [{
@@ -76,6 +88,7 @@ def main() -> None:
     result = evaluate_abcd_bundle(
         conversations, text_records=text_records, abcd_records=abcd_records, text_prediction_key="response_text"
     )
+    result["skill_usage"] = summarize_skill_invocations(turn_results)
     result["llm_usage"] = split_usage_summary(None, get_usage())
     (output_dir / "turn_predictions.json").write_text(json.dumps(turn_results, ensure_ascii=False, indent=2), encoding="utf-8")
     (output_dir / "abcd_predictions.json").write_text(json.dumps(abcd_records, ensure_ascii=False, indent=2), encoding="utf-8")

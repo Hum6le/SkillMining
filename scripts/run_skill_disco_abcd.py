@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate an ABCD pseudocode skill library from an induction JSON split."""
+"""Generate ABCD Skill-DisCo artifacts, optionally compiling verified skills."""
 
 from __future__ import annotations
 
@@ -15,11 +15,12 @@ if str(PROJECT_ROOT) not in sys.path:
 from llm import chat
 from eval_tod.response_logger import ResponseLogger
 from scripts.llm_usage_utils import get_usage, reset_usage, split_usage_summary
+from skill_disco.compiled_pipeline import run_compiled_abcd_pipeline
 from skill_disco.pipeline import run_offline_pseudocode_pipeline
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Offline SKILL-DISCO pseudocode generation for ABCD")
+    parser = argparse.ArgumentParser(description="Skill-DisCo generation and optional Stage-5 compilation for ABCD")
     parser.add_argument("--input", required=True, help="Induction conversation JSON array")
     parser.add_argument("--output", required=True, help="Full JSON artifact output")
     parser.add_argument("--library-output", required=True, help="Rendered SKILL.md output")
@@ -27,6 +28,11 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=20)
     parser.add_argument("--min-support", type=int, default=2)
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--compile-and-verify", action="store_true",
+                        help="Run Stage 5 using held-out ABCD action replay")
+    parser.add_argument("--verification-fraction", type=float, default=0.2)
+    parser.add_argument("--verification-cases", type=int, default=12)
+    parser.add_argument("--max-synthesis-attempts", type=int, default=3)
     parser.add_argument(
         "--expected-subflow",
         default=None,
@@ -59,10 +65,19 @@ def main() -> None:
             call_tag="skill_disco_generation", **kwargs,
         )
 
-    artifact = run_offline_pseudocode_pipeline(
-        conversations, tracked_chat, model=args.model,
-        grouping_batch_size=args.batch_size, min_support=args.min_support,
-    )
+    if args.compile_and_verify:
+        artifact = run_compiled_abcd_pipeline(
+            conversations, tracked_chat, model=args.model,
+            grouping_batch_size=args.batch_size, min_support=args.min_support,
+            verification_fraction=args.verification_fraction,
+            verification_cases=args.verification_cases,
+            max_synthesis_attempts=args.max_synthesis_attempts,
+        )
+    else:
+        artifact = run_offline_pseudocode_pipeline(
+            conversations, tracked_chat, model=args.model,
+            grouping_batch_size=args.batch_size, min_support=args.min_support,
+        )
     output.write_text(json.dumps(artifact, ensure_ascii=False, indent=2), encoding="utf-8")
     library = Path(args.library_output)
     library.parent.mkdir(parents=True, exist_ok=True)
@@ -71,7 +86,8 @@ def main() -> None:
     (output.parent / "llm_usage_generation.json").write_text(
         json.dumps(usage, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    print(f"Generated {len(artifact['contracts'])} pseudocode skills -> {library}")
+    count = len(artifact.get("verified_contracts", artifact["contracts"]))
+    print(f"Generated {count} {'verified' if args.compile_and_verify else 'pseudocode'} skills -> {library}")
 
 
 if __name__ == "__main__":

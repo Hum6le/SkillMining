@@ -51,6 +51,32 @@ class SkillContract:
         }
 
 
+def skill_contract_from_dict(data: dict[str, Any]) -> SkillContract:
+    """Restore a persisted Stage-4 contract for later Stage-5 compilation."""
+    return SkillContract(
+        cluster_id=str(data["cluster_id"]),
+        skill_name=str(data["skill_name"]),
+        description=str(data.get("description", "")),
+        docstring=str(data.get("docstring", "")),
+        parameters=[SkillParameter(
+            name=str(item["name"]), type=str(item.get("type", "str")),
+            description=str(item.get("description", "")),
+            required=bool(item.get("required", True)),
+            default=None if item.get("default") is None else str(item["default"]),
+        ) for item in data.get("parameters", [])],
+        return_type=str(data.get("return_type", "dict")),
+        preconditions=[str(item) for item in data.get("preconditions", [])],
+        postconditions=[str(item) for item in data.get("postconditions", [])],
+        side_effects=[str(item) for item in data.get("side_effects", [])],
+        canonical_action_sequence=[str(item) for item in data.get("canonical_action_sequence", [])],
+        abstraction_level=str(data.get("abstraction_level", "composite")),
+        estimated_actions_saved=int(data.get("estimated_actions_saved", 0)),
+        confidence_score=float(data.get("confidence_score", 0)),
+        supporting_conversations=[str(item) for item in data.get("supporting_conversations", [])],
+        source_operation_ids=[str(item) for item in data.get("source_operation_ids", [])],
+    )
+
+
 def _json_object(raw_output: str) -> dict[str, Any]:
     text = raw_output.strip()
     fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL | re.IGNORECASE)
@@ -69,7 +95,13 @@ def _string_list(value: Any) -> list[str]:
 
 
 def _supported_parameters(operations: list[SemanticOperation]) -> set[str]:
-    return {parameter for operation in operations for parameter in operation.parameters}
+    names = {parameter for operation in operations for parameter in operation.parameters}
+    for operation in operations:
+        for action in operation.action_sequence:
+            match = re.fullmatch(r"[^()]+\((.*)\)", action.strip())
+            if match:
+                names.update(part.strip() for part in match.group(1).split(",") if part.strip())
+    return names
 
 
 def _derived_action_savings(operations: list[SemanticOperation]) -> int:
@@ -110,7 +142,7 @@ the observed values into a reusable procedure; never copy a concrete training va
 Return exactly one JSON object and no Markdown:
 {"skill_name": "snake_case", "description": "...", "docstring": "...",
  "parameters": [{"name": "...", "type": "str|list[str]|bool|int", "description": "...", "required": true, "default": null}],
- "return_type": "SkillResult", "preconditions": ["..."], "postconditions": ["..."], "side_effects": ["..."],
+ "return_type": "dict", "preconditions": ["..."], "postconditions": ["..."], "side_effects": ["..."],
  "canonical_action_sequence": ["exact action template"], "abstraction_level": "primitive|composite|workflow"}
 
 Supported parameter names:
@@ -157,13 +189,25 @@ def parse_skill_contract_output(raw_output: str, cluster: SkillCluster, operatio
             RuntimeWarning,
             stacklevel=2,
         )
+    used_parameters = set()
+    for action in canonical:
+        match = re.fullmatch(r"[^()]+\((.*)\)", action.strip())
+        if match:
+            used_parameters.update(part.strip() for part in match.group(1).split(",") if part.strip())
+    declared = {parameter.name for parameter in parameters}
+    for name in sorted(used_parameters - declared):
+        if name in allowed_parameters:
+            parameters.append(SkillParameter(
+                name=name, type="str", description="Bind from current dialogue or task state",
+                required=True, default=None,
+            ))
     level = str(payload.get("abstraction_level", "composite")).strip()
     if level not in {"primitive", "composite", "workflow"}:
         level = "composite"
     return SkillContract(
         cluster_id=cluster.cluster_id, skill_name=skill_name,
         description=str(payload.get("description", "")).strip(), docstring=str(payload.get("docstring", "")).strip(),
-        parameters=parameters, return_type="SkillResult", preconditions=_string_list(payload.get("preconditions")),
+        parameters=parameters, return_type="dict", preconditions=_string_list(payload.get("preconditions")),
         postconditions=_string_list(payload.get("postconditions")), side_effects=_string_list(payload.get("side_effects")),
         canonical_action_sequence=canonical, abstraction_level=level,
         estimated_actions_saved=_derived_action_savings(operations), confidence_score=cluster.reusability_score,

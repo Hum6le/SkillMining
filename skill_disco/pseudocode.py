@@ -11,14 +11,28 @@ def render_skill_pseudocode(contract: SkillContract) -> str:
         f"{parameter.name}: {parameter.type}" for parameter in contract.parameters
     )
     lines = [
-        f"## Skill: {contract.skill_name}",
+        f"### Skill: {contract.skill_name}",
         f"Signature: {contract.skill_name}({signature})",
         "",
         "Purpose:",
-        contract.description or contract.docstring or "Reusable procedural subgoal.",
+        contract.description or "Reusable procedural subgoal.",
+        "",
+        "Execution guidance:",
+        contract.docstring or "Follow the procedure and bind parameters from current evidence.",
+        "",
+        "Parameters:",
+    ]
+    if contract.parameters:
+        lines.extend(
+            f"- {parameter.name}: {parameter.description or parameter.type}"
+            for parameter in contract.parameters
+        )
+    else:
+        lines.append("- None.")
+    lines.extend([
         "",
         "Use when:",
-    ]
+    ])
     if contract.preconditions:
         lines.extend(f"- {item}" for item in contract.preconditions)
     else:
@@ -32,6 +46,11 @@ def render_skill_pseudocode(contract: SkillContract) -> str:
         lines.extend(f"- {item}" for item in contract.postconditions)
     else:
         lines.append("- No declared postcondition.")
+    lines.extend(["", "Side effects:"])
+    if contract.side_effects:
+        lines.extend(f"- {item}" for item in contract.side_effects)
+    else:
+        lines.append("- No declared side effect.")
     lines.extend([
         "",
         "Metadata:",

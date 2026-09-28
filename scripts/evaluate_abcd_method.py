@@ -94,6 +94,17 @@ def _build_agent(method: str, resource: Path, model: str, logger: ResponseLogger
         library = resource / "SKILL.md"
         if not library.is_file():
             raise FileNotFoundError(f"no SKILL-DISCO library at {library}")
+        artifact = resource / "generation_artifact.json"
+        if artifact.is_file():
+            payload = json.loads(artifact.read_text(encoding="utf-8"))
+            if "compiled_skills" in payload:
+                from skill_disco.abcd_runtime import CompiledSkillDiscoABCDAgent
+                from skill_disco.callable_runtime import CompiledSkillLibrary
+
+                return CompiledSkillDiscoABCDAgent(
+                    CompiledSkillLibrary(payload), load_skill_library(library),
+                    model=model, response_logger=logger,
+                )
         return create_skill_disco_abcd_agent(
             load_skill_library(library), model=model, response_logger=logger
         )
@@ -129,6 +140,9 @@ def _evaluate_rows(method: str, resource: Path, conversations: list[dict], model
         conversations, text_records=text_records, abcd_records=abcd_records,
         text_prediction_key="response_text",
     )
+    if method == "skill_disco":
+        from skill_disco.abcd_runtime import summarize_skill_invocations
+        result["skill_usage"] = summarize_skill_invocations(turns)
     usage = get_usage()
     result["llm_usage"] = split_usage_summary(None, usage)
     (output / "turn_predictions.json").write_text(json.dumps(turns, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -145,6 +159,7 @@ def _merge(method: str, subflow: str, test_file: Path, shard_root: Path, output:
     # still has its skip-final-test summary. Once a merged evaluation summary
     # exists, do not count that already-merged usage again on resume.
     training_usage = None
+    root_summary: dict = {}
     root_summary_path = output / "summary.json"
     if root_summary_path.is_file():
         try:
@@ -162,6 +177,10 @@ def _merge(method: str, subflow: str, test_file: Path, shard_root: Path, output:
                             training_usage = json.loads(usage_path.read_text(encoding="utf-8"))
                         except (OSError, json.JSONDecodeError):
                             training_usage = None
+            elif isinstance(root_summary.get("llm_usage"), dict):
+                # Re-evaluating a previously merged run must retain its
+                # generation bucket while replacing the old testing bucket.
+                training_usage = root_summary["llm_usage"].get("generation")
     if training_usage is None and method == "trace2skill":
         # Trace2Skill keeps the train/evolution run in a timestamped child
         # directory, while the unified evaluator writes its merged result at
@@ -233,15 +252,24 @@ def _merge(method: str, subflow: str, test_file: Path, shard_root: Path, output:
         conversations, text_records=text_records, abcd_records=abcd_records,
         text_prediction_key="response_text",
     )
+    if method == "skill_disco":
+        from skill_disco.abcd_runtime import summarize_skill_invocations
+        result["skill_usage"] = summarize_skill_invocations(turns)
     result["llm_usage"] = usage
     output.mkdir(parents=True, exist_ok=True)
     (output / "turn_predictions.json").write_text(json.dumps(turns, ensure_ascii=False, indent=2), encoding="utf-8")
     (output / "abcd_predictions.json").write_text(json.dumps(abcd_records, ensure_ascii=False, indent=2), encoding="utf-8")
     (output / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     (output / "llm_usage.json").write_text(json.dumps(usage, ensure_ascii=False, indent=2), encoding="utf-8")
+    prior_config = root_summary.get("config", {}) if isinstance(root_summary, dict) else {}
+    prior_data = root_summary.get("data", {}) if isinstance(root_summary, dict) else {}
+    prior_config = prior_config if isinstance(prior_config, dict) else {}
+    prior_data = prior_data if isinstance(prior_data, dict) else {}
     (output / "summary.json").write_text(json.dumps({
-        "config": {"method": method, "subflow": subflow, "evaluation": "sharded"},
-        "data": {"test_sessions": len(conversations)},
+        "config": {**prior_config, "method": method, "subflow": subflow,
+                   "evaluation": "sharded", "skip_final_test": False},
+        "data": {**prior_data, "test_sessions": len(conversations)},
+        "generation": root_summary.get("generation") if isinstance(root_summary, dict) else None,
         "final_test": result,
         "llm_usage": usage,
     }, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -259,6 +259,7 @@ def _record_from_eval(
             **{name: float(text[name]) for name in TEXT_METRICS if name in text},
             **{name: float(ast[name]) for name in AST_METRICS if name in ast},
         },
+        "skill_usage": payload.get("skill_usage"),
         "llm_usage": payload.get("llm_usage"),
     }
 
@@ -388,6 +389,16 @@ def _weighted_average(records: list[dict[str, Any]]) -> dict[str, Any]:
             "weights": weights,
             "metrics": {key: round(value, 6) for key, value in metric_values.items()},
         }
+        skill_usage = [row["skill_usage"] for row in group if isinstance(row.get("skill_usage"), dict)]
+        if skill_usage:
+            action_turns = sum(int(item.get("action_target_turns", 0)) for item in skill_usage)
+            invoked = sum(int(item.get("skill_invoked_turns", 0)) for item in skill_usage)
+            result[f"{method}:{phase}"]["skill_usage"] = {
+                "action_target_turns": action_turns,
+                "skill_invoked_turns": invoked,
+                "base_fallback_turns": action_turns - invoked,
+                "skill_invocation_rate": round(invoked / action_turns, 6) if action_turns else 0.0,
+            }
     return result
 
 

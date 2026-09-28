@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -37,11 +38,19 @@ def main() -> None:
     parser.add_argument("--model", default="deepseek-chat")
     parser.add_argument("--batch-size", type=int, default=20)
     parser.add_argument("--min-support", type=int, default=2)
+    parser.add_argument("--compile-and-verify", dest="compile_and_verify", action="store_true", default=True)
+    parser.add_argument("--pseudocode-only", dest="compile_and_verify", action="store_false")
+    parser.add_argument("--verification-fraction", type=float, default=0.2)
+    parser.add_argument("--verification-cases", type=int, default=12)
+    parser.add_argument("--max-synthesis-attempts", type=int, default=3)
     parser.add_argument("--skip-final-test", action="store_true")
     args = parser.parse_args()
 
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+    # The shared ABCD launcher assigns one workflow ID per worker. Both child
+    # processes must keep that worker's environment for server-side llm.py.
+    worker_env = os.environ.copy()
     artifact = output_dir / "generation_artifact.json"
     library = output_dir / "SKILL.md"
     generation_cmd = [
@@ -51,8 +60,15 @@ def main() -> None:
         "--batch-size", str(args.batch_size), "--min-support", str(args.min_support),
         "--expected-subflow", args.subflow,
     ]
-    subprocess.run(generation_cmd, cwd=ROOT, check=True)
+    if args.compile_and_verify:
+        generation_cmd.extend([
+            "--compile-and-verify", "--verification-fraction", str(args.verification_fraction),
+            "--verification-cases", str(args.verification_cases),
+            "--max-synthesis-attempts", str(args.max_synthesis_attempts),
+        ])
+    subprocess.run(generation_cmd, cwd=ROOT, env=worker_env, check=True)
 
+    generated = _read_json(artifact)
     generation_usage = _phase_bucket(_read_json(output_dir / "llm_usage_generation.json"), "generation")
     final_test = None
     testing_usage: dict = {}
@@ -64,7 +80,9 @@ def main() -> None:
             "--output-dir", str(evaluation_dir), "--model", args.model,
             "--expected-subflow", args.subflow,
         ]
-        subprocess.run(evaluation_cmd, cwd=ROOT, check=True)
+        if args.compile_and_verify:
+            evaluation_cmd.extend(["--generation-artifact", str(artifact)])
+        subprocess.run(evaluation_cmd, cwd=ROOT, env=worker_env, check=True)
         final_test = _read_json(evaluation_dir / "result.json")
         testing_usage = _phase_bucket(_read_json(evaluation_dir / "llm_usage.json"), "testing")
 
@@ -73,6 +91,10 @@ def main() -> None:
         "config": {
             "method": "skill_disco", "subflow": args.subflow, "model": args.model,
             "batch_size": args.batch_size, "min_support": args.min_support,
+            "compile_and_verify": args.compile_and_verify,
+            "verification_fraction": args.verification_fraction if args.compile_and_verify else None,
+            "verification_mode": "heldout_recorded_action_replay" if args.compile_and_verify else None,
+            "test_runtime": "compiled_prefix_invocation" if args.compile_and_verify else "prompt_guidance",
             "skip_final_test": args.skip_final_test,
         },
         "data": {
@@ -81,6 +103,12 @@ def main() -> None:
         },
         "artifacts": {
             "generation_artifact": str(artifact), "skill_library": str(library),
+        },
+        "generation": {
+            "candidate_contracts": len(generated.get("contracts", [])),
+            "verified_skills": len(generated.get("verified_contracts", [])) if args.compile_and_verify else None,
+            "induction_sessions": generated.get("split", {}).get("induction_conversations"),
+            "verification_sessions": generated.get("split", {}).get("verification_conversations"),
         },
         "final_test": final_test,
         "llm_usage": usage,
