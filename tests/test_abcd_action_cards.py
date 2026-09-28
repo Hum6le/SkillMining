@@ -66,6 +66,118 @@ class ActionCardRuntimeTest(unittest.TestCase):
         )
 
     @patch("llm.resolve_config", return_value={"model": "test", "api_key": "", "base_url": ""})
+    def test_observable_mode_prioritizes_candidates_before_llm_selection(self, _config):
+        router = {
+            "sources": {
+                "account_access:verify-identity": {
+                    "tree": {
+                        "kind": "split", "feature": "customer_token:email",
+                        "present": {"kind": "leaf", "mode_id": "email"},
+                        "absent": {"kind": "leaf", "mode_id": "password"},
+                    },
+                    "modes": [
+                        {"mode_id": "email", "candidate_targets": ["account_access:send-link"]},
+                        {"mode_id": "password", "candidate_targets": ["account_access:make-password"]},
+                    ],
+                },
+            },
+        }
+        agent = ABCDAgent(
+            action_rules_text=(
+                "#### `send-link`\nSend a link.\n\n"
+                "#### `make-password`\nGenerate a password.\n"
+            ),
+            observable_router=router,
+        )
+        agent.action_schema = {
+            "actions": {"send-link", "make-password", "verify-identity"},
+            "slot_counts": {},
+        }
+
+        candidates = agent._action_selection_candidates(
+            {"candidate_actions": ["make-password"]},
+            {"selected_sections": []},
+            context="[Customer] Please send the email link.",
+            previous_action="verify-identity",
+        )
+
+        self.assertEqual(candidates, ["send-link", "make-password"])
+
+    @patch("llm.resolve_config", return_value={"model": "test", "api_key": "", "base_url": ""})
+    def test_structural_state_uses_only_executed_action_history(self, _config):
+        structural = {
+            "history_order": 3,
+            "routers": {
+                "account_access:verify-identity": {
+                    "tree": {
+                        "kind": "split", "feature": "lag1:pull-up-account",
+                        "present": {"kind": "leaf", "mode_id": "account-state"},
+                        "absent": {"kind": "leaf", "mode_id": "other-state"},
+                    },
+                    "modes": [
+                        {"mode_id": "account-state", "candidate_actions": ["account_access:send-link"]},
+                        {"mode_id": "other-state", "candidate_actions": ["account_access:make-password"]},
+                    ],
+                },
+            },
+        }
+        agent = ABCDAgent(
+            action_rules_text=(
+                "#### `send-link`\nSend a link.\n\n"
+                "#### `make-password`\nGenerate a password.\n"
+            ),
+            structural_router=structural,
+        )
+        agent.action_schema = {
+            "actions": {"send-link", "make-password", "verify-identity", "pull-up-account"},
+            "slot_counts": {},
+        }
+
+        candidates = agent._action_selection_candidates(
+            {"candidate_actions": ["make-password"]},
+            {"selected_sections": []},
+            context="[Customer] Arbitrary text must not affect structural routing.",
+            previous_action="verify-identity",
+            action_history=["pull-up-account", "verify-identity"],
+        )
+
+        self.assertEqual(candidates, ["send-link", "make-password"])
+
+    @patch("llm.resolve_config", return_value={"model": "test", "api_key": "", "base_url": ""})
+    def test_motif_state_prioritizes_role_conditioned_candidates(self, _config):
+        motif = {
+            "history_order": 1,
+            "routers": {
+                "account_access:verify-identity": {
+                    "signature_to_mode": {
+                        "path=pull-up-account|revisit=0|loop=0": "account-role",
+                    },
+                    "modes": [
+                        {"mode_id": "account-role", "support": 8,
+                         "candidate_actions": ["account_access:send-link"]},
+                    ],
+                },
+            },
+        }
+        agent = ABCDAgent(
+            action_rules_text=(
+                "#### `send-link`\nSend a link.\n\n"
+                "#### `make-password`\nGenerate a password.\n"
+            ),
+            motif_router=motif,
+        )
+        agent.action_schema = {
+            "actions": {"send-link", "make-password", "verify-identity", "pull-up-account"},
+            "slot_counts": {},
+        }
+        candidates = agent._action_selection_candidates(
+            {"candidate_actions": ["make-password"]},
+            {"selected_sections": []},
+            action_history=["pull-up-account", "verify-identity"],
+        )
+        self.assertEqual(candidates, ["send-link", "make-password"])
+
+    @patch("llm.resolve_config", return_value={"model": "test", "api_key": "", "base_url": ""})
     def test_stage1_compares_cards_without_restricting_selected_action(self, _config):
         agent = ABCDAgent(
             action_rules_text=(

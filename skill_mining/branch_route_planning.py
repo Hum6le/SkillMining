@@ -67,6 +67,9 @@ def build_branch_route_plan(subgraph: dict[str, Any]) -> dict[str, Any]:
     parent = {edge["target"]: edge["source"] for edge in backbone.get("edges", []) if edge.get("source") and edge.get("target")}
     outgoing = {source: list(edges) for source, edges in (subgraph.get("local_transitions") or {}).items()}
     induction = (subgraph.get("transition_induction") or {}).get("rules_by_source", {})
+    observable_sources = (subgraph.get("observable_router") or {}).get("sources", {})
+    structural_sources = (subgraph.get("structural_refinement") or {}).get("routers", {})
+    motif_sources = (subgraph.get("motif_refinement") or {}).get("routers", {})
     clusters: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for source, edges in outgoing.items():
         for edge in edges:
@@ -82,6 +85,18 @@ def build_branch_route_plan(subgraph: dict[str, Any]) -> dict[str, Any]:
             else:
                 route_type = "alternative_or_terminal"
             induced = next((rule for rule in induction.get(source, []) if rule.get("target") == target), None)
+            target_modes = [
+                mode for mode in (observable_sources.get(source, {}).get("modes") or [])
+                if target in (mode.get("candidate_targets") or [])
+            ]
+            target_states = [
+                mode for mode in (structural_sources.get(source, {}).get("modes") or [])
+                if target in (mode.get("candidate_actions") or [])
+            ]
+            target_motifs = [
+                mode for mode in (motif_sources.get(source, {}).get("modes") or [])
+                if target in (mode.get("candidate_actions") or [])
+            ]
             clusters[anchor].append({
                 "edge_id": edge_key(source, target), "source": source, "source_label": nodes[source]["label"],
                 "target": target, "target_label": nodes[target]["label"], "kind": str(edge.get("kind") or "branch"),
@@ -91,6 +106,10 @@ def build_branch_route_plan(subgraph: dict[str, Any]) -> dict[str, Any]:
                 "support": int(edge.get("support", 0)), "probability": float(edge.get("probability", 0.0)),
                 "likely_rejoin": rejoin, "likely_rejoin_label": nodes[rejoin]["label"] if rejoin in nodes else "",
                 "suggested_route_nodes": route_nodes, "suggested_route_labels": [nodes[item]["label"] for item in route_nodes if item in nodes],
+                "observable_modes": target_modes,
+                "observable_distinctions": edge.get("observable_distinctions", []),
+                "structural_states": target_states,
+                "motif_roles": target_motifs,
             })
     ordered_clusters = []
     for anchor, routes in sorted(clusters.items(), key=lambda item: (main_path.index(item[0]) if item[0] in main_path else len(main_path), item[0])):

@@ -291,12 +291,33 @@ def mine_subflow_skill_backbone(
     coverage_lambda: float = 0.2,
     discriminative_lambda: float = 1.0,
     discriminative_clip: float = 3.0,
+    mining_method: str = "backbone",
+    trace_coverage_target: float = 0.8,
+    corpus_fitness_target: float = 0.95,
+    routing_complexity_weight: float = 2.0,
+    dependency_weight: float = 1.0,
+    routing_mode_max_depth: int = 2,
+    routing_mode_min_leaf_support: int = 12,
+    routing_mode_min_information_gain: float = 0.10,
+    structural_history_order: int = 3,
+    structural_state_max_depth: int = 3,
+    structural_state_min_leaf_support: int = 8,
+    structural_state_node_penalty: float = 1.0,
+    structural_state_edge_penalty: float = 2.0,
+    motif_history_order: int = 1,
+    motif_min_support: int = 8,
+    motif_state_node_penalty: float = 1.0,
+    motif_state_edge_penalty: float = 2.0,
     compiler: str = "organized",
     artifact_dir: Path | None = None,
 ) -> dict:
     """Mine an all-action arborescence plus compact local transitions."""
     from skill_mining.backbone_workflow_mining import (
-        mine_backbone_workflow, sample_transition_cases,
+        mine_backbone_workflow, mine_backbone_workflow_heuristics,
+        mine_backbone_workflow_observable_trace_cover,
+        mine_backbone_workflow_motif_trace_cover,
+        mine_backbone_workflow_structural_trace_cover,
+        mine_backbone_workflow_trace_cover, sample_transition_cases,
     )
     from skill_mining.skill_writer import (
         _find_operator_snippets, build_reference_md,
@@ -305,21 +326,65 @@ def mine_subflow_skill_backbone(
         induce_transition_rules,
     )
 
-    # ``backbone`` and the historical ``backbone_coverage`` alias both use
-    # the same discriminative session-aware arborescence.
-    miner = mine_backbone_workflow
-    miner_kwargs = {
-        "max_outgoing_edges": max_outgoing_edges,
-        "min_branch_support": min_branch_support,
-        "discriminative_lambda": discriminative_lambda,
-        "discriminative_clip": discriminative_clip,
-    }
+    if mining_method in {"trace_cover", "observable_trace_cover", "structural_trace_cover", "motif_trace_cover"}:
+        miner = (
+            mine_backbone_workflow_observable_trace_cover
+            if mining_method == "observable_trace_cover"
+            else mine_backbone_workflow_motif_trace_cover
+            if mining_method == "motif_trace_cover"
+            else mine_backbone_workflow_structural_trace_cover
+            if mining_method == "structural_trace_cover"
+            else mine_backbone_workflow_trace_cover
+        )
+        miner_kwargs = {
+            "min_branch_support": min_branch_support,
+            "trace_coverage_target": trace_coverage_target,
+            "corpus_fitness_target": corpus_fitness_target,
+            "routing_complexity_weight": routing_complexity_weight,
+        }
+        if mining_method == "observable_trace_cover":
+            miner_kwargs.update({
+                "routing_mode_max_depth": routing_mode_max_depth,
+                "routing_mode_min_leaf_support": routing_mode_min_leaf_support,
+                "routing_mode_min_information_gain": routing_mode_min_information_gain,
+            })
+        elif mining_method == "structural_trace_cover":
+            miner_kwargs.update({
+                "history_order": structural_history_order,
+                "state_max_depth": structural_state_max_depth,
+                "state_min_leaf_support": structural_state_min_leaf_support,
+                "state_node_penalty": structural_state_node_penalty,
+                "state_edge_penalty": structural_state_edge_penalty,
+            })
+        elif mining_method == "motif_trace_cover":
+            miner_kwargs.update({
+                "motif_history_order": motif_history_order,
+                "motif_min_support": motif_min_support,
+                "motif_state_node_penalty": motif_state_node_penalty,
+                "motif_state_edge_penalty": motif_state_edge_penalty,
+            })
+    elif mining_method == "heuristics":
+        miner = mine_backbone_workflow_heuristics
+        miner_kwargs = {
+            "max_outgoing_edges": max_outgoing_edges,
+            "min_branch_support": min_branch_support,
+            "dependency_weight": dependency_weight,
+        }
+    else:
+        # ``backbone`` and historical ``backbone_coverage`` share the current
+        # discriminative session-aware implementation.
+        miner = mine_backbone_workflow
+        miner_kwargs = {
+            "max_outgoing_edges": max_outgoing_edges,
+            "min_branch_support": min_branch_support,
+            "discriminative_lambda": discriminative_lambda,
+            "discriminative_clip": discriminative_clip,
+        }
     mined = miner(subflow, train_convs, **miner_kwargs)
-    cohort_info = mined["subgraph"].get("cohort_reweighting", {})
     log.info(
-        "  Discriminative backbone: cohorts=%d lambda=%.3f clip=%.3f retained_coverage=%.1f%%",
-        cohort_info.get("selected_k", 0), cohort_info.get("lambda", 0.0),
-        cohort_info.get("clip", 0.0), mined["subgraph"].get("coverage_pct", 0.0),
+        "  Graph miner=%s retained_coverage=%.1f%%",
+        mined["subgraph"].get("mining_method", mining_method),
+        mined["subgraph"].get("coverage_pct", 0.0),
     )
     operators = mined["skill_info"]["selected_vertices"]
     op_snippets = _find_operator_snippets(train_convs, subflow, operators)
@@ -406,6 +471,22 @@ def mine_subflow_semantic_router(
     subflow: str, train_convs: list, artifact_dir: Path,
     max_skills: int = 4, min_skill_sessions: int = 20,
     model: str = MODEL, mining_method: str = "backbone",
+    trace_coverage_target: float = 0.8,
+    corpus_fitness_target: float = 0.95,
+    routing_complexity_weight: float = 2.0,
+    dependency_weight: float = 1.0,
+    routing_mode_max_depth: int = 2,
+    routing_mode_min_leaf_support: int = 12,
+    routing_mode_min_information_gain: float = 0.10,
+    structural_history_order: int = 3,
+    structural_state_max_depth: int = 3,
+    structural_state_min_leaf_support: int = 8,
+    structural_state_node_penalty: float = 1.0,
+    structural_state_edge_penalty: float = 2.0,
+    motif_history_order: int = 1,
+    motif_min_support: int = 8,
+    motif_state_node_penalty: float = 1.0,
+    motif_state_edge_penalty: float = 2.0,
 ) -> dict:
     """Discover regions, then run the selected legacy/sequence/backbone miner."""
     from skill_mining.semantic_subflow import (
@@ -437,11 +518,28 @@ def mine_subflow_semantic_router(
             continue
         log.info("  Compiling semantic %s from %d sessions", skill_id, len(members))
         local_name = f"{subflow}_{skill_id}"
-        if mining_method in {"backbone", "backbone_coverage"}:
+        if mining_method in {"backbone", "backbone_coverage", "trace_cover", "observable_trace_cover", "structural_trace_cover", "motif_trace_cover", "heuristics"}:
             result = mine_subflow_skill_backbone(
                 local_name, members, max_outgoing_edges=3,
                 min_branch_support=2, transition_cases_per_edge=2,
                 coverage_aware=mining_method == "backbone_coverage",
+                mining_method=mining_method,
+                trace_coverage_target=trace_coverage_target,
+                corpus_fitness_target=corpus_fitness_target,
+                routing_complexity_weight=routing_complexity_weight,
+                dependency_weight=dependency_weight,
+                routing_mode_max_depth=routing_mode_max_depth,
+                routing_mode_min_leaf_support=routing_mode_min_leaf_support,
+                routing_mode_min_information_gain=routing_mode_min_information_gain,
+                structural_history_order=structural_history_order,
+                structural_state_max_depth=structural_state_max_depth,
+                structural_state_min_leaf_support=structural_state_min_leaf_support,
+                structural_state_node_penalty=structural_state_node_penalty,
+                structural_state_edge_penalty=structural_state_edge_penalty,
+                motif_history_order=motif_history_order,
+                motif_min_support=motif_min_support,
+                motif_state_node_penalty=motif_state_node_penalty,
+                motif_state_edge_penalty=motif_state_edge_penalty,
                 compiler="organized", artifact_dir=skill_root / skill_id,
             )
         elif mining_method == "sequence":
@@ -710,9 +808,9 @@ def main():
         "--action-selection-candidate-limit", type=int, default=3,
         help="Maximum candidate Action Cards compared before action selection (default: 3)",
     )
-    parser.add_argument("--mining-method", choices=["backbone", "backbone_coverage", "semantic_router", "sequence", "legacy"],
+    parser.add_argument("--mining-method", choices=["backbone", "backbone_coverage", "trace_cover", "observable_trace_cover", "structural_trace_cover", "motif_trace_cover", "heuristics", "semantic_router", "sequence", "legacy"],
                         default="legacy",
-                        help="Skill mining method; backbone and legacy backbone_coverage both use discriminative session-aware arborescence")
+                        help="Skill mining method; trace_cover optimizes replay fitness under graph/routing complexity")
     parser.add_argument("--backbone-max-outgoing-edges", type=int, default=3,
                         help="Max retained outgoing transitions per action for backbone mining")
     parser.add_argument("--backbone-min-branch-support", type=int, default=2,
@@ -725,6 +823,38 @@ def main():
                         help="Weight of cohort-specific log-odds in the discriminative backbone (default: 1.0)")
     parser.add_argument("--backbone-discriminative-clip", type=float, default=3.0,
                         help="Upper clip for cohort-specific log-odds bonus (default: 3.0)")
+    parser.add_argument("--trace-coverage-target", type=float, default=0.8,
+                        help="Per-trace coverage saturation point for trace-cover mining")
+    parser.add_argument("--corpus-fitness-target", type=float, default=0.95,
+                        help="Mean saturated replay-fitness target for trace-cover mining")
+    parser.add_argument("--routing-complexity-weight", type=float, default=2.0,
+                        help="Penalty for adding sibling comparisons at frequently visited sources")
+    parser.add_argument("--heuristics-dependency-weight", type=float, default=1.0,
+                        help="Weight of the Heuristics Miner dependency measure")
+    parser.add_argument("--routing-mode-max-depth", type=int, default=2,
+                        help="Maximum depth of observable routing-mode trees")
+    parser.add_argument("--routing-mode-min-leaf-support", type=int, default=12,
+                        help="Minimum train events in an observable routing mode")
+    parser.add_argument("--routing-mode-min-information-gain", type=float, default=0.10,
+                        help="Minimum entropy reduction required to split an action node")
+    parser.add_argument("--structural-history-order", type=int, default=3,
+                        help="Maximum action-history lag exposed to structural state refinement")
+    parser.add_argument("--structural-state-max-depth", type=int, default=3,
+                        help="Maximum recursive depth of graph-only state splitting")
+    parser.add_argument("--structural-state-min-leaf-support", type=int, default=8,
+                        help="Minimum transition events in a refined structural state")
+    parser.add_argument("--structural-state-node-penalty", type=float, default=1.0,
+                        help="MDL multiplier for encoding an extra structural state")
+    parser.add_argument("--structural-state-edge-penalty", type=float, default=2.0,
+                        help="MDL multiplier for encoding two endpoints of extra refined edges")
+    parser.add_argument("--motif-history-order", type=int, default=1,
+                        help="Causal predecessor radius used to form occurrence motifs")
+    parser.add_argument("--motif-min-support", type=int, default=8,
+                        help="Minimum occurrences kept as an independent motif micro-state")
+    parser.add_argument("--motif-state-node-penalty", type=float, default=1.0,
+                        help="MDL multiplier for a motif role-state")
+    parser.add_argument("--motif-state-edge-penalty", type=float, default=2.0,
+                        help="MDL multiplier for outgoing edges of motif role-states")
     parser.add_argument("--backbone-compiler", choices=["organized", "unordered", "compare"],
                         default="organized",
                         help="Backbone graph-to-skill compiler: organized (default), flat unordered control, or evaluate both on one mined graph")
@@ -856,6 +986,22 @@ def main():
                     min_skill_sessions=args.semantic_min_sessions,
                     model=args.model,
                     mining_method=("backbone" if args.mining_method == "semantic_router" else args.mining_method),
+                    trace_coverage_target=args.trace_coverage_target,
+                    corpus_fitness_target=args.corpus_fitness_target,
+                    routing_complexity_weight=args.routing_complexity_weight,
+                    dependency_weight=args.heuristics_dependency_weight,
+                    routing_mode_max_depth=args.routing_mode_max_depth,
+                    routing_mode_min_leaf_support=args.routing_mode_min_leaf_support,
+                    routing_mode_min_information_gain=args.routing_mode_min_information_gain,
+                    structural_history_order=args.structural_history_order,
+                    structural_state_max_depth=args.structural_state_max_depth,
+                    structural_state_min_leaf_support=args.structural_state_min_leaf_support,
+                    structural_state_node_penalty=args.structural_state_node_penalty,
+                    structural_state_edge_penalty=args.structural_state_edge_penalty,
+                    motif_history_order=args.motif_history_order,
+                    motif_min_support=args.motif_min_support,
+                    motif_state_node_penalty=args.motif_state_node_penalty,
+                    motif_state_edge_penalty=args.motif_state_edge_penalty,
                 )
                 discovery = semantic_bundle["discovery"]
                 skill_info = semantic_bundle["skill_info"]
@@ -892,7 +1038,7 @@ def main():
                         item.get("node_session_support"), item.get("objective", 0.0),
                         item.get("previous_objective", 0.0), item.get("accepted"),
                     )
-            elif args.mining_method in {"backbone", "backbone_coverage"}:
+            elif args.mining_method in {"backbone", "backbone_coverage", "trace_cover", "observable_trace_cover", "structural_trace_cover", "motif_trace_cover", "heuristics"}:
                 mined = mine_subflow_skill_backbone(
                     subflow,
                     train_convs,
@@ -903,6 +1049,23 @@ def main():
                     coverage_lambda=args.backbone_coverage_lambda,
                     discriminative_lambda=args.backbone_discriminative_lambda,
                     discriminative_clip=args.backbone_discriminative_clip,
+                    mining_method=args.mining_method,
+                    trace_coverage_target=args.trace_coverage_target,
+                    corpus_fitness_target=args.corpus_fitness_target,
+                    routing_complexity_weight=args.routing_complexity_weight,
+                    dependency_weight=args.heuristics_dependency_weight,
+                    routing_mode_max_depth=args.routing_mode_max_depth,
+                    routing_mode_min_leaf_support=args.routing_mode_min_leaf_support,
+                    routing_mode_min_information_gain=args.routing_mode_min_information_gain,
+                    structural_history_order=args.structural_history_order,
+                    structural_state_max_depth=args.structural_state_max_depth,
+                    structural_state_min_leaf_support=args.structural_state_min_leaf_support,
+                    structural_state_node_penalty=args.structural_state_node_penalty,
+                    structural_state_edge_penalty=args.structural_state_edge_penalty,
+                    motif_history_order=args.motif_history_order,
+                    motif_min_support=args.motif_min_support,
+                    motif_state_node_penalty=args.motif_state_node_penalty,
+                    motif_state_edge_penalty=args.motif_state_edge_penalty,
                     compiler=args.backbone_compiler,
                     artifact_dir=sf_out,
                 )
@@ -1020,6 +1183,9 @@ def main():
                 reference_max_chars=args.reference_max_chars,
                 competitive_action_cards=not args.disable_competitive_action_cards,
                 action_selection_candidate_limit=args.action_selection_candidate_limit,
+                observable_router=(mined.get("subgraph") or {}).get("observable_router", {}),
+                structural_router=(mined.get("subgraph") or {}).get("structural_refinement", {}),
+                motif_router=(mined.get("subgraph") or {}).get("motif_refinement", {}),
                 expose_scenario_labels=False,
             )
         mined_result = evaluate_agent_on_subflow(
@@ -1056,6 +1222,9 @@ def main():
                 reference_max_chars=args.reference_max_chars,
                 competitive_action_cards=not args.disable_competitive_action_cards,
                 action_selection_candidate_limit=args.action_selection_candidate_limit,
+                observable_router=(mined.get("subgraph") or {}).get("observable_router", {}),
+                structural_router=(mined.get("subgraph") or {}).get("structural_refinement", {}),
+                motif_router=(mined.get("subgraph") or {}).get("motif_refinement", {}),
                 expose_scenario_labels=False,
             )
             unordered_result = evaluate_agent_on_subflow(
@@ -1092,7 +1261,7 @@ def main():
             "mining_method": args.mining_method,
             "subflow_discovery": args.subflow_discovery,
             "eval_workflow_ids": eval_workflow_ids,
-            "backbone_compiler": args.backbone_compiler if args.mining_method in {"backbone", "backbone_coverage"} else None,
+            "backbone_compiler": args.backbone_compiler if args.mining_method in {"backbone", "backbone_coverage", "trace_cover", "observable_trace_cover", "structural_trace_cover", "motif_trace_cover", "heuristics"} else None,
             "semantic_skill_count": len(semantic_bundle["skills"]) if semantic_bundle else 0,
             "skill_vertices": skill_info.get("num_selected", 0),
             "coverage_pct": skill_info.get("coverage_pct", 0),

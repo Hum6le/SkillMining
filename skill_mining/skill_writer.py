@@ -1027,6 +1027,26 @@ def _render_route_plan_evidence(
                 + f"; likely_rejoin={route['likely_rejoin_label'] or '(none)'}"
                 + f"; suggested_route={' -> '.join(route['suggested_route_labels']) or '(none)'}"
             )
+            if route.get("observable_modes"):
+                parts.append(
+                    "  Learned observable routing modes: "
+                    + json.dumps(route["observable_modes"], ensure_ascii=False)
+                )
+            if route.get("observable_distinctions"):
+                parts.append(
+                    "  Data-derived sibling distinctions: "
+                    + json.dumps(route["observable_distinctions"], ensure_ascii=False)
+                )
+            if route.get("structural_states"):
+                parts.append(
+                    "  Deterministic action-history states: "
+                    + json.dumps(route["structural_states"], ensure_ascii=False)
+                )
+            if route.get("motif_roles"):
+                parts.append(
+                    "  Causal process-motif roles: "
+                    + json.dumps(route["motif_roles"], ensure_ascii=False)
+                )
             case_key = f"{route['source']} -> {route['target']}"
             cases = transition_cases.get(case_key, [])
             if cases:
@@ -1062,6 +1082,17 @@ transition triggers conservatively from the raw training-session contexts; if
 they are ambiguous, describe the customer situation broadly rather than
 inventing a precise business rule. Keep the document compact and explain
 control-flow logic rather than every action's pre/post-condition.
+When learned observable routing modes are supplied, treat their guards as the
+decision partition and verbalize them faithfully. Do not collapse distinct
+modes back into one unconstrained action-node guard. The LLM may make a guard
+readable, but must not replace its observable feature with an inferred latent
+intent or future information.
+When deterministic action-history states are supplied, state their completed-
+action conditions directly and do not replace them with dialogue-semantic
+guards. These states are graph structure, not suggestions for LLM inference.
+Likewise, preserve supplied causal process-motif roles as distinct occurrences
+of the same action. Their predecessor/revisit signatures are executable graph
+state and must not be collapsed into one generic action rule.
 
 <current_skill>
 {current_skill}

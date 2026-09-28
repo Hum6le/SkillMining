@@ -23,6 +23,22 @@ GRAPH_MINING_METHOD="backbone"
 BACKBONE_COVERAGE_LAMBDA="0.2"
 BACKBONE_DISCRIMINATIVE_LAMBDA="1.0"
 BACKBONE_DISCRIMINATIVE_CLIP="3.0"
+TRACE_COVERAGE_TARGET="0.8"
+CORPUS_FITNESS_TARGET="0.95"
+ROUTING_COMPLEXITY_WEIGHT="2.0"
+HEURISTICS_DEPENDENCY_WEIGHT="1.0"
+ROUTING_MODE_MAX_DEPTH="2"
+ROUTING_MODE_MIN_LEAF_SUPPORT="12"
+ROUTING_MODE_MIN_INFORMATION_GAIN="0.10"
+STRUCTURAL_HISTORY_ORDER="3"
+STRUCTURAL_STATE_MAX_DEPTH="3"
+STRUCTURAL_STATE_MIN_LEAF_SUPPORT="8"
+STRUCTURAL_STATE_NODE_PENALTY="1.0"
+STRUCTURAL_STATE_EDGE_PENALTY="2.0"
+MOTIF_HISTORY_ORDER="1"
+MOTIF_MIN_SUPPORT="8"
+MOTIF_STATE_NODE_PENALTY="1.0"
+MOTIF_STATE_EDGE_PENALTY="2.0"
 BACKBONE_COMPILER="organized"
 BACKBONE_ABLATION_ONLY=0
 DISABLE_COMPETITIVE_ACTION_CARDS=0
@@ -44,6 +60,10 @@ ASI_MIN_AST_DELTA="0.0"
 ASI_SKIP_FINAL_TEST=0
 SKILL_DISCO_BATCH_SIZE=20
 SKILL_DISCO_MIN_SUPPORT=2
+SKILL_DISCO_COMPILE_AND_VERIFY=1
+SKILL_DISCO_VERIFICATION_FRACTION="0.2"
+SKILL_DISCO_VERIFICATION_CASES=12
+SKILL_DISCO_MAX_SYNTHESIS_ATTEMPTS=3
 CONTINUE_ON_ERROR=1
 PYTHON_BIN="python"
 REBUILD_SPLITS=1
@@ -99,11 +119,28 @@ Options:
   --resume-run DIR           Resume an existing outputs/full_abcd_* run. Reuses its load
                              plan and skips subflows with a complete final summary.
   --min-sessions N           Graph Mining minimum train sessions (default: 0)
-  --graph-mining-method NAME legacy, sequence, backbone, backbone_coverage, or semantic_router (default: backbone).
-                             backbone and the legacy backbone_coverage alias both use the discriminative session-aware backbone.
+  --graph-mining-method NAME legacy, sequence, backbone, backbone_coverage, trace_cover,
+                             observable_trace_cover, structural_trace_cover, motif_trace_cover, heuristics, or semantic_router (default: backbone).
+                             trace_cover minimizes graph/routing complexity at a replay-fitness target.
   --backbone-coverage-lambda N  Deprecated compatibility option; ignored (default: 0.2)
   --backbone-discriminative-lambda N  Cohort log-odds weight for the graph backbone (default: 1.0)
   --backbone-discriminative-clip N    Upper clip for cohort log-odds (default: 3.0)
+  --trace-coverage-target N    Per-trace replay saturation point (default: 0.8)
+  --corpus-fitness-target N    Mean saturated replay-fitness target (default: 0.95)
+  --routing-complexity-weight N  Weight on expected sibling comparisons (default: 2.0)
+  --heuristics-dependency-weight N  Heuristics Miner dependency weight (default: 1.0)
+  --routing-mode-max-depth N  Observable routing-tree depth (default: 2)
+  --routing-mode-min-leaf-support N  Minimum events per routing mode (default: 12)
+  --routing-mode-min-information-gain N  Minimum entropy reduction for a mode split (default: 0.10)
+  --structural-history-order N  Action-history order for graph state refinement (default: 3)
+  --structural-state-max-depth N  Maximum structural split depth (default: 3)
+  --structural-state-min-leaf-support N  Minimum events per refined state (default: 8)
+  --structural-state-node-penalty N  MDL state code-length multiplier (default: 1.0)
+  --structural-state-edge-penalty N  MDL edge code-length multiplier (default: 2.0)
+  --motif-history-order N   Causal predecessor radius for occurrence motifs (default: 1)
+  --motif-min-support N     Minimum support for an independent motif micro-state (default: 8)
+  --motif-state-node-penalty N  MDL motif role-state multiplier (default: 1.0)
+  --motif-state-edge-penalty N  MDL motif edge multiplier (default: 2.0)
   --backbone-compiler NAME   organized, unordered, or compare (default: organized)
   --backbone-ablation-only   Only run unordered compiler ablation; skip organized original
   --disable-competitive-action-cards  Graph ablation: hide candidate cards during action selection
@@ -125,6 +162,11 @@ Options:
   --asi-skip-final-test      Skip ASI final test evaluation
   --skill-disco-batch-size N SKILL-DISCO operation grouping batch size (default: 20)
   --skill-disco-min-support N  Minimum supporting conversations per SKILL-DISCO skill (default: 2)
+  --skill-disco-compile-and-verify  Run Stage 5 with held-out ABCD action replay (default)
+  --skill-disco-pseudocode-only  Use the older prompt-only adaptation
+  --skill-disco-verification-fraction N  Fraction of train conversations held out for Stage 5 (default: 0.2)
+  --skill-disco-verification-cases N  Maximum held-out replay cases per skill (default: 12)
+  --skill-disco-max-synthesis-attempts N  Stage-5 synthesis attempts (default: 3)
   --stop-on-error            Stop the affected worker at its first failed subflow
   --no-rebuild-splits        Reuse existing subflow session splits
   -h, --help                 Show this help
@@ -154,6 +196,22 @@ while [[ $# -gt 0 ]]; do
         --backbone-coverage-lambda) BACKBONE_COVERAGE_LAMBDA="$2"; shift 2 ;;
         --backbone-discriminative-lambda) BACKBONE_DISCRIMINATIVE_LAMBDA="$2"; shift 2 ;;
         --backbone-discriminative-clip) BACKBONE_DISCRIMINATIVE_CLIP="$2"; shift 2 ;;
+        --trace-coverage-target) TRACE_COVERAGE_TARGET="$2"; shift 2 ;;
+        --corpus-fitness-target) CORPUS_FITNESS_TARGET="$2"; shift 2 ;;
+        --routing-complexity-weight) ROUTING_COMPLEXITY_WEIGHT="$2"; shift 2 ;;
+        --heuristics-dependency-weight) HEURISTICS_DEPENDENCY_WEIGHT="$2"; shift 2 ;;
+        --routing-mode-max-depth) ROUTING_MODE_MAX_DEPTH="$2"; shift 2 ;;
+        --routing-mode-min-leaf-support) ROUTING_MODE_MIN_LEAF_SUPPORT="$2"; shift 2 ;;
+        --routing-mode-min-information-gain) ROUTING_MODE_MIN_INFORMATION_GAIN="$2"; shift 2 ;;
+        --structural-history-order) STRUCTURAL_HISTORY_ORDER="$2"; shift 2 ;;
+        --structural-state-max-depth) STRUCTURAL_STATE_MAX_DEPTH="$2"; shift 2 ;;
+        --structural-state-min-leaf-support) STRUCTURAL_STATE_MIN_LEAF_SUPPORT="$2"; shift 2 ;;
+        --structural-state-node-penalty) STRUCTURAL_STATE_NODE_PENALTY="$2"; shift 2 ;;
+        --structural-state-edge-penalty) STRUCTURAL_STATE_EDGE_PENALTY="$2"; shift 2 ;;
+        --motif-history-order) MOTIF_HISTORY_ORDER="$2"; shift 2 ;;
+        --motif-min-support) MOTIF_MIN_SUPPORT="$2"; shift 2 ;;
+        --motif-state-node-penalty) MOTIF_STATE_NODE_PENALTY="$2"; shift 2 ;;
+        --motif-state-edge-penalty) MOTIF_STATE_EDGE_PENALTY="$2"; shift 2 ;;
         --backbone-compiler) BACKBONE_COMPILER="$2"; shift 2 ;;
         --backbone-ablation-only) BACKBONE_ABLATION_ONLY=1; shift ;;
         --disable-competitive-action-cards) DISABLE_COMPETITIVE_ACTION_CARDS=1; shift ;;
@@ -175,6 +233,11 @@ while [[ $# -gt 0 ]]; do
         --asi-skip-final-test) ASI_SKIP_FINAL_TEST=1; shift ;;
         --skill-disco-batch-size) SKILL_DISCO_BATCH_SIZE="$2"; shift 2 ;;
         --skill-disco-min-support) SKILL_DISCO_MIN_SUPPORT="$2"; shift 2 ;;
+        --skill-disco-compile-and-verify) SKILL_DISCO_COMPILE_AND_VERIFY=1; shift ;;
+        --skill-disco-pseudocode-only) SKILL_DISCO_COMPILE_AND_VERIFY=0; shift ;;
+        --skill-disco-verification-fraction) SKILL_DISCO_VERIFICATION_FRACTION="$2"; shift 2 ;;
+        --skill-disco-verification-cases) SKILL_DISCO_VERIFICATION_CASES="$2"; shift 2 ;;
+        --skill-disco-max-synthesis-attempts) SKILL_DISCO_MAX_SYNTHESIS_ATTEMPTS="$2"; shift 2 ;;
         --stop-on-error) CONTINUE_ON_ERROR=0; shift ;;
         --no-rebuild-splits) REBUILD_SPLITS=0; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -189,7 +252,7 @@ fi
 
 case "$METHOD" in all|awm|expel|trace2skill|asi|skill_disco|graph) ;; *) echo "Invalid --method: $METHOD" >&2; exit 2 ;; esac
 case "$AWM_INDUCTION_MODE" in online|offline) ;; *) echo "Invalid --awm-induction-mode: $AWM_INDUCTION_MODE" >&2; exit 2 ;; esac
-case "$GRAPH_MINING_METHOD" in legacy|sequence|backbone|backbone_coverage|semantic_router) ;; *) echo "Invalid --graph-mining-method: $GRAPH_MINING_METHOD" >&2; exit 2 ;; esac
+case "$GRAPH_MINING_METHOD" in legacy|sequence|backbone|backbone_coverage|trace_cover|observable_trace_cover|structural_trace_cover|motif_trace_cover|heuristics|semantic_router) ;; *) echo "Invalid --graph-mining-method: $GRAPH_MINING_METHOD" >&2; exit 2 ;; esac
 case "$BACKBONE_COMPILER" in organized|unordered|compare) ;; *) echo "Invalid --backbone-compiler: $BACKBONE_COMPILER" >&2; exit 2 ;; esac
 
 if [[ -n "$OFFLINE_SKILL" ]]; then
@@ -229,6 +292,9 @@ python -c 'import sys; value=float(sys.argv[1]); sys.exit(0 if 0.0 <= value <= 1
 [[ "$ASI_MAX_INDUCTION_EPISODES" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --asi-max-induction-episodes: $ASI_MAX_INDUCTION_EPISODES" >&2; exit 2; }
 [[ "$SKILL_DISCO_BATCH_SIZE" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --skill-disco-batch-size: $SKILL_DISCO_BATCH_SIZE" >&2; exit 2; }
 [[ "$SKILL_DISCO_MIN_SUPPORT" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --skill-disco-min-support: $SKILL_DISCO_MIN_SUPPORT" >&2; exit 2; }
+[[ "$SKILL_DISCO_VERIFICATION_CASES" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --skill-disco-verification-cases: $SKILL_DISCO_VERIFICATION_CASES" >&2; exit 2; }
+[[ "$SKILL_DISCO_MAX_SYNTHESIS_ATTEMPTS" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --skill-disco-max-synthesis-attempts: $SKILL_DISCO_MAX_SYNTHESIS_ATTEMPTS" >&2; exit 2; }
+"$PYTHON_BIN" -c 'import sys; x=float(sys.argv[1]); sys.exit(0 if 0 < x < 1 else 1)' "$SKILL_DISCO_VERIFICATION_FRACTION" || { echo "Invalid --skill-disco-verification-fraction: $SKILL_DISCO_VERIFICATION_FRACTION" >&2; exit 2; }
 [[ "$ACTION_SELECTION_CANDIDATE_LIMIT" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --action-selection-candidate-limit: $ACTION_SELECTION_CANDIDATE_LIMIT" >&2; exit 2; }
 if [[ "$BACKBONE_ABLATION_ONLY" -eq 1 ]]; then
     [[ "$BACKBONE_COMPILER" != "compare" ]] || { echo "--backbone-ablation-only cannot be combined with --backbone-compiler compare" >&2; exit 2; }
@@ -391,7 +457,7 @@ echo "Compiler:    $BACKBONE_COMPILER"
 [[ "$METHOD" == "all" || "$METHOD" == "awm" ]] && echo "AWM mode:    $AWM_INDUCTION_MODE"
 [[ "$METHOD" == "all" || "$METHOD" == "asi" ]] && echo "ASI config:  batch=$ASI_BATCH_SIZE suite_size=$ASI_HELDOUT_SIZE pass_rate=$ASI_TEST_PASS_RATE max_induction=$ASI_MAX_INDUCTION_EPISODES min_ast_delta=$ASI_MIN_AST_DELTA"
 [[ "$METHOD" == "all" || "$METHOD" == "trace2skill" ]] && echo "Trace2Skill analysis batch: $ANALYSIS_BATCH_SIZE"
-[[ "$METHOD" == "all" || "$METHOD" == "skill_disco" ]] && echo "SKILL-DISCO config: grouping_batch=$SKILL_DISCO_BATCH_SIZE min_support=$SKILL_DISCO_MIN_SUPPORT"
+[[ "$METHOD" == "all" || "$METHOD" == "skill_disco" ]] && echo "SKILL-DISCO config: grouping_batch=$SKILL_DISCO_BATCH_SIZE min_support=$SKILL_DISCO_MIN_SUPPORT compile_and_verify=$SKILL_DISCO_COMPILE_AND_VERIFY"
 [[ "$BACKBONE_ABLATION_ONLY" -eq 1 ]] && echo "Ablation:    unordered only (organized compiler skipped)"
 [[ "$SUBFLOW_DISCOVERY" -eq 1 ]] && echo "Discovery:   latent session subflows before graph mining"
 [[ -n "$RESUME_RUN" ]] && echo "Resume:      enabled (completed subflows will be skipped)"
@@ -427,12 +493,12 @@ task_is_complete() {
     local method_name="$1"
     local subflow="$2"
     local task_dir="$RUN_ROOT/$method_name/$subflow"
-    "$PYTHON_BIN" - "$method_name" "$subflow" "$task_dir" "$BACKBONE_COMPILER" <<'PY'
+    "$PYTHON_BIN" - "$method_name" "$subflow" "$task_dir" "$BACKBONE_COMPILER" "$SKILL_DISCO_COMPILE_AND_VERIFY" <<'PY'
 import json
 import sys
 from pathlib import Path
 
-method, subflow, task_dir, backbone_compiler = sys.argv[1:]
+method, subflow, task_dir, backbone_compiler, skill_disco_compiled = sys.argv[1:]
 root = Path(task_dir)
 paths = [root / "summary.json"]
 if method == "trace2skill" and root.exists():
@@ -455,6 +521,8 @@ for path in paths:
     elif isinstance(summary, dict):
         config = summary.get("config", {})
         if str(config.get("subflow", "")) != subflow:
+            continue
+        if method == "skill_disco" and bool(config.get("compile_and_verify", False)) != (skill_disco_compiled == "1"):
             continue
         if method == "trace2skill" and (
             isinstance(summary.get("evolved_test"), dict)
@@ -582,6 +650,14 @@ run_worker() {
                 --output-dir "$RUN_ROOT/skill_disco/$subflow"
                 --batch-size "$SKILL_DISCO_BATCH_SIZE"
                 --min-support "$SKILL_DISCO_MIN_SUPPORT")
+            if [[ "$SKILL_DISCO_COMPILE_AND_VERIFY" -eq 1 ]]; then
+                skill_disco_args+=(--compile-and-verify
+                    --verification-fraction "$SKILL_DISCO_VERIFICATION_FRACTION"
+                    --verification-cases "$SKILL_DISCO_VERIFICATION_CASES"
+                    --max-synthesis-attempts "$SKILL_DISCO_MAX_SYNTHESIS_ATTEMPTS")
+            else
+                skill_disco_args+=(--pseudocode-only)
+            fi
             [[ -n "$EVAL_WORKFLOW_IDS_RAW" ]] && skill_disco_args+=(--skip-final-test)
             run_or_resume_task "$worker_index" "$workflow_id" skill_disco "$subflow" "${skill_disco_args[@]}" || {
                 echo "skill_disco:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
@@ -596,6 +672,22 @@ run_worker() {
                 --mining-method "$GRAPH_MINING_METHOD" --backbone-coverage-lambda "$BACKBONE_COVERAGE_LAMBDA"
                 --backbone-discriminative-lambda "$BACKBONE_DISCRIMINATIVE_LAMBDA"
                 --backbone-discriminative-clip "$BACKBONE_DISCRIMINATIVE_CLIP"
+                --trace-coverage-target "$TRACE_COVERAGE_TARGET"
+                --corpus-fitness-target "$CORPUS_FITNESS_TARGET"
+                --routing-complexity-weight "$ROUTING_COMPLEXITY_WEIGHT"
+                --heuristics-dependency-weight "$HEURISTICS_DEPENDENCY_WEIGHT"
+                --routing-mode-max-depth "$ROUTING_MODE_MAX_DEPTH"
+                --routing-mode-min-leaf-support "$ROUTING_MODE_MIN_LEAF_SUPPORT"
+                --routing-mode-min-information-gain "$ROUTING_MODE_MIN_INFORMATION_GAIN"
+                --structural-history-order "$STRUCTURAL_HISTORY_ORDER"
+                --structural-state-max-depth "$STRUCTURAL_STATE_MAX_DEPTH"
+                --structural-state-min-leaf-support "$STRUCTURAL_STATE_MIN_LEAF_SUPPORT"
+                --structural-state-node-penalty "$STRUCTURAL_STATE_NODE_PENALTY"
+                --structural-state-edge-penalty "$STRUCTURAL_STATE_EDGE_PENALTY"
+                --motif-history-order "$MOTIF_HISTORY_ORDER"
+                --motif-min-support "$MOTIF_MIN_SUPPORT"
+                --motif-state-node-penalty "$MOTIF_STATE_NODE_PENALTY"
+                --motif-state-edge-penalty "$MOTIF_STATE_EDGE_PENALTY"
                 --backbone-compiler "$BACKBONE_COMPILER"
                 --action-selection-candidate-limit "$ACTION_SELECTION_CANDIDATE_LIMIT"
                 --semantic-max-skills "$SEMANTIC_MAX_SKILLS"

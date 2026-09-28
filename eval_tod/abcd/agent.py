@@ -436,6 +436,9 @@ class ABCDAgent(AbstractTodAgent):
         exemplar_max_chars: int = 3000,
         competitive_action_cards: bool = True,
         action_selection_candidate_limit: int = 3,
+        observable_router: dict[str, Any] | None = None,
+        structural_router: dict[str, Any] | None = None,
+        motif_router: dict[str, Any] | None = None,
         delay: float = 0.3,
         response_logger=None,
         expose_scenario_labels: bool = True,
@@ -466,6 +469,9 @@ class ABCDAgent(AbstractTodAgent):
         self.action_selection_candidate_limit = max(
             1, int(action_selection_candidate_limit)
         )
+        self.observable_router = observable_router or {}
+        self.structural_router = structural_router or {}
+        self.motif_router = motif_router or {}
         self._response_logger = response_logger
         self.expose_scenario_labels = expose_scenario_labels
         self.action_schema = load_action_schema()
@@ -654,6 +660,10 @@ class ABCDAgent(AbstractTodAgent):
         self,
         reference_plan: dict[str, Any],
         reference_lookup: dict[str, Any],
+        context: str = "",
+        previous_action: str = "",
+        account_selected: bool = False,
+        action_history: list[str] | None = None,
     ) -> list[str]:
         """Build a bounded, recall-oriented shortlist for stage-1 comparison.
 
@@ -677,6 +687,76 @@ class ABCDAgent(AbstractTodAgent):
                 and action not in candidates
             ):
                 candidates.append(action)
+
+        # Pure graph-state refinement takes precedence: it uses only actions
+        # already selected in this dialogue, never customer text or scenario
+        # labels, to locate a refined process state and rank its successors.
+        history = list(action_history or [])
+        if self.motif_router and history:
+            from skill_mining.backbone_workflow_mining import route_motif_state
+            sources = self.motif_router.get("routers") or {}
+            source_row = next(
+                (row for source, row in sources.items() if str(source).split(":", 1)[-1] == history[-1]),
+                None,
+            )
+            if source_row:
+                routed = route_motif_state(
+                    source_row, history,
+                    int(self.motif_router.get("history_order", 1)),
+                )
+                modes = {
+                    str(mode.get("mode_id")): mode
+                    for mode in source_row.get("modes") or []
+                }
+                mode = modes.get(str(routed.get("mode_id")), {})
+                for target in mode.get("candidate_actions") or []:
+                    add(str(target).split(":", 1)[-1])
+
+        if self.structural_router and history:
+            from skill_mining.backbone_workflow_mining import route_structural_tree
+            sources = self.structural_router.get("routers") or {}
+            source_row = next(
+                (row for source, row in sources.items() if str(source).split(":", 1)[-1] == history[-1]),
+                None,
+            )
+            if source_row:
+                leaf = route_structural_tree(
+                    source_row.get("tree") or {}, history,
+                    int(self.structural_router.get("history_order", 3)),
+                )
+                modes = {
+                    str(mode.get("mode_id")): mode
+                    for mode in source_row.get("modes") or []
+                }
+                mode = modes.get(str(leaf.get("mode_id")), {})
+                for target in mode.get("candidate_actions") or []:
+                    add(str(target).split(":", 1)[-1])
+
+        # Observable routing modes are mined as a shallow decision partition.
+        # They shortlist cards before the LLM comparison instead of asking one
+        # unconstrained guard to separate every outgoing branch at once.
+        if self.observable_router and previous_action:
+            from skill_mining.backbone_workflow_mining import (
+                observable_features_from_context,
+                route_observable_tree,
+            )
+            sources = self.observable_router.get("sources") or {}
+            source_row = next(
+                (row for source, row in sources.items() if str(source).split(":", 1)[-1] == previous_action),
+                None,
+            )
+            if source_row:
+                features = observable_features_from_context(
+                    context, account_selected=account_selected,
+                )
+                leaf = route_observable_tree(source_row.get("tree") or {}, features)
+                mode_by_id = {
+                    str(mode.get("mode_id")): mode
+                    for mode in source_row.get("modes") or []
+                }
+                mode = mode_by_id.get(str(leaf.get("mode_id")), {})
+                for target in mode.get("candidate_targets") or []:
+                    add(str(target).split(":", 1)[-1])
 
         for value in reference_plan.get("candidate_actions", []):
             add(value)
@@ -848,6 +928,7 @@ class ABCDAgent(AbstractTodAgent):
             target_indices = [turn_index]
 
         task_template = _TASK_PROMPT_WITH_ACTION if predict_actions else _TASK_PROMPT
+        selected_action_history: list[str] = []
 
         for target_num, turn_idx in enumerate(target_indices, 1):
             context_lines: list[str] = []
@@ -880,6 +961,10 @@ class ABCDAgent(AbstractTodAgent):
             )
             action_selection_candidates = self._action_selection_candidates(
                 reference_plan, reference_lookup,
+                context=context,
+                previous_action=selected_action_history[-1] if selected_action_history else "",
+                account_selected="pull-up-account" in selected_action_history,
+                action_history=selected_action_history,
             )
 
             from llm import chat
@@ -1084,6 +1169,8 @@ class ABCDAgent(AbstractTodAgent):
                 action, slots, validation = canonicalize_prediction(
                     action_source, raw_slots, self.action_schema
                 )
+                if turn_idx in action_indices and action:
+                    selected_action_history.append(action)
                 # Debug: log first few parses
                 if target_num == 1 and len(results) == 0:
                     print(f"  [DEBUG predict_actions] raw(200): {raw_output[:200]}")
