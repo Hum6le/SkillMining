@@ -61,6 +61,20 @@ def _build_agent(method: str, resource: Path, model: str, logger: ResponseLogger
             expose_scenario_labels=False,
             response_logger=logger,
         )
+    if method == "reflexion":
+        from reflexion_adapter import ReflexionABCDAgent, ReflectionStore
+
+        reflection_path = resource / "reflections.json"
+        if not reflection_path.is_file():
+            raise FileNotFoundError(f"no Reflexion memory at {reflection_path}")
+        summary_path = resource / "summary.json"
+        config = json.loads(summary_path.read_text(encoding="utf-8")).get("config", {}) if summary_path.is_file() else {}
+        return ReflexionABCDAgent(
+            model=model, reflection_store=ReflectionStore.load(reflection_path),
+            same_conversation=False,
+            reflection_limit=int(config.get("reflection_limit", 3)),
+            expose_scenario_labels=False, response_logger=logger,
+        )
     if method == "asi":
         from asi_offline import create_asi_offline_abcd_agent, load_asi_library
 
@@ -278,7 +292,7 @@ def _merge(method: str, subflow: str, test_file: Path, shard_root: Path, output:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Unified ABCD method evaluator")
-    parser.add_argument("--method", choices=("awm", "expel", "trace2skill", "asi", "skill_disco"), required=True)
+    parser.add_argument("--method", choices=("awm", "expel", "reflexion", "trace2skill", "asi", "skill_disco"), required=True)
     parser.add_argument("--resource-dir", type=Path, required=True)
     parser.add_argument("--test-file", type=Path, required=True)
     parser.add_argument("--subflow", required=True)

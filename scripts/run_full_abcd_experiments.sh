@@ -64,6 +64,8 @@ SKILL_DISCO_COMPILE_AND_VERIFY=1
 SKILL_DISCO_VERIFICATION_FRACTION="0.2"
 SKILL_DISCO_VERIFICATION_CASES=12
 SKILL_DISCO_MAX_SYNTHESIS_ATTEMPTS=3
+REFLEXION_MAX_TRIALS=2
+REFLEXION_REFLECTION_LIMIT=3
 CONTINUE_ON_ERROR=1
 PYTHON_BIN="python"
 REBUILD_SPLITS=1
@@ -108,7 +110,7 @@ usage() {
 Usage: bash scripts/run_full_abcd_experiments.sh [options]
 
 Options:
-  --method NAME              all, awm, expel, trace2skill, asi, skill_disco, or graph (default: all)
+  --method NAME              all, awm, expel, reflexion, trace2skill, asi, skill_disco, or graph (default: all)
   --subflow NAME             Run one subflow instead of all complete split directories
   --offline-skill PATH       Trace2Skill seed skill file, or a directory containing
                              SKILL.md/skill.md. Only affects Trace2Skill.
@@ -154,6 +156,8 @@ Options:
   --analysis-batch-size N    Trace2Skill success/error analysis conversations per LLM call (default: 8)
   --skip-seed-test           Trace2Skill: skip the pre-evolution seed test evaluation
   --awm-induction-mode NAME  AWM induction: online or offline (default: online)
+  --reflexion-max-trials N   Maximum train attempts per dialogue (default: 2)
+  --reflexion-reflection-limit N  Reflections injected per prompt (default: 3)
   --asi-batch-size N         ASI online rollout batch size (default: 25)
   --asi-heldout-size N       ASI action-centered test suite size per update (default: 10)
   --asi-test-pass-rate N     Minimum whole-conversation test pass rate for ASI promotion (default: 0.5)
@@ -174,7 +178,7 @@ Options:
 Worker load is balanced by train+test non-empty agent utterance turns, not
 conversation count. The selected workflow ID is exported as
 SKILLMINING_WORKFLOW_ID; the workflow-aware llm.py must honor this override.
-When --eval-workflow-ids is supplied for one subflow, AWM, ExpeL, Trace2Skill,
+When --eval-workflow-ids is supplied for one subflow, AWM, ExpeL, Reflexion, Trace2Skill,
 ASI, and SKILL-DISCO are evaluated in independent shard processes and merged back into the
 method summary; Graph keeps its native sharded evaluator.
 Without --workflow-ids, one serial worker uses config.py unchanged.
@@ -225,6 +229,8 @@ while [[ $# -gt 0 ]]; do
         --analysis-batch-size) ANALYSIS_BATCH_SIZE="$2"; shift 2 ;;
         --skip-seed-test) SKIP_TRACE2SKILL_SEED_TEST=1; shift ;;
         --awm-induction-mode) AWM_INDUCTION_MODE="$2"; shift 2 ;;
+        --reflexion-max-trials) REFLEXION_MAX_TRIALS="$2"; shift 2 ;;
+        --reflexion-reflection-limit) REFLEXION_REFLECTION_LIMIT="$2"; shift 2 ;;
         --asi-batch-size) ASI_BATCH_SIZE="$2"; shift 2 ;;
         --asi-heldout-size) ASI_HELDOUT_SIZE="$2"; shift 2 ;;
         --asi-test-pass-rate) ASI_TEST_PASS_RATE="$2"; shift 2 ;;
@@ -250,7 +256,7 @@ if [[ -n "${EVAL_WORKFLOW_IDS_RAW:-}" && -z "$ONE_SUBFLOW" ]]; then
     exit 2
 fi
 
-case "$METHOD" in all|awm|expel|trace2skill|asi|skill_disco|graph) ;; *) echo "Invalid --method: $METHOD" >&2; exit 2 ;; esac
+case "$METHOD" in all|awm|expel|reflexion|trace2skill|asi|skill_disco|graph) ;; *) echo "Invalid --method: $METHOD" >&2; exit 2 ;; esac
 case "$AWM_INDUCTION_MODE" in online|offline) ;; *) echo "Invalid --awm-induction-mode: $AWM_INDUCTION_MODE" >&2; exit 2 ;; esac
 case "$GRAPH_MINING_METHOD" in legacy|sequence|backbone|backbone_coverage|trace_cover|observable_trace_cover|structural_trace_cover|motif_trace_cover|heuristics|semantic_router) ;; *) echo "Invalid --graph-mining-method: $GRAPH_MINING_METHOD" >&2; exit 2 ;; esac
 case "$BACKBONE_COMPILER" in organized|unordered|compare) ;; *) echo "Invalid --backbone-compiler: $BACKBONE_COMPILER" >&2; exit 2 ;; esac
@@ -294,6 +300,8 @@ python -c 'import sys; value=float(sys.argv[1]); sys.exit(0 if 0.0 <= value <= 1
 [[ "$SKILL_DISCO_MIN_SUPPORT" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --skill-disco-min-support: $SKILL_DISCO_MIN_SUPPORT" >&2; exit 2; }
 [[ "$SKILL_DISCO_VERIFICATION_CASES" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --skill-disco-verification-cases: $SKILL_DISCO_VERIFICATION_CASES" >&2; exit 2; }
 [[ "$SKILL_DISCO_MAX_SYNTHESIS_ATTEMPTS" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --skill-disco-max-synthesis-attempts: $SKILL_DISCO_MAX_SYNTHESIS_ATTEMPTS" >&2; exit 2; }
+[[ "$REFLEXION_MAX_TRIALS" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --reflexion-max-trials: $REFLEXION_MAX_TRIALS" >&2; exit 2; }
+[[ "$REFLEXION_REFLECTION_LIMIT" =~ ^[0-9]+$ ]] || { echo "Invalid --reflexion-reflection-limit: $REFLEXION_REFLECTION_LIMIT" >&2; exit 2; }
 "$PYTHON_BIN" -c 'import sys; x=float(sys.argv[1]); sys.exit(0 if 0 < x < 1 else 1)' "$SKILL_DISCO_VERIFICATION_FRACTION" || { echo "Invalid --skill-disco-verification-fraction: $SKILL_DISCO_VERIFICATION_FRACTION" >&2; exit 2; }
 [[ "$ACTION_SELECTION_CANDIDATE_LIMIT" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid --action-selection-candidate-limit: $ACTION_SELECTION_CANDIDATE_LIMIT" >&2; exit 2; }
 if [[ "$BACKBONE_ABLATION_ONLY" -eq 1 ]]; then
@@ -455,6 +463,7 @@ echo "Split:       current 10-flow INDEX.json protocol"
 echo "Workers:     ${#WORKFLOW_IDS[@]}"
 echo "Compiler:    $BACKBONE_COMPILER"
 [[ "$METHOD" == "all" || "$METHOD" == "awm" ]] && echo "AWM mode:    $AWM_INDUCTION_MODE"
+[[ "$METHOD" == "all" || "$METHOD" == "reflexion" ]] && echo "Reflexion:   trials=$REFLEXION_MAX_TRIALS reflection_limit=$REFLEXION_REFLECTION_LIMIT"
 [[ "$METHOD" == "all" || "$METHOD" == "asi" ]] && echo "ASI config:  batch=$ASI_BATCH_SIZE suite_size=$ASI_HELDOUT_SIZE pass_rate=$ASI_TEST_PASS_RATE max_induction=$ASI_MAX_INDUCTION_EPISODES min_ast_delta=$ASI_MIN_AST_DELTA"
 [[ "$METHOD" == "all" || "$METHOD" == "trace2skill" ]] && echo "Trace2Skill analysis batch: $ANALYSIS_BATCH_SIZE"
 [[ "$METHOD" == "all" || "$METHOD" == "skill_disco" ]] && echo "SKILL-DISCO config: grouping_batch=$SKILL_DISCO_BATCH_SIZE min_support=$SKILL_DISCO_MIN_SUPPORT compile_and_verify=$SKILL_DISCO_COMPILE_AND_VERIFY"
@@ -529,7 +538,7 @@ for path in paths:
             or summary.get("config", {}).get("skip_test_eval") is True
         ):
             raise SystemExit(0)
-        if method in {"awm", "expel", "asi", "skill_disco"} and (
+        if method in {"awm", "expel", "reflexion", "asi", "skill_disco"} and (
             isinstance(summary.get("final_test"), dict)
             or summary.get("config", {}).get("skip_final_test") is True
         ):
@@ -589,6 +598,25 @@ run_worker() {
             if [[ -n "$EVAL_WORKFLOW_IDS_RAW" ]]; then
                 run_sharded_eval expel "$workflow_id" "$subflow" || {
                     echo "expel_eval:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
+            fi
+        fi
+        if [[ "$METHOD" == "all" || "$METHOD" == "reflexion" ]]; then
+            reflexion_args=(scripts/run_reflexion_abcd.py
+                --subflow "$subflow"
+                --train-file "$SPLITS_DIR/$subflow/train.json"
+                --test-file "$SPLITS_DIR/$subflow/test.json"
+                --output-dir "$RUN_ROOT/reflexion/$subflow"
+                --max-trials "$REFLEXION_MAX_TRIALS"
+                --reflection-limit "$REFLEXION_REFLECTION_LIMIT")
+            [[ -n "$EVAL_WORKFLOW_IDS_RAW" ]] && reflexion_args+=(--skip-final-test)
+            if [[ -n "$RESUME_RUN" && -f "$RUN_ROOT/reflexion/$subflow/training_trials.jsonl" ]]; then
+                reflexion_args+=(--resume-from "$RUN_ROOT/reflexion/$subflow")
+            fi
+            run_or_resume_task "$worker_index" "$workflow_id" reflexion "$subflow" "${reflexion_args[@]}" || {
+                echo "reflexion:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
+            if [[ -n "$EVAL_WORKFLOW_IDS_RAW" ]]; then
+                run_sharded_eval reflexion "$workflow_id" "$subflow" || {
+                    echo "reflexion_eval:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
             fi
         fi
         if [[ "$METHOD" == "all" || "$METHOD" == "trace2skill" ]]; then
@@ -756,6 +784,7 @@ aggregate_method() {
 }
 [[ "$METHOD" == "all" || "$METHOD" == "awm" ]] && aggregate_method awm
 [[ "$METHOD" == "all" || "$METHOD" == "expel" ]] && aggregate_method expel
+[[ "$METHOD" == "all" || "$METHOD" == "reflexion" ]] && aggregate_method reflexion
 [[ "$METHOD" == "all" || "$METHOD" == "trace2skill" ]] && aggregate_method trace2skill
 [[ "$METHOD" == "all" || "$METHOD" == "asi" ]] && aggregate_method asi
 [[ "$METHOD" == "all" || "$METHOD" == "skill_disco" ]] && aggregate_method skill_disco
