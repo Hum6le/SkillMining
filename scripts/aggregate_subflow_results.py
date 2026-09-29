@@ -198,6 +198,13 @@ def _phase_usage_from_legacy_artifacts(run_dir: Path, summary_usage: Any) -> dic
     it. A non-sharded historical run has no reliable boundary and remains
     intentionally marked as legacy rather than inventing a split.
     """
+    if isinstance(summary_usage, dict) and (
+        isinstance(summary_usage.get("generation"), dict)
+        or isinstance(summary_usage.get("testing"), dict)
+    ):
+        # Current summaries have already merged the testing shards. Rebuilding
+        # from shard files here would count those LLM calls a second time.
+        return None
     shard_root = run_dir / "eval_shards"
     shard_dirs = sorted(path for path in shard_root.glob("shard_*") if path.is_dir())
     if not shard_dirs:
@@ -331,10 +338,15 @@ def _records_from_summary(path: Path) -> list[dict[str, Any]]:
             run_dir=run_dir, payload=summary["final_test"], data=data,
         )
         if record:
-            # Older unified-evaluation summaries kept usage at the summary
-            # level instead of embedding it in final_test. Accept both forms
-            # so existing runs can be aggregated without re-evaluation.
-            if record.get("llm_usage") is None and isinstance(summary_usage, dict):
+            # The final_test payload often contains testing-only usage. The
+            # run-level phase-split summary also contains generation and must
+            # take precedence to avoid reporting zero generation calls.
+            if isinstance(summary_usage, dict) and (
+                isinstance(summary_usage.get("generation"), dict)
+                or isinstance(summary_usage.get("testing"), dict)
+            ) and _has_usage(summary_usage):
+                record["llm_usage"] = summary_usage
+            elif record.get("llm_usage") is None and isinstance(summary_usage, dict):
                 record["llm_usage"] = summary_usage
             records.append(record)
     for phase, key in (("seed", "seed_test"), ("evolved", "evolved_test")):
@@ -346,9 +358,13 @@ def _records_from_summary(path: Path) -> list[dict[str, Any]]:
             if record:
                 # Seed and evolved tests share one run-level tracker. Count
                 # it only once, on the evolved/final evaluation record.
-                if (phase == "evolved" and record.get("llm_usage") is None
-                        and isinstance(summary_usage, dict)):
-                    record["llm_usage"] = summary_usage
+                if phase == "evolved" and isinstance(summary_usage, dict):
+                    if (
+                        (isinstance(summary_usage.get("generation"), dict)
+                         or isinstance(summary_usage.get("testing"), dict))
+                        and _has_usage(summary_usage)
+                    ) or record.get("llm_usage") is None:
+                        record["llm_usage"] = summary_usage
                 records.append(record)
     return records
 
