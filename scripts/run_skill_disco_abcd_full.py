@@ -44,6 +44,8 @@ def main() -> None:
     parser.add_argument("--verification-cases", type=int, default=12)
     parser.add_argument("--max-synthesis-attempts", type=int, default=3)
     parser.add_argument("--skip-final-test", action="store_true")
+    parser.add_argument("--resume-generation", action="store_true",
+                        help="Reuse and repair an existing generation artifact before evaluation")
     args = parser.parse_args()
 
     output_dir = args.output_dir.resolve()
@@ -66,7 +68,20 @@ def main() -> None:
             "--verification-cases", str(args.verification_cases),
             "--max-synthesis-attempts", str(args.max_synthesis_attempts),
         ])
-    subprocess.run(generation_cmd, cwd=ROOT, env=worker_env, check=True)
+    if args.resume_generation and artifact.is_file():
+        from skill_disco.name_resolution import make_verified_names_unique
+
+        generated = _read_json(artifact)
+        if not generated or not isinstance(generated.get("skill_library"), str):
+            raise ValueError(f"cannot resume invalid generation artifact: {artifact}")
+        if args.compile_and_verify and not isinstance(generated.get("compiled_skills"), list):
+            raise ValueError(f"cannot resume non-compiled generation artifact: {artifact}")
+        if make_verified_names_unique(generated):
+            artifact.write_text(json.dumps(generated, ensure_ascii=False, indent=2), encoding="utf-8")
+        library.write_text(generated["skill_library"], encoding="utf-8")
+        print(f"Reused Skill-DisCo generation artifact: {artifact}")
+    else:
+        subprocess.run(generation_cmd, cwd=ROOT, env=worker_env, check=True)
 
     generated = _read_json(artifact)
     generation_usage = _phase_bucket(_read_json(output_dir / "llm_usage_generation.json"), "generation")

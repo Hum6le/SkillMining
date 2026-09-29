@@ -659,6 +659,9 @@ run_worker() {
                 skill_disco_args+=(--pseudocode-only)
             fi
             [[ -n "$EVAL_WORKFLOW_IDS_RAW" ]] && skill_disco_args+=(--skip-final-test)
+            if [[ -n "$RESUME_RUN" && -f "$RUN_ROOT/skill_disco/$subflow/generation_artifact.json" ]]; then
+                skill_disco_args+=(--resume-generation)
+            fi
             run_or_resume_task "$worker_index" "$workflow_id" skill_disco "$subflow" "${skill_disco_args[@]}" || {
                 echo "skill_disco:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
         fi

@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 from .abcd_verification import build_replay_cases, verify_abcd_replay
 from .operation_extraction import semantic_operation_from_dict
+from .name_resolution import make_verified_names_unique
 from .pipeline import _retrying_chat, run_offline_pseudocode_pipeline
 from .pseudocode import render_skill_library
 from .skill_specification import skill_contract_from_dict
@@ -99,4 +100,5 @@ def run_compiled_abcd_pipeline(
         "verified_contracts": [item.to_dict() for item in verified_contracts],
         "skill_library": render_skill_library(verified_contracts),
     })
+    make_verified_names_unique(artifact)
     return artifact

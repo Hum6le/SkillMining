@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .synthesis import validate_skill_source
+from .name_resolution import make_verified_names_unique
 
 
 _SAFE_BUILTINS = {
@@ -21,6 +22,7 @@ class CompiledSkillLibrary:
     """Expose only skills that passed Stage-5 verification."""
 
     def __init__(self, artifact: dict[str, Any]):
+        make_verified_names_unique(artifact)
         self._skills = {}
         for item in artifact.get("compiled_skills", []):
             if item.get("status") != "verified" or not item.get("implementation"):
