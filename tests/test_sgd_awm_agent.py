@@ -1,6 +1,9 @@
 import json
+from collections import Counter
 from io import BytesIO
 from types import SimpleNamespace
+
+import pytest
 
 from eval_tod.sgd_agent import SGDAWMAgent
 
@@ -113,3 +116,79 @@ def test_sgd_awm_domain_runner_uses_train_only_for_induction(monkeypatch, tmp_pa
     seen_splits.clear()
     runner.run_domain(args)
     assert seen_splits == ["validation"]
+
+
+def test_sgd_policy_requests_retry_individually(monkeypatch):
+    from eval_tod import sgd_llm
+    from scripts.run_sgd_domain_eval import predict_policy
+
+    calls = Counter()
+    monkeypatch.setattr(sgd_llm.time, "sleep", lambda _seconds: None)
+
+    def chat(_prompt, **kwargs):
+        tag = kwargs["call_tag"]
+        calls[tag] += 1
+        if calls[tag] == 1:
+            raise RuntimeError("Workflow HTTP error 502: gateway")
+        if tag == "sgd_call_selection":
+            return '{"call":null}'
+        return '{"acts":[]}'
+
+    monkeypatch.setattr("llm.chat", chat)
+    prediction, _ = predict_policy(
+        _dialogue(), 1, model="mock", frequency_graph=None,
+        ontology={"domains": {"Restaurants_1": {
+            "description": "restaurant booking", "active_intents": [],
+        }}},
+    )
+    assert prediction == {"call": None, "acts": []}
+    assert calls == {"sgd_call_selection": 2, "sgd_dialogue_acts": 2}
+
+
+def test_sgd_induction_retry_does_not_repeat_rollout_or_memory(monkeypatch):
+    from eval_tod import sgd_llm
+    from eval_tod.sgd_adapter import gold_policy
+
+    calls = Counter()
+    monkeypatch.setattr(sgd_llm.time, "sleep", lambda _seconds: None)
+
+    def predictor(dialogue, turn_index, **_kwargs):
+        calls["rollout"] += 1
+        return gold_policy(dialogue, turn_index), {}
+
+    def chat(_prompt, **kwargs):
+        assert kwargs["call_tag"] == "sgd_awm_induction"
+        calls["induction"] += 1
+        if calls["induction"] == 1:
+            raise RuntimeError("Workflow HTTP error 502: gateway")
+        return "### Ask for missing time"
+
+    monkeypatch.setattr("llm.chat", chat)
+    agent = SGDAWMAgent(family="Restaurants", model="mock", ontology={}, predictor=predictor)
+    summary = agent.train_batch([_dialogue()], batch_index=1)
+    assert calls == {"rollout": 1, "induction": 2}
+    assert summary["successful_turns_added"] == 1
+    assert len(agent.memory) == 1
+
+
+def test_sgd_exhausted_induction_leaves_resources_unchanged(monkeypatch):
+    from eval_tod import sgd_llm
+    from eval_tod.sgd_adapter import gold_policy
+
+    monkeypatch.setenv("SKILLMINING_SGD_LLM_MAX_ATTEMPTS", "2")
+    monkeypatch.setattr(sgd_llm.time, "sleep", lambda _seconds: None)
+
+    def predictor(dialogue, turn_index, **_kwargs):
+        return gold_policy(dialogue, turn_index), {}
+
+    def chat(*_args, **_kwargs):
+        raise RuntimeError("Workflow HTTP error 502: gateway")
+
+    monkeypatch.setattr("llm.chat", chat)
+    agent = SGDAWMAgent(family="Restaurants", model="mock", ontology={}, predictor=predictor)
+    agent.workflow.replace("### Existing workflow")
+    old_workflow = agent.workflow.text
+    with pytest.raises(RuntimeError, match="Workflow HTTP error 502"):
+        agent.train_batch([_dialogue()], batch_index=1)
+    assert agent.workflow.text == old_workflow
+    assert len(agent.memory) == 0

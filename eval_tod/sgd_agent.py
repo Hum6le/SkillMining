@@ -8,6 +8,7 @@ from typing import Callable
 
 from awm.memory import MemoryStore, WorkflowStore
 from eval_tod.sgd_adapter import gold_policy, score_policies, visible_context
+from eval_tod.sgd_llm import sgd_chat_with_retry
 
 
 class SGDAWMAgent:
@@ -65,8 +66,6 @@ class SGDAWMAgent:
         The resource snapshot is fixed throughout a batch, as in ABCD AWM.
         Gold labels are accessed only after each prediction has been generated.
         """
-        from llm import chat
-
         examples = []
         successful = []
         gold_rows, pred_rows = [], []
@@ -130,8 +129,8 @@ class SGDAWMAgent:
             + json.dumps(compact, ensure_ascii=False)[:30000]
             + "\n\nOutput only the complete workflow as Markdown."
         )
-        updated = chat(prompt, model=self.model, temperature=0,
-                       call_tag="sgd_awm_induction").strip()
+        updated = sgd_chat_with_retry(prompt, model=self.model, temperature=0,
+                                      call_tag="sgd_awm_induction").strip()
         if updated:
             self.workflow.replace(updated)
         for dialogue, row in successful:

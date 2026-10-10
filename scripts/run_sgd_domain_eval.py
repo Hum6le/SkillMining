@@ -23,6 +23,7 @@ from eval_tod.sgd_adapter import (
     score_policies,
     visible_context,
 )
+from eval_tod.sgd_llm import sgd_chat_with_retry
 
 
 def _parse_object(raw: str) -> dict:
@@ -77,8 +78,6 @@ def predict_policy(
     frequency_graph: dict | None,
     workflow_text: str = "", exemplar_text: str = "",
 ) -> tuple[dict, dict]:
-    from llm import chat
-
     context = visible_context(dialogue, turn_index)[-12000:]
     schema = _schema_for_family(ontology, dialogue["services"])
     previous = (_api_history(dialogue, turn_index) or ["<START>"])[-1]
@@ -101,7 +100,7 @@ def predict_policy(
            + exemplar_text if exemplar_text else "")
         + "\nDialogue so far:\n" + context
     )
-    first_raw = chat(first_prompt, model=model, temperature=0, call_tag="sgd_call_selection")
+    first_raw = sgd_chat_with_retry(first_prompt, model=model, temperature=0, call_tag="sgd_call_selection")
     try:
         call = canonical_call(_parse_object(first_raw).get("call"))
         first_error = ""
@@ -133,7 +132,7 @@ def predict_policy(
            + exemplar_text if exemplar_text else "")
         + "\nDialogue so far:\n" + context
     )
-    second_raw = chat(second_prompt, model=model, temperature=0, call_tag="sgd_dialogue_acts")
+    second_raw = sgd_chat_with_retry(second_prompt, model=model, temperature=0, call_tag="sgd_dialogue_acts")
     try:
         acts = canonical_acts(_parse_object(second_raw).get("acts"))
         second_error = ""
