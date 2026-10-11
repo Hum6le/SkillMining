@@ -15,8 +15,9 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+if str(ROOT) in sys.path:
+    sys.path.remove(str(ROOT))
+sys.path.insert(0, str(ROOT))
 
 from eval_tod.sgd_adapter import metrics_from_counts
 from scripts.run_sgd_domain_eval import add_ours_arguments, validate_ours_arguments
