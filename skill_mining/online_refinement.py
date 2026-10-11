@@ -2424,6 +2424,7 @@ def _chat_for_json_with_retries(
     messages: list[dict[str, str]], *, model: str, response_logger: Any,
     call_tag: str, workflow_id: str | None, max_retries: int = 3,
     retry_base_delay: float = 2.0,
+    chat_fn: Any = None,
 ) -> tuple[dict[str, Any], str, str, int]:
     """Return parsed JSON without letting a transient workflow error escape."""
     raw = ""
@@ -2431,7 +2432,7 @@ def _chat_for_json_with_retries(
     attempts = max(1, int(max_retries))
     for attempt in range(1, attempts + 1):
         try:
-            raw = _online_refinement_chat(
+            raw = (chat_fn or _online_refinement_chat)(
                 messages, model=model, api_key=None, base_url=None,
                 temperature=0.0, response_logger=response_logger,
                 call_tag=call_tag, workflow_id=workflow_id,
@@ -2452,6 +2453,8 @@ def diagnose_rollout_batch(
     model: str, response_logger: Any = None, workflow_id: str | None = None,
     reference: str = "", action_rules: str = "", slot_policies: str = "",
     max_retries: int = 3, retry_base_delay: float = 2.0,
+    record_projector: Any = None, prompt_template: str | None = None,
+    chat_fn: Any = None,
 ) -> dict[str, Any]:
     nodes = sorted({str(record.get("sample", {}).get(key, ""))
                     for record in records for key in ("source_action", "target_action") if record.get("sample", {}).get(key)})
@@ -2469,6 +2472,9 @@ def diagnose_rollout_batch(
     prompt_records = []
     seen_trajectory_ids: set[str] = set()
     for record in records:
+        if record_projector is not None:
+            prompt_records.append(record_projector(record))
+            continue
         sample = record.get("sample", {})
         result = record.get("result", {})
         gold_slots = [str(value) for value in sample.get("gold_slots", [])]
@@ -2509,7 +2515,7 @@ def diagnose_rollout_batch(
             "full_trajectory": trajectory_view,
             **_react_model_output_projection(result.get("react_trace")),
         })
-    prompt = _BATCH_ROOT_CAUSE_PROMPT.format(
+    prompt = (prompt_template or _BATCH_ROOT_CAUSE_PROMPT).format(
         skill=skill, local_graph=json.dumps(local_graph, ensure_ascii=False),
         available_resources=json.dumps(available_resources, ensure_ascii=False, indent=2),
         rollouts=json.dumps(prompt_records, ensure_ascii=False, indent=2),
@@ -2519,6 +2525,7 @@ def diagnose_rollout_batch(
         response_logger=response_logger, call_tag="online_batch_root_cause",
         workflow_id=workflow_id, max_retries=max_retries,
         retry_base_delay=retry_base_delay,
+        chat_fn=chat_fn,
     )
     report.update({"batch_id": batch_id, "sample_ids": [item["sample"]["sample_id"] for item in records],
                    "local_graph": local_graph, "raw_response": raw,
@@ -2566,6 +2573,7 @@ def reflect_batch_report_group(
     reports: list[dict[str, Any]], state: dict[str, Any], skill: str, model: str,
     response_logger: Any = None, workflow_id: str | None = None,
     max_retries: int = 3, retry_base_delay: float = 2.0,
+    prompt_template: str | None = None, chat_fn: Any = None,
 ) -> dict[str, Any]:
     reports = reports[:16]
     nodes = sorted({node for report in reports for node in
@@ -2580,7 +2588,7 @@ def reflect_batch_report_group(
         "batch_id", "summary", "root_causes", "graph_footprint", "candidate_updates",
         "candidate_skill_operations", "unresolved_questions")}
         for report in reports]
-    prompt = _GROUP_REFLECTION_PROMPT.format(skill=skill,
+    prompt = (prompt_template or _GROUP_REFLECTION_PROMPT).format(skill=skill,
         local_graph=json.dumps(local_graph, ensure_ascii=False),
         batch_reports=json.dumps(compact, ensure_ascii=False, indent=2))
     result, raw, error, attempts = _chat_for_json_with_retries(
@@ -2588,6 +2596,7 @@ def reflect_batch_report_group(
         response_logger=response_logger, call_tag="online_group_reflection",
         workflow_id=workflow_id, max_retries=max_retries,
         retry_base_delay=retry_base_delay,
+        chat_fn=chat_fn,
     )
     result.update({"batch_ids": [report.get("batch_id") for report in reports],
                    "local_graph": local_graph, "raw_response": raw,

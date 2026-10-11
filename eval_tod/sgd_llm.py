@@ -59,13 +59,16 @@ def sgd_chat_with_retry(messages, **kwargs) -> str:
     aborts instead of becoming an apparently valid empty policy.
     """
     from llm import chat
+    from eval_tod.sgd_usage import native_snapshot, record_attempt
 
     attempts, base, cap = _retry_settings()
     delay = min(base, cap)
     for attempt in range(1, attempts + 1):
+        before = native_snapshot()
         try:
             reply = chat(messages, **kwargs)
         except Exception as exc:
+            record_attempt(before, messages, "", tag=kwargs.get("call_tag", "chat"), success=False)
             status = _http_status(exc)
             if status not in _RETRYABLE_STATUS or attempt == attempts:
                 raise
@@ -79,6 +82,8 @@ def sgd_chat_with_retry(messages, **kwargs) -> str:
             time.sleep(wait)
             delay = min(cap, delay * 2)
             continue
+        record_attempt(before, messages, reply if isinstance(reply, str) else "",
+                       tag=kwargs.get("call_tag", "chat"), success=isinstance(reply, str) and bool(reply.strip()))
         if not isinstance(reply, str) or not reply.strip():
             raise RuntimeError(
                 "SGD LLM returned an empty or non-text response "

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from collections import Counter, defaultdict
@@ -24,6 +25,7 @@ from eval_tod.sgd_adapter import (
     visible_context,
 )
 from eval_tod.sgd_llm import sgd_chat_with_retry
+from eval_tod.sgd_usage import configure_usage, persist_usage, set_phase
 
 
 def _parse_object(raw: str) -> dict:
@@ -77,6 +79,8 @@ def predict_policy(
     dialogue: dict, turn_index: int, *, model: str, ontology: dict,
     frequency_graph: dict | None,
     workflow_text: str = "", exemplar_text: str = "",
+    skill_text: str = "", reference_text: str = "",
+    selected_action_heads: list | None = None,
 ) -> tuple[dict, dict]:
     context = visible_context(dialogue, turn_index)[-12000:]
     schema = _schema_for_family(ontology, dialogue["services"])
@@ -84,6 +88,15 @@ def predict_policy(
     graph_hint = (
         (frequency_graph or {}).get(previous, {}) if frequency_graph is not None else None
     )
+    mined_resources = (
+        ("\nMined SGD skill (training-derived; advisory):\n" + skill_text if skill_text else "")
+        + ("\nRetrieved local residual rules:\n" + reference_text if reference_text else "")
+    )
+    if selected_action_heads is not None:
+        mined_resources += ("\nFIXED selected action heads (intent, actual service ID): "
+                            + json.dumps(selected_action_heads, ensure_ascii=False)
+                            + "\nGround only these decisions; do not reselect action types. "
+                              "Function names and named parameters are payloads.\n")
     first_prompt = (
         "Predict the next system turn's backend API decision for this SGD dialogue. "
         "Return JSON only: {\"call\": null} or "
@@ -98,6 +111,7 @@ def predict_policy(
            + workflow_text if workflow_text else "")
         + ("\nVerified training examples (do not copy instance values):\n"
            + exemplar_text if exemplar_text else "")
+        + mined_resources
         + "\nDialogue so far:\n" + context
     )
     first_raw = sgd_chat_with_retry(first_prompt, model=model, temperature=0, call_tag="sgd_call_selection")
@@ -106,6 +120,26 @@ def predict_policy(
         first_error = ""
     except (ValueError, TypeError, json.JSONDecodeError) as exc:
         call, first_error = None, repr(exc)
+    if selected_action_heads is not None and call is not None:
+        if ["call", call["service"]] not in selected_action_heads:
+            call = None
+            first_error = "call_outside_fixed_action_selection"
+    if selected_action_heads is not None and call is None:
+        selected_calls = [head[1] for head in selected_action_heads if head[0] == "call"]
+        if selected_calls:
+            # Preserve the selected action when payload parsing/grounding
+            # fails. Empty method is an invalid binding, not a second decision
+            # to omit CALL; it cannot unlock a gold API observation.
+            call = {"service": selected_calls[0], "method": "", "parameters": {}}
+            first_error = first_error or "missing_selected_call_payload"
+    if selected_action_heads is not None and call is None:
+        selected_calls = [head[1] for head in selected_action_heads if head[0] == "call"]
+        if selected_calls:
+            # Preserve the selected action when payload parsing/grounding
+            # fails. Empty method is an invalid binding, not a second decision
+            # to omit CALL; it cannot unlock a gold API observation.
+            call = {"service": selected_calls[0], "method": "", "parameters": {}}
+            first_error = first_error or "missing_selected_call_payload"
 
     gold = gold_policy(dialogue, turn_index)
     observation_available = call is not None and call == gold["call"]
@@ -130,6 +164,7 @@ def predict_policy(
            + workflow_text if workflow_text else "")
         + ("\nVerified training examples (do not copy instance values):\n"
            + exemplar_text if exemplar_text else "")
+        + mined_resources
         + "\nDialogue so far:\n" + context
     )
     second_raw = sgd_chat_with_retry(second_prompt, model=model, temperature=0, call_tag="sgd_dialogue_acts")
@@ -140,27 +175,45 @@ def predict_policy(
         acts, second_error = [], repr(exc)
     allowed_services = set(dialogue["services"])
     acts = [act for act in acts if act["domain"] in allowed_services or not act["domain"]]
+    if selected_action_heads is not None:
+        acts = [act for act in acts if act["intent"] != "call"
+                and [act["intent"], act["domain"]] in selected_action_heads]
+        observed_heads = {(act["intent"], act["domain"]) for act in acts}
+        for intent, domain in selected_action_heads:
+            if intent != "call" and (intent, domain) not in observed_heads:
+                acts.append({"intent": intent, "domain": domain, "slot": ""})
+                second_error = second_error or "missing_selected_act_payload"
+        acts = canonical_acts(acts)
+        observed_heads = {(act["intent"], act["domain"]) for act in acts}
+        for intent, domain in selected_action_heads:
+            if intent != "call" and (intent, domain) not in observed_heads:
+                acts.append({"intent": intent, "domain": domain, "slot": ""})
+                second_error = second_error or "missing_selected_act_payload"
+        acts = canonical_acts(acts)
     return {"call": call, "acts": acts}, {
         "call_parse_error": first_error,
         "acts_parse_error": second_error,
         "observation_visible": observation_available,
+        "api_observation": observation,
     }
 
 
 def run_domain(args: argparse.Namespace) -> dict:
+    if (args.output_dir / "summary.json").exists():
+        raise FileExistsError("Completed summary already exists; use a new --output-dir or full-run --resume-run")
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    configure_usage(args.output_dir)
     if args.method != "oracle":
-        from llm import get_usage_summary, reset_usage_summary, resolve_config
+        from llm import resolve_config
         resolve_config(model=args.model)
-        reset_usage_summary()
     if args.method == "frequency_graph":
         graph = build_frequency_graph(args.splits_dir, args.domain)
     else:
         graph = None
     with ZipFile(args.archive) as zipped:
         ontology = json.load(zipped.open("data/ontology.json"))
-    args.output_dir.mkdir(parents=True, exist_ok=True)
     awm_agent = None
-    mining_usage = None
+    skill_agent = None
     if args.method == "awm":
         from eval_tod.sgd_agent import SGDAWMAgent
         awm_agent = SGDAWMAgent(
@@ -171,8 +224,8 @@ def run_domain(args: argparse.Namespace) -> dict:
         )
         if args.awm_resource_dir:
             awm_agent.load(args.awm_resource_dir)
-            mining_usage = {"total": {"calls": 0, "input_tokens": 0, "output_tokens": 0}}
         else:
+            set_phase("awm_training")
             train_log = []
             batch = []
             train_count = 0
@@ -201,9 +254,47 @@ def run_domain(args: argparse.Namespace) -> dict:
                             "batches": train_log}, indent=2, ensure_ascii=False) + "\n",
                 encoding="utf-8",
             )
-            mining_usage = get_usage_summary()
-            reset_usage_summary()
         awm_agent.save(args.output_dir)
+    if args.method == "ours":
+        from eval_tod.sgd_skill_agent import SGDSkillAgent
+        from eval_tod.sgd_standard_skill_agent import SGDStandardSkillAgent
+        agent_class = SGDStandardSkillAgent if args.ours_refinement_mode == "standard" else SGDSkillAgent
+        skill_agent = agent_class(
+            family=args.domain, model=args.model, ontology=ontology, predictor=predict_policy,
+            candidate_limit=args.ours_candidate_limit,
+            reference_max_chars=args.ours_reference_max_chars,
+            max_outgoing_edges=args.ours_max_outgoing_edges,
+            min_branch_support=args.ours_min_branch_support,
+            discriminative_lambda=args.ours_discriminative_lambda,
+            discriminative_clip=args.ours_discriminative_clip, seed=args.seed,
+            mining_method=args.ours_mining_method,
+            trace_coverage_target=args.ours_trace_coverage_target,
+            corpus_fitness_target=args.ours_corpus_fitness_target,
+            routing_complexity_weight=args.ours_routing_complexity_weight,
+        )
+        if args.ours_resource_dir:
+            skill_agent.load(args.ours_resource_dir)
+            if skill_agent.stage == "refining":
+                raise ValueError("Incomplete refinement checkpoint cannot be used as a final frozen resource")
+            if args.ours_offline_only and skill_agent.stage != "offline":
+                raise ValueError("--ours-offline-only requires an offline checkpoint, not refined/unknown resources")
+        else:
+            train = []
+            for dialogue in iter_family_dialogues(args.splits_dir, args.domain, "train"):
+                if args.ours_max_train is not None and len(train) >= args.ours_max_train:
+                    break
+                train.append(dialogue)
+            skill_agent.mine(train, args.output_dir / "offline",
+                             cases_per_node=args.ours_cases_per_node,
+                             compile_batch_size=args.ours_compile_batch_size)
+            if not args.ours_offline_only:
+                skill_agent.refine(train, args.output_dir,
+                                   selection_rate=args.ours_selection_rate,
+                                   batch_size=args.ours_batch_size,
+                                   max_batches=args.ours_max_batches,
+                                   per_transition_cap=args.ours_per_transition_cap,
+                                   analysis_batch_size=args.ours_analysis_batch_size)
+        skill_agent.save(args.output_dir)
     if graph is not None:
         (args.output_dir / "frequency_graph.json").write_text(
             json.dumps(graph, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -211,6 +302,8 @@ def run_domain(args: argparse.Namespace) -> dict:
     gold_rows: list[dict] = []
     pred_rows: list[dict] = []
     dialogue_count = 0
+    set_phase("testing")
+    frozen_hash = skill_agent.resource_hash() if skill_agent is not None else None
     with (args.output_dir / "predictions.jsonl").open("w", encoding="utf-8") as output:
         for dialogue in iter_family_dialogues(args.splits_dir, args.domain, args.split):
             if args.max_dialogues is not None and dialogue_count >= args.max_dialogues:
@@ -222,6 +315,8 @@ def run_domain(args: argparse.Namespace) -> dict:
                     predicted, diagnostic = gold, {"oracle": True}
                 elif awm_agent is not None:
                     predicted, diagnostic = awm_agent.predict(dialogue, turn_index)
+                elif skill_agent is not None:
+                    predicted, diagnostic = skill_agent.predict(dialogue, turn_index)
                 else:
                     predicted, diagnostic = predict_policy(
                         dialogue, turn_index, model=args.model, ontology=ontology,
@@ -245,13 +340,33 @@ def run_domain(args: argparse.Namespace) -> dict:
         "num_dialogues": dialogue_count,
         **score_policies(gold_rows, pred_rows),
     }
-    if args.method != "oracle":
-        from llm import write_usage_summary
-        summary["usage"] = write_usage_summary(args.output_dir / "llm_usage.json")["total"]
+    usage = persist_usage()
+    summary["llm_usage"] = usage
+    summary["usage"] = usage["testing"]["total"]
+    summary["mining_usage"] = usage["generation"]["total"]
+    summary["total_usage"] = usage["total"]["total"]
     if awm_agent is not None:
-        summary["mining_usage"] = mining_usage["total"]
         summary["workflow_lines"] = len(awm_agent.workflow)
         summary["memory_exemplars"] = len(awm_agent.memory)
+    if skill_agent is not None:
+        if skill_agent.resource_hash() != frozen_hash:
+            raise AssertionError("Evaluation changed frozen skill resources")
+        summary["skill_sha256"] = frozen_hash
+        summary["skill_stage"] = skill_agent.stage
+        summary["skill_protocol"] = getattr(skill_agent, "protocol", "sgd_backbone_online_prototype_v1")
+        summary["graph_mining_method"] = skill_agent.graph.get("mining_method", "unknown")
+        summary["skill_protocol"] = getattr(skill_agent, "protocol", "sgd_backbone_online_prototype_v1")
+        summary["graph_nodes"] = len(skill_agent.graph["nodes"])
+        summary["backbone_edges"] = len(skill_agent.graph["backbone"]["edges"])
+        summary["residual_edges"] = len(skill_agent.graph["residual_edges"])
+    summary["config"] = {key: str(value) if isinstance(value, Path) else value for key, value in vars(args).items()}
+    summary["data_manifest"] = {}
+    for split in sorted({"train", args.split}):
+        path = args.splits_dir / args.domain / f"{split}.jsonl.gz"
+        if path.is_file():
+            summary["data_manifest"][split] = {"path": str(path.resolve()),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+    summary["ontology_sha256"] = hashlib.sha256(json.dumps(ontology, sort_keys=True).encode()).hexdigest()
     (args.output_dir / "summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
@@ -261,7 +376,7 @@ def run_domain(args: argparse.Namespace) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--domain", required=True)
-    parser.add_argument("--method", choices=("oracle", "standard", "frequency_graph", "awm"), required=True)
+    parser.add_argument("--method", choices=("oracle", "standard", "frequency_graph", "awm", "ours"), required=True)
     parser.add_argument("--split", choices=("validation", "test"), default="validation")
     parser.add_argument("--splits-dir", type=Path, default=Path("data/eval/sgd/splits_by_domain"))
     parser.add_argument("--archive", type=Path, default=Path("data/eval/sgd/data.zip"))
@@ -275,7 +390,9 @@ def main() -> None:
     parser.add_argument("--awm-max-batches", type=int)
     parser.add_argument("--awm-workflow-max-chars", type=int, default=8000)
     parser.add_argument("--awm-exemplar-max-chars", type=int, default=3000)
+    add_ours_arguments(parser)
     args = parser.parse_args()
+    validate_ours_arguments(parser, args)
     if args.max_dialogues is not None and args.max_dialogues < 1:
         parser.error("--max-dialogues must be positive")
     if any(value is not None and value < 1 for value in (
@@ -286,8 +403,58 @@ def main() -> None:
     result = run_domain(args)
     print(json.dumps({key: result[key] for key in (
         "method", "domain", "split", "num_dialogues", "action_set_exact",
-        "turn_joint_ast", "call_gate_f1", "api_joint_ast"
+        "slot_exact_given_action", "turn_joint_ast", "call_gate_f1", "api_joint_ast",
+        "mining_usage", "usage", "total_usage"
     )}, ensure_ascii=False))
+
+
+def add_ours_arguments(parser, *, resource_option="--ours-resource-dir") -> None:
+    """Shared defaults/options: the full runner forwards this exact contract."""
+    parser.add_argument(resource_option, type=Path, help="Frozen SGD skill resources; skip mining/refine")
+    parser.add_argument("--ours-offline-only", action="store_true")
+    parser.add_argument("--ours-mining-method", choices=["trace_cover", "discriminative"], default="trace_cover",
+                        help="Offline graph only; compiler, runtime and online refinement are unchanged")
+    parser.add_argument("--ours-trace-coverage-target", type=float, default=.8)
+    parser.add_argument("--ours-corpus-fitness-target", type=float, default=.95)
+    parser.add_argument("--ours-routing-complexity-weight", type=float, default=2.)
+    parser.add_argument("--ours-refinement-mode", choices=["standard", "prototype"], default="standard",
+                        help="standard: original full policy-turn/reflection protocol; prototype: earlier simplified port")
+    parser.add_argument("--ours-max-train", type=int)
+    parser.add_argument("--ours-max-batches", type=int)
+    parser.add_argument("--ours-batch-size", type=int, default=8)
+    parser.add_argument("--ours-analysis-batch-size", type=int, default=8)
+    parser.add_argument("--ours-selection-rate", type=float, default=.30,
+                        help="Prototype only; standard uses every training policy turn")
+    parser.add_argument("--ours-per-transition-cap", type=int, default=3)
+    parser.add_argument("--ours-cases-per-node", type=int, default=3)
+    parser.add_argument("--ours-compile-batch-size", type=int, default=8)
+    parser.add_argument("--ours-candidate-limit", type=int, default=3)
+    parser.add_argument("--ours-reference-max-chars", type=int, default=1800)
+    parser.add_argument("--ours-max-outgoing-edges", type=int, default=3)
+    parser.add_argument("--ours-min-branch-support", type=int, default=2)
+    parser.add_argument("--ours-discriminative-lambda", type=float, default=1.)
+    parser.add_argument("--ours-discriminative-clip", type=float, default=3.)
+    parser.add_argument("--seed", type=int, default=42)
+
+
+def validate_ours_arguments(parser, args) -> None:
+    for key, value in vars(args).items():
+        if key.startswith("ours_") and key not in {"ours_selection_rate", "ours_discriminative_lambda",
+                                                  "ours_discriminative_clip", "ours_offline_only",
+                                                  "ours_trace_coverage_target", "ours_corpus_fitness_target",
+                                                  "ours_routing_complexity_weight"}:
+            if isinstance(value, (int, float)) and value < 1:
+                parser.error(f"--{key.replace('_', '-')} must be positive")
+    if not 0 <= args.ours_selection_rate <= 1:
+        parser.error("--ours-selection-rate must be in [0,1]")
+    for key in ("ours_trace_coverage_target", "ours_corpus_fitness_target"):
+        if not 0 < getattr(args, key) <= 1:
+            parser.error(f"--{key.replace('_', '-')} must be in (0,1]")
+    if not __import__("math").isfinite(args.ours_routing_complexity_weight) or args.ours_routing_complexity_weight < 0:
+        parser.error("--ours-routing-complexity-weight must be finite and nonnegative")
+    if not all(__import__("math").isfinite(value) and value >= 0
+               for value in (args.ours_discriminative_lambda, args.ours_discriminative_clip)):
+        parser.error("Discriminative weights must be finite and nonnegative")
 
 
 if __name__ == "__main__":
