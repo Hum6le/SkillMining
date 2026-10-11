@@ -896,6 +896,12 @@ def main() -> None:
         os.environ["SKILLMINING_WORKFLOW_ID"] = refine_workflow_ids[0]
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "runner_config.json").write_text(
+        json.dumps({"arguments": vars(args),
+                    "workflow_id": os.environ.get("SKILLMINING_WORKFLOW_ID"),
+                    "entrypoint": "scripts/run_backbone_online_refine.py"},
+                   ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
+    )
     # Keep usage accounting process-local and persist it even when an online
     # batch fails, so partial runs remain auditable and resumable.
     from scripts.llm_usage_utils import (

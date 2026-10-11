@@ -19,10 +19,10 @@ OUTPUT_DIR=""
 RESUME_RUN=""
 WORKFLOW_IDS_RAW=""
 REFINE_WORKFLOW_IDS_RAW=""
-SUBFLOW_MODE="parallel"
+SUBFLOW_MODE="serial"
 REFINEMENT_MODE="standard"
-HYBRID_MAP_BATCH_SIZE="4"
-REBUILD_SPLITS=1
+HYBRID_MAP_BATCH_SIZE="8"
+REBUILD_SPLITS=0
 CONTINUE_ON_ERROR=1
 RUNNER_ARGS=()
 PIDS=()
@@ -41,15 +41,16 @@ Options:
                             Each subflow's final evaluation uses its assigned worker workflow.
   --refine-workflow-ids IDS Comma-separated workflow IDs shared by each subflow's
                             online rollout waves. One reflection remains single-writer.
-  --subflow-mode MODE      `parallel` (default) assigns subflows to workers;
-                            `serial` runs subflows one by one while retaining
+  --subflow-mode MODE      `parallel` assigns subflows to workers;
+                            `serial` (default) runs subflows one by one while retaining
                             parallelism inside each subflow.
   --refinement-mode MODE    Forward `standard`, `trace2skill-hybrid`, or `constrained-repair` to every subflow.
-  --hybrid-map-batch-size N Diagnosed reports per hybrid MAP call (default: 4).
+  --hybrid-map-batch-size N Diagnosed reports per hybrid MAP call (default: 8, same as Python single-flow runner).
   --conda-env NAME          Default: skillmining310
   --hf-endpoint URL         Default: https://hf-mirror.com
   --python-bin PATH         Default: python
-  --no-rebuild-splits       Reuse the current 10-flow ABCD splits.
+  --no-rebuild-splits       Reuse the current 10-flow ABCD splits (default).
+  --rebuild-splits          Explicitly regenerate splits with seed 42; do not use when comparing existing runs.
   --stop-on-error           Stop an affected worker after its first failed subflow.
   -h, --help                Show this help.
 
@@ -116,6 +117,7 @@ while [[ $# -gt 0 ]]; do
         --hf-endpoint) require_value "$1" "$#"; HF_ENDPOINT_VALUE="$2"; shift 2 ;;
         --python-bin) require_value "$1" "$#"; PYTHON_BIN="$2"; shift 2 ;;
         --no-rebuild-splits) REBUILD_SPLITS=0; shift ;;
+        --rebuild-splits) REBUILD_SPLITS=1; shift ;;
         --stop-on-error) CONTINUE_ON_ERROR=0; shift ;;
         -h|--help) usage; exit 0 ;;
         *) RUNNER_ARGS+=("$1"); shift ;;
@@ -301,6 +303,7 @@ run_worker() {
             cmd+=(--eval-workflow-ids "$workflow_id")
         fi
         echo "===== worker=$worker_index workflow=${workflow_id:-config.py} subflow=$subflow ====="
+        printf 'Command: '; printf '%q ' "${cmd[@]}"; echo
         if ! SKILLMINING_WORKFLOW_ID="$workflow_id" "${cmd[@]}"; then
             echo "$subflow" >> "$failed_path"
             [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1
@@ -343,6 +346,7 @@ run_serial() {
         [[ -n "$serial_refine_ids" ]] && cmd+=(--refine-workflow-ids "$serial_refine_ids")
         [[ -n "$serial_eval_ids" ]] && cmd+=(--eval-workflow-ids "$serial_eval_ids")
         echo "===== serial subflow=$subflow workflows=$serial_eval_ids ====="
+        printf 'Command: '; printf '%q ' "${cmd[@]}"; echo
         if ! SKILLMINING_WORKFLOW_ID="${WORKFLOW_IDS[0]}" "${cmd[@]}" \
              > "$RUN_ROOT/logs/subflow_${subflow}.log" 2>&1; then
             echo "$subflow" >> "$failed_path"
@@ -358,10 +362,11 @@ offline_root=${OFFLINE_ROOT:-offline_remining}
 conda_env=$CONDA_ENV
 hf_endpoint=$HF_ENDPOINT
 workflow_ids=$(IFS=,; echo "${WORKFLOW_IDS[*]}")
-refine_workflow_ids=${REFINE_WORKFLOW_IDS_RAW:-assigned-worker-workflow}
+refine_workflow_ids=${REFINE_WORKFLOW_IDS_RAW:-$([[ "$SUBFLOW_MODE" == "serial" ]] && echo "all-eval-workflows" || echo "assigned-worker-workflow")}
 subflow_mode=$SUBFLOW_MODE
 refinement_mode=$REFINEMENT_MODE
 hybrid_map_batch_size=$HYBRID_MAP_BATCH_SIZE
+rebuild_splits=$REBUILD_SPLITS
 load_plan=$PLAN_PATH
 EOF
 
@@ -374,8 +379,9 @@ echo "Refinement:   $REFINEMENT_MODE (MAP batch size: $HYBRID_MAP_BATCH_SIZE)"
 echo "Offline root: ${OFFLINE_ROOT:-per-subflow offline re-mining}"
 echo "Load plan:    $PLAN_PATH"
 
+SERIAL_FAILURE=0
 if [[ "$SUBFLOW_MODE" == "serial" ]]; then
-    run_serial
+    run_serial || SERIAL_FAILURE=1
 else
     for index in "${!WORKFLOW_IDS[@]}"; do
         run_worker "$index" "${WORKFLOW_IDS[$index]}" > "$RUN_ROOT/logs/worker_${index}.log" 2>&1 &
@@ -385,7 +391,7 @@ else
     done
 fi
 
-WORKER_FAILURE=0
+WORKER_FAILURE="$SERIAL_FAILURE"
 for pid in "${PIDS[@]}"; do
     wait "$pid" || WORKER_FAILURE=1
 done
@@ -400,7 +406,7 @@ else
     echo "Aggregation failed; see $RUN_ROOT/subflows" >&2
 fi
 
-if [[ "$WORKER_FAILURE" -ne 0 ]] || [[ "$AGGREGATE_FAILURE" -ne 0 ]] || grep -q . "$RUN_ROOT"/worker_*_failed.txt 2>/dev/null; then
+if [[ "$WORKER_FAILURE" -ne 0 ]] || [[ "$AGGREGATE_FAILURE" -ne 0 ]] || grep -q . "$RUN_ROOT"/worker_*_failed.txt "$RUN_ROOT/serial_failed.txt" 2>/dev/null; then
     sed -i 's/^status=.*/status=failed/' "$MANIFEST_PATH" || true
     echo "Some subflows failed. Inspect $RUN_ROOT/logs and worker_*_failed.txt." >&2
     exit 1
