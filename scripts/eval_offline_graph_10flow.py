@@ -35,6 +35,7 @@ from skill_mining.backbone_workflow_mining import (
     route_motif_state,
     route_structural_tree,
 )
+from skill_mining.joint_trace_cover import mine_backbone_workflow_joint_trace_cover
 
 
 DEFAULT_SPLITS = ROOT_DIR / "data" / "eval" / "abcd" / "splits"
@@ -526,7 +527,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument(
         "--method",
-        choices=["discriminative", "support_lift", "heuristics", "trace_cover", "observable_trace_cover", "structural_trace_cover", "motif_trace_cover"],
+        choices=["discriminative", "support_lift", "heuristics", "trace_cover", "joint_trace_cover", "observable_trace_cover", "structural_trace_cover", "motif_trace_cover"],
         default="discriminative",
     )
     parser.add_argument("--max-outgoing-edges", type=int, default=3)
@@ -537,6 +538,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--trace-coverage-target", type=float, default=0.8)
     parser.add_argument("--corpus-fitness-target", type=float, default=0.95)
     parser.add_argument("--routing-complexity-weight", type=float, default=2.0)
+    parser.add_argument("--tree-evidence-weight", type=float, default=1.0)
+    parser.add_argument("--joint-max-moves", type=int, default=12)
+    parser.add_argument("--joint-search-width", type=int, default=16)
+    parser.add_argument("--joint-search-mode", choices=["joint", "fixed"], default="joint")
+    parser.add_argument("--joint-ranking", choices=["backbone", "support"], default="backbone")
+    parser.add_argument("--joint-no-exchanges", action="store_true")
+    parser.add_argument("--joint-root-policy", choices=["observed", "all"], default="observed")
+    parser.add_argument("--save-graphs", action="store_true")
     parser.add_argument("--routing-mode-max-depth", type=int, default=2)
     parser.add_argument("--routing-mode-min-leaf-support", type=int, default=12)
     parser.add_argument("--routing-mode-min-information-gain", type=float, default=0.10)
@@ -619,6 +628,18 @@ def main() -> None:
                 routing_mode_min_leaf_support=args.routing_mode_min_leaf_support,
                 routing_mode_min_information_gain=args.routing_mode_min_information_gain,
             )
+        elif args.method == "joint_trace_cover":
+            mined = mine_backbone_workflow_joint_trace_cover(
+                flow, train, min_branch_support=args.min_branch_support,
+                trace_coverage_target=args.trace_coverage_target,
+                corpus_fitness_target=args.corpus_fitness_target,
+                routing_complexity_weight=args.routing_complexity_weight,
+                tree_evidence_weight=args.tree_evidence_weight,
+                max_moves=args.joint_max_moves, search_width=args.joint_search_width,
+                search_mode=args.joint_search_mode, ranking=args.joint_ranking,
+                allow_exchanges=not args.joint_no_exchanges,
+                root_policy=args.joint_root_policy,
+            )
         elif args.method == "trace_cover":
             mined = mine_backbone_workflow_trace_cover(
                 flow, train,
@@ -636,6 +657,14 @@ def main() -> None:
                 discriminative_clip=args.discriminative_clip,
             )
         row = {"flow": flow, **evaluate_graph(flow, mined["subgraph"], test)}
+        if "joint_trace_cover" in mined["subgraph"]:
+            row["joint_search"] = mined["subgraph"]["joint_trace_cover"]
+        if args.save_graphs:
+            graph_dir = output_dir / "graphs"
+            graph_dir.mkdir(exist_ok=True)
+            (graph_dir / f"{flow}.json").write_text(
+                json.dumps(mined["subgraph"], ensure_ascii=False, indent=2), encoding="utf-8",
+            )
         rows.append(row)
         print(
             f"{flow:24s} transitions={row['heldout_transitions']:4d} "
@@ -657,6 +686,13 @@ def main() -> None:
             "trace_coverage_target": args.trace_coverage_target,
             "corpus_fitness_target": args.corpus_fitness_target,
             "routing_complexity_weight": args.routing_complexity_weight,
+            "tree_evidence_weight": args.tree_evidence_weight,
+            "joint_max_moves": args.joint_max_moves,
+            "joint_search_width": args.joint_search_width,
+            "joint_search_mode": args.joint_search_mode,
+            "joint_ranking": args.joint_ranking,
+            "joint_allow_exchanges": not args.joint_no_exchanges,
+            "joint_root_policy": args.joint_root_policy,
             "routing_mode_max_depth": args.routing_mode_max_depth,
             "routing_mode_min_leaf_support": args.routing_mode_min_leaf_support,
             "routing_mode_min_information_gain": args.routing_mode_min_information_gain,
