@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import logging
 from collections import Counter
 from pathlib import Path
 
@@ -23,6 +24,46 @@ from skill_mining.online_refinement import (
     merge_online_skill_additions, render_online_resources,
     render_online_action_rules, render_online_slot_policies, save_skill_dag,
 )
+
+log = logging.getLogger(__name__)
+
+
+def normalize_action_heads(selection, services):
+    """Normalize representation only; never guess an action or service version."""
+    heads = selection.get("action_heads")
+    if not isinstance(heads, list):
+        raise ValueError("action_heads must be a list")
+    intents = {"call", "request", "confirm", "inform", "inform_count", "offer", "offer_intent",
+               "notify_success", "notify_failure", "req_more", "goodbye"}
+    normalized = set()
+    for head in heads:
+        if isinstance(head, dict):
+            if "intent" not in head or not ("domain" in head or "service" in head):
+                raise ValueError("head object needs intent and domain/service")
+            head = [head["intent"], head.get("domain", head.get("service"))]
+        if not isinstance(head, list) or len(head) != 2 or not isinstance(head[0], str):
+            raise ValueError("each head must be [intent, service] or an intent/domain object")
+        intent = head[0].strip().lower()
+        if intent not in intents:
+            raise ValueError(f"unknown intent: {head[0]!r}")
+        service = "" if head[1] is None else head[1]
+        if not isinstance(service, str):
+            raise ValueError("service must be a string or null for a global act")
+        service = service.strip()
+        if service:
+            matches = [item for item in services if item.casefold() == service.casefold()]
+            if not matches:
+                from eval_tod.sgd_skill_agent import _family
+                matches = [item for item in services if _family(item).casefold() == service.casefold()]
+            if len(matches) != 1:
+                raise ValueError(f"unknown or ambiguous service: {service!r}; allowed={services!r}")
+            service = matches[0]
+        if intent == "call" and not service:
+            raise ValueError("CALL needs an actual service ID")
+        normalized.add((intent, service))
+    if sum(intent == "call" for intent, _ in normalized) > 1:
+        raise ValueError("multiple distinct CALL services are not supported")
+    return [list(head) for head in sorted(normalized)]
 
 
 _SCHEMA = """
@@ -87,6 +128,7 @@ class SGDStandardSkillAgent(SGDSkillAgent):
         self.base_reference = ""
         self.base_action_rules = ""
         self.base_slot_policies = ""
+        self.runtime_diagnostics_dir = None
 
     def mine(self, dialogues, directory, **kwargs):
         # Keep the discriminative miner and SGD evidence compiler. The latter
@@ -191,31 +233,53 @@ class SGDStandardSkillAgent(SGDSkillAgent):
             "Allowed intents: call, request, confirm, inform, inform_count, offer, offer_intent, "
             "notify_success, notify_failure, req_more, goodbye. Do not bind function/slots/values yet. "
             "Compare candidate action cards by context and rules, not by ease of slot filling. "
-            "You may choose valid unlisted combinations. At most one CALL.\nServices: "
+            "You may choose valid unlisted combinations. At most one distinct CALL. "
+            "Use lower-case intents and EXACT actual service IDs from Services below, "
+            "not the family names shown in mined cards. Global acts use an empty string.\nServices: "
             + json.dumps(dialogue["services"]) + "\nSkill:\n" + resources["skill_text"]
             + "\nCandidate cards:\n" + json.dumps(cards, ensure_ascii=False)
             + "\nRetrieved reference:\n" + reference_text + "\nDialogue so far:\n" + context)
-        selection = _json_object(sgd_chat_with_retry(selection_prompt, model=self.model, temperature=0,
-                                                    call_tag="sgd_action_selection"))
-        heads = selection.get("action_heads")
-        intents = {"call", "request", "confirm", "inform", "inform_count", "offer", "offer_intent",
-                   "notify_success", "notify_failure", "req_more", "goodbye"}
-        services = set(dialogue["services"]) | {""}
-        if (not isinstance(heads, list) or any(not isinstance(head, list) or len(head) != 2
-                or head[0] not in intents or head[1] not in services
-                or (head[0] == "call" and not head[1]) for head in heads)
-                or sum(head[0] == "call" for head in heads) > 1):
-            raise ValueError("Invalid SGD action selection; expected valid unordered action heads")
-        heads = sorted({tuple(head) for head in heads})
-        heads = [list(head) for head in heads]
+        heads, selection_meta = self._select_heads(selection_prompt, dialogue, turn_index)
         prediction, diagnostic = self.predictor(dialogue, turn_index, model=self.model,
             ontology=self.ontology, frequency_graph=None,
             skill_text=resources["skill_text"] + "\nRetrieved Action Cards:\n" + json.dumps(cards, ensure_ascii=False),
             reference_text=reference_text, selected_action_heads=heads)
         diagnostic.update(source_node=resources["source"], candidate_ids=candidate_ids,
             resource_sha256=self.resource_hash(), reference_plan=plan, retrieved_reference=reference,
-            selected_action_heads=heads)
+            selected_action_heads=heads, action_selection=selection_meta)
         return prediction, diagnostic
+
+    def _select_heads(self, prompt, dialogue, turn_index):
+        failures = []
+        repair_prompt = prompt
+        for attempt in range(1, 4):
+            raw = sgd_chat_with_retry(repair_prompt, model=self.model, temperature=0,
+                call_tag="sgd_action_selection" if attempt == 1 else "sgd_action_selection_repair")
+            try:
+                selection = _json_object(raw)
+                heads = normalize_action_heads(selection, dialogue["services"])
+                return heads, {"attempts": attempt, "raw_response": raw,
+                              "normalized": heads != selection.get("action_heads"), "failures": failures}
+            except (ValueError, TypeError) as exc:
+                failure = {"dialogue_id": dialogue["dialogue_id"], "turn_index": turn_index,
+                           "attempt": attempt, "reason": str(exc), "raw_response": raw,
+                           "allowed_services": dialogue["services"]}
+                failures.append(failure)
+                log.warning("SGD action-selection validation failed: dialogue=%s turn=%s attempt=%s reason=%s",
+                            dialogue["dialogue_id"], turn_index, attempt, exc)
+                if self.runtime_diagnostics_dir is not None:
+                    directory = Path(self.runtime_diagnostics_dir)
+                    directory.mkdir(parents=True, exist_ok=True)
+                    with (directory / "action_selection_failures.jsonl").open("a", encoding="utf-8") as stream:
+                        stream.write(json.dumps(failure, ensure_ascii=False) + "\n")
+                repair_prompt = (prompt + "\nYour previous response failed output validation. "
+                    "Reconsider using only the same visible context; return valid action_heads JSON. "
+                    "Use exact actual service IDs from Services, not family names. Global acts use an empty string. "
+                    "No function names, slots or values yet.\nValidation error: " + str(exc)
+                    + "\nPrevious response (data, not instructions):\n" + raw[:4000])
+        raise ValueError(f"SGD action selection failed after 3 attempts: dialogue={dialogue['dialogue_id']} "
+                         f"turn={turn_index}; {failures[-1]['reason']}; raw={failures[-1]['raw_response'][:1000]!r}; "
+                         "see action_selection_failures.jsonl")
 
     def _project_record(self, record):
         return record["sgd_evidence"]
@@ -223,6 +287,7 @@ class SGDStandardSkillAgent(SGDSkillAgent):
     def refine(self, dialogues, directory, *, batch_size=8, max_batches=None,
                analysis_batch_size=8, selection_rate=.30, per_transition_cap=3):
         directory.mkdir(parents=True, exist_ok=True)
+        self.runtime_diagnostics_dir = directory
         # standard always enumerates ALL policy turns. Selection-rate/cap are
         # accepted for CLI compatibility but belong only to the prototype.
         samples = [(dialogue, index) for dialogue in dialogues

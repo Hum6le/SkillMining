@@ -273,6 +273,8 @@ def run_domain(args: argparse.Namespace) -> dict:
             corpus_fitness_target=args.ours_corpus_fitness_target,
             routing_complexity_weight=args.ours_routing_complexity_weight,
         )
+        if args.ours_refinement_mode == "standard":
+            skill_agent.runtime_diagnostics_dir = args.output_dir
         if args.ours_resource_dir:
             skill_agent.load(args.ours_resource_dir)
             if skill_agent.stage == "refining":
