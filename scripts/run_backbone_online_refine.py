@@ -807,6 +807,8 @@ def main() -> None:
     parser.add_argument("--output-dir", required=True, help="Run directory; also used by --resume")
     parser.add_argument("--offline-dir", default=None,
                         help="Existing offline backbone artifact directory; skip offline re-mining")
+    parser.add_argument("--schema-cold-start", action="store_true",
+                        help="Initialize online refinement from the ABCD action schema only")
     parser.add_argument("--resume", action="store_true", help="Resume completed online batches from skill_dag_state.json")
     parser.add_argument("--model", default=MODEL)
     parser.add_argument(
@@ -877,6 +879,8 @@ def main() -> None:
         help="Fail immediately on an empty LLM response; useful for diagnosing workflow failures.",
     )
     args = parser.parse_args()
+    if args.schema_cold_start and args.offline_dir:
+        parser.error("--schema-cold-start cannot be combined with --offline-dir")
     if args.hybrid_map_batch_size <= 0:
         parser.error("--hybrid-map-batch-size must be positive")
     if args.analysis_batch_size <= 0:
@@ -991,6 +995,9 @@ def main() -> None:
         if not state_path.exists():
             raise FileNotFoundError(f"Cannot resume: {state_path} does not exist")
         state = load_skill_dag(state_path)
+        expected_origin = "schema_cold_start" if args.schema_cold_start else "offline_backbone"
+        if state.get("initialization_origin", "offline_backbone") != expected_origin:
+            raise ValueError("Resume initialization does not match the saved skill state")
         base_skill = (out_dir / "base_skill.md").read_text(encoding="utf-8")
         working_path = out_dir / "working_skill.md"
         working_skill = working_path.read_text(encoding="utf-8") if working_path.exists() else (out_dir / "skill.md").read_text(encoding="utf-8")
@@ -1021,7 +1028,28 @@ def main() -> None:
         _write(out_dir / "skill.md", working_skill)
     else:
         offline_dir = Path(args.offline_dir) if args.offline_dir else None
-        if offline_dir is not None:
+        if args.schema_cold_start:
+            from eval_tod.abcd.action_schema import load_action_schema
+            schema_actions = sorted(load_action_schema()["actions"])
+            # An editable action vocabulary, without any training transitions,
+            # offline guards, references, or compiled procedural text.
+            subgraph = {
+                "nodes": [{"id": "ROOT", "label": "ROOT"}]
+                         + [{"id": action, "label": action} for action in schema_actions],
+                "edges": [],
+                "backbone": {"root": "ROOT", "compilation_order": [], "edges": []},
+            }
+            state = initialize_skill_dag(subgraph, args.subflow)
+            state["initialization_origin"] = "schema_cold_start"
+            base_skill = (
+                "# ABCD action skill\n\n"
+                "Follow the action and ordered-slot contract supplied by the runtime. "
+                "No workflow transitions or procedural rules are initialized.\n"
+            )
+            base_reference = action_rules = slot_policies = ""
+            _write(out_dir / "subgraph.json", json.dumps(subgraph, indent=2, ensure_ascii=False))
+            log.info("Schema-only cold start for %s with %d legal actions", args.subflow, len(schema_actions))
+        elif offline_dir is not None:
             log.info("Loading existing offline backbone artifacts from %s", offline_dir)
             subgraph_path = offline_dir / "subgraph.json"
             skill_path = offline_dir / "skill.md"
@@ -1033,6 +1061,7 @@ def main() -> None:
                 )
             subgraph = json.loads(subgraph_path.read_text(encoding="utf-8"))
             state = initialize_skill_dag(subgraph, args.subflow)
+            state["initialization_origin"] = "offline_backbone"
             base_skill = skill_path.read_text(encoding="utf-8")
             base_reference = reference_path.read_text(encoding="utf-8") if reference_path.exists() else ""
             action_path = offline_dir / "action_rules.md"
@@ -1044,6 +1073,7 @@ def main() -> None:
             log.info("Offline mining initial backbone for %s (%d train sessions)", args.subflow, len(train))
             mined = mine_subflow_skill_backbone(args.subflow, train, artifact_dir=out_dir / "offline_mining")
             state = initialize_skill_dag(mined["subgraph"], args.subflow)
+            state["initialization_origin"] = "offline_backbone"
             base_skill = mined["skill_md"]
             base_reference = mined["reference_md"]
             action_rules = mined.get("action_rules_md", "")
