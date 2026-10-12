@@ -61,3 +61,58 @@ def test_exhausted_repairs_remain_explicit_failure(monkeypatch, tmp_path):
         agent._select_heads("visible context", dialogue(), 1)
     assert len(calls) == 3
     assert len((tmp_path / "action_selection_failures.jsonl").read_text().splitlines()) == 3
+
+
+@pytest.mark.parametrize("raw", [
+    '{"query_text":"booking\ntime\tplease","candidate_actions":[]}',
+    'Here is the JSON:\n```json\n{"query_text":"booking","candidate_actions":[]}\n```',
+    '<think>Reasoning with {not JSON}</think>\n{"query_text":"booking","candidate_actions":[]}',
+])
+def test_json_parser_tolerates_control_chars_and_response_wrappers(raw):
+    from eval_tod.sgd_skill_agent import _json_object
+    result = _json_object(raw)
+    assert result["query_text"].startswith("booking")
+
+
+@pytest.mark.parametrize("raw", [
+    '{"query_text":"truncated',
+    '{"broken": [ {"query_text":"nested valid object must not replace broken parent"}',
+    '[{"query_text":"array element is not the requested root object"}]',
+])
+def test_json_parser_does_not_invent_or_salvage_broken_structure(raw):
+    from eval_tod.sgd_skill_agent import _json_object
+    with pytest.raises(ValueError):
+        _json_object(raw)
+
+
+def test_reference_planner_retries_and_preserves_raw_output_and_usage(monkeypatch, tmp_path):
+    from eval_tod.sgd_usage import configure_usage, persist_usage, set_phase
+    configure_usage(tmp_path)
+    set_phase("train_rollout")
+    replies = iter(['not json', '{"query_text":"book\na table","candidate_actions":[]}'])
+    tags = []
+    def chat(prompt, **kwargs):
+        assert "CURRENT_SYSTEM_SECRET" not in prompt
+        tags.append(kwargs["call_tag"])
+        return next(replies)
+    monkeypatch.setattr("llm.chat", chat)
+    agent = SGDStandardSkillAgent(family="Restaurants", model="mock", ontology=ONTOLOGY, predictor=None)
+    agent.runtime_diagnostics_dir = tmp_path
+    plan, diagnostic = agent._request_validated_json("visible context", dialogue(), 1,
+        stage="reference_plan", validator=agent._validate_reference_plan)
+    assert plan["query_text"] == "book\na table"
+    assert diagnostic["attempts"] == 2
+    assert tags == ["sgd_reference_plan", "sgd_reference_plan_repair"]
+    logged = json.loads((tmp_path / "reference_plan_failures.jsonl").read_text())
+    assert logged["raw_response"] == "not json" and logged["stage"] == "reference_plan"
+    assert persist_usage()["generation"]["total"]["calls"] == 2
+
+
+def test_reference_planner_exhaustion_has_stage_and_trace_identity(monkeypatch, tmp_path):
+    monkeypatch.setattr("llm.chat", lambda *_args, **_kwargs: '{"query_text":[] }')
+    agent = SGDStandardSkillAgent(family="Restaurants", model="mock", ontology=ONTOLOGY, predictor=None)
+    agent.runtime_diagnostics_dir = tmp_path
+    with pytest.raises(ValueError, match="reference plan failed after 3 attempts.*train-1"):
+        agent._request_validated_json("visible context", dialogue(), 1,
+            stage="reference_plan", validator=agent._validate_reference_plan)
+    assert len((tmp_path / "reference_plan_failures.jsonl").read_text().splitlines()) == 3

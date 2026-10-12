@@ -47,7 +47,16 @@ def _json_object(raw: str) -> dict:
     text = raw.strip()
     if text.startswith("```"):
         text = text.split("\n", 1)[-1].rsplit("```", 1)[0]
-    result = json.loads(text)
+    text = text.strip()
+    # Accept unescaped newlines/tabs inside strings and prose around the
+    # first JSON object. Do not salvage nested objects from a broken object
+    # or list, invent missing brackets, or alter values.
+    if text.startswith("<think>") and "</think>" in text:
+        text = text.split("</think>", 1)[1].strip()
+    start = 0 if text.startswith(("{", "[")) else text.find("{")
+    if start < 0:
+        raise ValueError("LLM response contains no JSON object")
+    result, _ = json.JSONDecoder(strict=False).raw_decode(text, start)
     if not isinstance(result, dict):
         raise ValueError("SGD skill synthesis must return a JSON object")
     return result

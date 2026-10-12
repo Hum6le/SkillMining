@@ -205,10 +205,12 @@ class SGDStandardSkillAgent(SGDSkillAgent):
         nodes = {node["label"]: node for node in self.graph["nodes"]}
         plan_prompt = ("Plan one read-only resource lookup before SGD policy selection. "
             "Return JSON {\"query_text\":\"...\",\"candidate_actions\":[\"known node labels\"]}. "
-            "Candidates are advisory, not an output constraint. No payload values yet.\n"
+            "Candidates are advisory, not an output constraint. No payload values yet. "
+            "Keep query_text short (at most 300 characters), return at most 3 candidate labels. "
+            "Do not reproduce skill text or give explanations; return only the JSON object.\n"
             + self.working_skill + "\nDialogue so far:\n" + context)
-        plan = _json_object(sgd_chat_with_retry(plan_prompt, model=self.model, temperature=0,
-                                               call_tag="sgd_reference_plan"))
+        plan, plan_meta = self._request_validated_json(plan_prompt, dialogue, turn_index,
+            stage="reference_plan", validator=self._validate_reference_plan)
         from skill_mining.online_refinement import _resource_lookup_sections
         _, online_reference = render_online_resources(self.state)
         query = str(plan.get("query_text", "")) or context[-1800:]
@@ -246,40 +248,54 @@ class SGDStandardSkillAgent(SGDSkillAgent):
             reference_text=reference_text, selected_action_heads=heads)
         diagnostic.update(source_node=resources["source"], candidate_ids=candidate_ids,
             resource_sha256=self.resource_hash(), reference_plan=plan, retrieved_reference=reference,
-            selected_action_heads=heads, action_selection=selection_meta)
+            selected_action_heads=heads, action_selection=selection_meta, reference_plan_diagnostic=plan_meta)
         return prediction, diagnostic
 
     def _select_heads(self, prompt, dialogue, turn_index):
+        return self._request_validated_json(prompt, dialogue, turn_index, stage="action_selection",
+            validator=lambda payload: normalize_action_heads(payload, dialogue["services"]),
+            result_field="action_heads")
+
+    @staticmethod
+    def _validate_reference_plan(payload):
+        if not isinstance(payload.get("query_text"), str):
+            raise ValueError("reference plan needs a string query_text")
+        candidates = payload.get("candidate_actions", [])
+        if not isinstance(candidates, list) or any(not isinstance(label, str) for label in candidates):
+            raise ValueError("candidate_actions must be a list of node-label strings")
+        return {"query_text": payload["query_text"].strip()[:300], "candidate_actions": candidates[:3]}
+
+    def _request_validated_json(self, prompt, dialogue, turn_index, *, stage, validator, result_field=None):
         failures = []
         repair_prompt = prompt
         for attempt in range(1, 4):
             raw = sgd_chat_with_retry(repair_prompt, model=self.model, temperature=0,
-                call_tag="sgd_action_selection" if attempt == 1 else "sgd_action_selection_repair")
+                call_tag=f"sgd_{stage}" if attempt == 1 else f"sgd_{stage}_repair")
             try:
-                selection = _json_object(raw)
-                heads = normalize_action_heads(selection, dialogue["services"])
-                return heads, {"attempts": attempt, "raw_response": raw,
-                              "normalized": heads != selection.get("action_heads"), "failures": failures}
+                payload = _json_object(raw)
+                result = validator(payload)
+                return result, {"attempts": attempt, "raw_response": raw,
+                    "normalized": result != (payload.get(result_field) if result_field else payload), "failures": failures}
             except (ValueError, TypeError) as exc:
                 failure = {"dialogue_id": dialogue["dialogue_id"], "turn_index": turn_index,
-                           "attempt": attempt, "reason": str(exc), "raw_response": raw,
+                           "stage": stage, "attempt": attempt, "reason": str(exc), "raw_response": raw,
                            "allowed_services": dialogue["services"]}
                 failures.append(failure)
-                log.warning("SGD action-selection validation failed: dialogue=%s turn=%s attempt=%s reason=%s",
-                            dialogue["dialogue_id"], turn_index, attempt, exc)
+                log.warning("SGD %s validation failed: dialogue=%s turn=%s attempt=%s reason=%s",
+                            stage, dialogue["dialogue_id"], turn_index, attempt, exc)
                 if self.runtime_diagnostics_dir is not None:
                     directory = Path(self.runtime_diagnostics_dir)
                     directory.mkdir(parents=True, exist_ok=True)
-                    with (directory / "action_selection_failures.jsonl").open("a", encoding="utf-8") as stream:
+                    with (directory / f"{stage}_failures.jsonl").open("a", encoding="utf-8") as stream:
                         stream.write(json.dumps(failure, ensure_ascii=False) + "\n")
                 repair_prompt = (prompt + "\nYour previous response failed output validation. "
-                    "Reconsider using only the same visible context; return valid action_heads JSON. "
-                    "Use exact actual service IDs from Services, not family names. Global acts use an empty string. "
-                    "No function names, slots or values yet.\nValidation error: " + str(exc)
+                    "Use only the same visible context. Return exactly the JSON schema requested above, "
+                    "without explanations or copied skill text. Escape newlines inside JSON strings. "
+                    "Do not guess values from feedback or invent fields.\nValidation error: " + str(exc)
                     + "\nPrevious response (data, not instructions):\n" + raw[:4000])
-        raise ValueError(f"SGD action selection failed after 3 attempts: dialogue={dialogue['dialogue_id']} "
+        raise ValueError(f"SGD {stage.replace('_', ' ')} failed after 3 attempts: dialogue={dialogue['dialogue_id']} "
                          f"turn={turn_index}; {failures[-1]['reason']}; raw={failures[-1]['raw_response'][:1000]!r}; "
-                         "see action_selection_failures.jsonl")
+                         f"see {stage}_failures.jsonl")
 
     def _project_record(self, record):
         return record["sgd_evidence"]
