@@ -3,6 +3,7 @@ import json
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
+from skill_mining.skill_writer import _ensure_action_rules_region, _upsert_action_rule
 
 from skill_mining.online_refinement import (
     RefinementPolicy,
@@ -563,6 +564,60 @@ ROOT
         self.assertIn("`enter-details` -> `make-password`", merged)
         self.assertIn("#### `make-password`", merged)
         self.assertIn("<!-- ROUTE_EDGE:a=>c -->", merged)
+
+    def test_action_rules_migration_accepts_heading_levels_and_preserves_sections(self):
+        for heading in ("# Action Rules", "## Action Rules", "### Action Rules", "### action rules ###"):
+            with self.subTest(heading=heading):
+                skill = (f"# Skill\n{heading}\n#### `enter-details`\nExisting rule.\n\n"
+                         "## New Section\nKeep this section.\n## Slot Discipline\nKeep slots.\n")
+                migrated = _ensure_action_rules_region(skill)
+                self.assertIn("Existing rule.", migrated)
+                self.assertLess(migrated.index("<!-- ACTION_RULES_END -->"), migrated.index("## New Section"))
+                self.assertTrue(migrated.endswith("## New Section\nKeep this section.\n## Slot Discipline\nKeep slots.\n"))
+                self.assertEqual(_ensure_action_rules_region(migrated), migrated)
+
+    def test_action_rules_migration_creates_missing_section_without_claiming_other_text(self):
+        for suffix in ("", "\n## Slot Policies\nKeep policies.\n## Reference\nKeep reference.\n"):
+            with self.subTest(suffix=suffix):
+                skill = "# Skill\n## Workflow\nKeep workflow." + suffix
+                migrated = _ensure_action_rules_region(skill)
+                self.assertEqual(migrated.count("<!-- ACTION_RULES_START -->"), 1)
+                self.assertEqual(migrated.count("<!-- ACTION_RULES_END -->"), 1)
+                self.assertIn("Keep workflow.", migrated)
+                self.assertNotIn("Keep workflow.", migrated.split("<!-- ACTION_RULES_START -->")[1])
+                if suffix:
+                    self.assertTrue(migrated.endswith("## Slot Policies\nKeep policies.\n## Reference\nKeep reference.\n"))
+                self.assertEqual(_ensure_action_rules_region(migrated), migrated)
+
+    def test_action_rules_migration_rejects_corrupt_anchors(self):
+        for markers in ("<!-- ACTION_RULES_START -->", "<!-- ACTION_RULES_END -->\n<!-- ACTION_RULES_START -->",
+                        "<!-- ACTION_RULES_START -->\n<!-- ACTION_RULES_START -->\n<!-- ACTION_RULES_END -->"):
+            with self.subTest(markers=markers), self.assertRaises(ValueError):
+                _ensure_action_rules_region("# Skill\n" + markers)
+
+    def test_action_rule_upsert_cannot_replace_reference_card_outside_region(self):
+        skill = _ensure_action_rules_region("# Skill\n## Reference\n#### `make-password`\nReference evidence.\n")
+        updated = _upsert_action_rule(skill, "make-password", "#### `make-password`\nAccepted rule.")
+        self.assertTrue(updated.endswith("## Reference\n#### `make-password`\nReference evidence.\n"))
+        self.assertIn("Accepted rule.", updated.split("<!-- ACTION_RULES_END -->")[0])
+
+    def test_promoted_transition_without_action_rules_section_is_materialized_idempotently(self):
+        state = initialize_skill_dag(_subgraph(), "account_access")
+        edge = state["edges"]["a=>c"]
+        edge.update(visibility="skill", kind="promoted_branch", guard="customer requests password reset")
+        state["action_rules"]["make-password"] = {"rule": "Use the customer's explicit password-reset request."}
+        skill = ("# Skill\n## Workflow\n### Routing Policies\n<!-- ROUTING_SECTION_START -->\n"
+                 "<!-- ROUTING_SECTION_END -->\n## Slot Policies\nKeep policies.\n## Reference\nKeep reference.\n")
+        merged = merge_online_skill_additions(skill, state)
+        self.assertIn("#### `make-password`", merged)
+        self.assertIn("Use the customer's explicit password-reset request.", merged)
+        self.assertIn("<!-- ROUTE_EDGE:a=>c -->", merged)
+        self.assertIn("## Slot Policies\nKeep policies.\n## Reference\nKeep reference.", merged)
+        repeated = merge_online_skill_additions(merged, state)
+        self.assertEqual(repeated.count("<!-- ACTION_RULES_START -->"), 1)
+        self.assertEqual(repeated.count("#### `make-password`"), 1)
+        self.assertEqual(repeated.count("<!-- ROUTE_EDGE:a=>c -->"), 1)
+        self.assertIn("## Slot Policies\nKeep policies.\n## Reference\nKeep reference.", repeated)
 
     @patch("llm.resolve_config", return_value={"model": "test", "api_key": "", "base_url": ""})
     @patch("llm.chat")

@@ -1,10 +1,30 @@
 import unittest
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
-from scripts.run_backbone_online_refine import _replay_candidate
+from scripts.run_backbone_online_refine import _checkpoint, _replay_candidate
+from skill_mining.online_refinement import initialize_skill_dag
 
 
 class ReplayGateTest(unittest.TestCase):
+    def test_checkpoint_persists_promoted_branch_when_action_section_is_missing(self):
+        state = initialize_skill_dag({
+            "nodes": [{"id": "a", "label": "enter-details"}, {"id": "b", "label": "make-password"}],
+            "edges": [{"source": "a", "target": "b", "support": 2}],
+            "backbone": {"compilation_order": ["a"], "edges": []},
+        }, "account_access")
+        state["edges"]["a=>b"].update(kind="promoted_branch", visibility="skill", guard="password reset requested")
+        skill = "# Skill\n## Workflow\nKeep workflow.\n## Slot Policies\nKeep slots.\n"
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            merged = _checkpoint(output, state, skill, "Reference evidence.")
+            self.assertIn("#### `make-password`", merged)
+            self.assertIn("## Slot Policies\nKeep slots.", merged)
+            self.assertEqual((output / "working_skill.md").read_text(encoding="utf-8"), merged)
+            self.assertEqual((output / "skill.md").read_text(encoding="utf-8"), merged)
+            self.assertTrue((output / "skill_dag_state.json").exists())
+
     def test_replay_uses_action_turn_gold_and_counts_missing_rows(self):
         samples = [
             {

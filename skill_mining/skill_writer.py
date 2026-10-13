@@ -562,30 +562,55 @@ def _replace_routing_section(skill: str, content: str) -> str:
 
 
 def _ensure_action_rules_region(skill: str) -> str:
-    """Add editable action-rule anchors to a current-format compiled skill.
+    """Ensure an editable action-rule region without rewriting other sections.
 
     Older compiler variants already emit these anchors. The organized compiler
     originally emitted only a Markdown ``### Action Rules`` heading, so this
     migration keeps existing offline skills editable during online refinement.
+    Online text edits may change heading levels or remove the section entirely;
+    recover the region deterministically instead of failing at checkpoint time.
+    Partial, duplicate, or reversed anchors remain errors, not silent repairs.
     """
     if skill.count(_ACTION_RULES_START) == 1 and skill.count(_ACTION_RULES_END) == 1:
+        if skill.index(_ACTION_RULES_START) >= skill.index(_ACTION_RULES_END):
+            raise ValueError("ACTION_RULES markers are out of order")
         return skill
     if _ACTION_RULES_START in skill or _ACTION_RULES_END in skill:
         raise ValueError("skill has malformed ACTION_RULES anchors")
     match = re.search(
-        r"(?ms)^(### Action Rules\s*$\n)(.*?)(?=^## (?:Slot Discipline|Slot Policies|Reference)\s*$|\Z)",
+        r"(?mi)^(#{1,6})[ \t]+Action Rules[ \t]*(?:#+[ \t]*)?\r?$",
         skill,
     )
     if not match:
-        raise ValueError("skill does not contain an Action Rules section to migrate")
-    body = match.group(2).strip()
+        # Do not guess which unlabelled paragraphs are action rules. Create an
+        # explicit empty region; the caller supplies the accepted action rules.
+        boundary = re.search(
+            r"(?mi)^#{1,6}[ \t]+(?:Slot Discipline|Slot Policies|Reference)[ \t]*(?:#+[ \t]*)?\r?$",
+            skill,
+        )
+        insertion = boundary.start() if boundary else len(skill)
+        region = "### Action Rules\n" + _ACTION_RULES_START + "\n" + _ACTION_RULES_END + "\n\n"
+        prefix = skill[:insertion]
+        separator = "" if not prefix or prefix.endswith("\n\n") else "\n" if prefix.endswith("\n") else "\n\n"
+        return prefix + separator + region + skill[insertion:]
+    start = match.end()
+    if skill[start:start + 1] == "\n":
+        start += 1
+    # Action cards use level four. Even if the section title was promoted to
+    # level one/two, level-three workflow sections still delimit the region.
+    # Never absorb slot policies or reference text into editable action rules.
+    following = re.search(
+        rf"(?m)^#{{1,{max(3, len(match.group(1)))}}}[ \t]+", skill[start:],
+    )
+    end = start + following.start() if following else len(skill)
+    body = skill[start:end].strip()
     replacement = (
-        match.group(1)
+        skill[match.start():match.end()].rstrip("\r") + "\n"
         + _ACTION_RULES_START + "\n"
         + (body + "\n" if body else "")
-        + _ACTION_RULES_END + "\n"
+        + _ACTION_RULES_END + "\n\n"
     )
-    return skill[:match.start()] + replacement + skill[match.end():]
+    return skill[:match.start()] + replacement + skill[end:]
 
 
 def _routing_source_bounds(skill: str, source: str) -> tuple[int, int] | None:
@@ -1269,11 +1294,11 @@ def _upsert_action_rule(skill: str, action: str, content: str) -> str:
     heading = _action_heading(action)
     match = re.search(
         rf"^{re.escape(heading)}\s*$.*?(?=^####\s+`|{re.escape(_ACTION_RULES_END)})",
-        skill,
+        skill[start_marker:end_marker + len(_ACTION_RULES_END)],
         flags=re.MULTILINE | re.DOTALL,
     )
     if match:
-        return skill[:match.start()] + block + skill[match.end():]
+        return skill[:start_marker + match.start()] + block + skill[start_marker + match.end():]
 
     insertion = skill.index(_ACTION_RULES_END)
     prefix = "" if skill[insertion - 1:insertion] == "\n" else "\n"
