@@ -44,6 +44,12 @@ def _ids(value: str) -> list[str]:
     return ids
 
 
+def _execution_arms(args: argparse.Namespace) -> tuple[str, ...]:
+    """Keep the experiment arms fixed; skipping is a per-invocation choice."""
+    skipped = set(getattr(args, "skip_arms", ()))
+    return tuple(arm for arm in args.arms if arm not in skipped)
+
+
 def _subflows(args: argparse.Namespace) -> list[str]:
     index = _read(SPLITS / "INDEX.json")
     selected = (sorted(index) if args.all else
@@ -104,6 +110,9 @@ def _run_online(args: argparse.Namespace, subflow: str, arm: str,
 
 def _run_direct(args: argparse.Namespace, subflow: str, flow_dir: Path,
                 workflow_ids: list[str]) -> None:
+    execution_arms = _execution_arms(args)
+    if not any(arm in execution_arms for arm in ("schema_only", "offline_only", "full")):
+        return
     # Keep this import inside the worker, so --dry-run and --help need no ML deps.
     from awm import MemoryStore, WorkflowStore
     from eval_tod.abcd.agent import ABCDAgent
@@ -117,7 +126,7 @@ def _run_direct(args: argparse.Namespace, subflow: str, flow_dir: Path,
         test = test[:args.max_test]
     offline = flow_dir / "offline_artifact"
     offline_usage_path = offline / "mining_usage.json"
-    need_offline = any(arm in args.arms for arm in ("offline_only", "full"))
+    need_offline = any(arm in execution_arms for arm in ("offline_only", "full"))
     if need_offline and not (offline / "complete.json").is_file():
         offline.mkdir(parents=True, exist_ok=True)
         reset_usage()
@@ -134,7 +143,7 @@ def _run_direct(args: argparse.Namespace, subflow: str, flow_dir: Path,
         if meta.get("subflow") != subflow or meta.get("max_train") != args.max_train:
             raise RuntimeError(f"Cached offline artifact has a different training scope: {offline}")
 
-    for arm in args.arms:
+    for arm in execution_arms:
         if arm not in ("schema_only", "offline_only"):
             continue
         out = flow_dir / arm
@@ -181,14 +190,14 @@ def _run_flow(args: argparse.Namespace, subflow: str, workflow_ids: list[str]) -
     if workflow_ids:
         os.environ["SKILLMINING_WORKFLOW_ID"] = workflow_ids[0]
     _run_direct(args, subflow, flow_dir, workflow_ids)
-    for arm in args.arms:
+    for arm in _execution_arms(args):
         if arm not in ("online_only", "full"):
             continue
         result_path = flow_dir / arm / "online_refine_result.json"
         if args.resume and result_path.is_file():
             continue
         _run_online(args, subflow, arm, flow_dir, workflow_ids)
-    if "full" in args.arms:
+    if "full" in _execution_arms(args):
         # The online runner accounts for its own calls; add the shared offline
         # compilation budget once to the full arm, without altering its raw log.
         from scripts.llm_usage_utils import merge_usage_summaries, split_usage_summary
@@ -230,7 +239,10 @@ def _aggregate(args: argparse.Namespace, subflows: list[str]) -> None:
                if denom else None for key in ("joint_ast", "action", "slot")},
         }
     _json(root / "a2_aggregate.json", {"protocol": "ABCD independent coarse subflows",
-                                         "arms": list(args.arms), "rows": rows, "aggregate": aggregate})
+                                         "arms": list(args.arms),
+                                         "execution_arms": list(_execution_arms(args)),
+                                         "skipped_arms": list(getattr(args, "skip_arms", ())),
+                                         "rows": rows, "aggregate": aggregate})
 
 
 def main() -> int:
@@ -243,6 +255,9 @@ def main() -> int:
                         help="Comma-separated workflow IDs; parallel across subflows or online batches")
     parser.add_argument("--output-dir", default=f"outputs/a2_abcd_{datetime.now():%Y%m%d_%H%M%S}")
     parser.add_argument("--arms", default=",".join(ARMS), help="Comma-separated subset of A2 arms")
+    parser.add_argument("--skip-arms", default="",
+                        help="Comma-separated configured arms to skip for this invocation only; "
+                             "compatible with --resume without changing the experiment arms")
     parser.add_argument("--model", default="deepseek-chat", help="Base model (default: deepseek-chat)")
     parser.add_argument("--max-train", type=int)
     parser.add_argument("--max-test", type=int)
@@ -259,6 +274,11 @@ def main() -> int:
     args.arms = tuple(item.strip() for item in args.arms.split(",") if item.strip())
     if not args.arms or len(args.arms) != len(set(args.arms)) or any(arm not in ARMS for arm in args.arms):
         parser.error("--arms must be a unique comma-separated subset of " + ",".join(ARMS))
+    args.skip_arms = tuple(item.strip() for item in args.skip_arms.split(",") if item.strip())
+    if len(args.skip_arms) != len(set(args.skip_arms)) or any(arm not in args.arms for arm in args.skip_arms):
+        parser.error("--skip-arms must be a unique comma-separated subset of --arms")
+    if not _execution_arms(args):
+        parser.error("--skip-arms cannot skip every configured arm")
     for key in ("max_train", "max_test", "max_batches", "batch_size"):
         value = getattr(args, key)
         if value is not None and value <= 0:
@@ -280,6 +300,7 @@ def main() -> int:
     else:
         buckets = {",".join(workflow_ids): subflows}
     print(json.dumps({"output_dir": args.output_dir, "arms": args.arms,
+                      "execution_arms": _execution_arms(args), "skipped_arms": args.skip_arms,
                       "assignments": buckets}, ensure_ascii=False, indent=2), flush=True)
     if args.dry_run:
         return 0
@@ -306,6 +327,8 @@ def main() -> int:
                    "--subflow", name, "--workflow-ids", ids, "--output-dir", str(root),
                    "--arms", ",".join(args.arms), "--batch-size", str(args.batch_size),
                    "--refinement-mode", args.refinement_mode]
+            if args.skip_arms:
+                cmd += ["--skip-arms", ",".join(args.skip_arms)]
             if args.model:
                 cmd += ["--model", args.model]
             for key in ("max_train", "max_test", "max_batches"):
