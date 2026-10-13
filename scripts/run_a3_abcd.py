@@ -12,6 +12,8 @@ import math
 import multiprocessing as mp
 import os
 from pathlib import Path
+import random
+import statistics
 import subprocess
 import sys
 
@@ -20,8 +22,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from scripts.run_a2_abcd import _ids, _json, _read, _subflows
 
-ARMS = ("flat", "backbone_only", "backbone_residual")
-VERSION = "a3-shared-cards-v1"
+ARMS = ("flat", "full_graph_flat", "backbone_residual", "random_backbone")
+DEFAULT_RANDOM_SEEDS = (0, 1, 2)
+VERSION = "a3-shared-cards-v2"
 
 
 def _hash(value) -> str:
@@ -33,13 +36,59 @@ def _pairs(edges) -> dict[tuple[str, str], dict]:
     return {(str(edge["source"]), str(edge["target"])): dict(edge) for edge in edges}
 
 
-def build_variants(subflow: str, graph: dict, action_rules: str, slot_policies: str) -> dict:
+def _random_tree(subflow: str, graph: dict, selected: dict, seed: int) -> tuple[dict, dict]:
+    """Random-priority arborescence on true retained edges, NOT uniform sampling.
+
+    Keep the original artificial start-edge candidates. Do not introduce root
+    shortcuts to every action, synthesize business edges, or reroll seeds until
+    a tree changes. An unchanged tree is a valid, explicitly recorded outcome.
+    """
+    import networkx as nx
+
+    nodes = {str(node["id"]) for node in graph["nodes"]}
+    root = str(graph.get("backbone", {}).get("root", "<START>"))
+    original = _pairs(graph.get("backbone", {}).get("edges", []))
+    candidates = dict(selected)
+    candidates.update({pair: edge for pair, edge in original.items() if pair[0] == root and pair[1] in nodes})
+    rng = random.Random(int(_hash(f"{subflow}:random-backbone:{seed}"), 16))
+    network = nx.DiGraph()
+    network.add_nodes_from(sorted(nodes | {root}))
+    for source, target in sorted(candidates):
+        if source != target and target != root:
+            network.add_edge(source, target, weight=rng.random())
+    try:
+        tree = nx.maximum_spanning_arborescence(network, attr="weight")
+    except nx.NetworkXException as exc:
+        raise ValueError("Retained real edges and existing start edges cannot form a spanning arborescence") from exc
+    if tree.number_of_edges() != len(nodes) or tree.in_degree(root) != 0 or any(tree.in_degree(node) != 1 for node in nodes):
+        raise ValueError("Random backbone must span all action nodes and keep the original root")
+    order = []
+    queue = [root]
+    for source in queue:
+        children = sorted(tree.successors(source))
+        order.extend(children)
+        queue.extend(children)
+    sampled = set(tree.edges())
+    original_business = {pair for pair in original if pair[0] in nodes and pair[1] in nodes}
+    sampled_business = {pair for pair in sampled if pair[0] in nodes}
+    info = {"seed": seed, "algorithm": "random-priority maximum rooted arborescence",
+            "uniform_sampling": False, "changed": sampled != set(original),
+            "removed_original_tree_edges": len(set(original) - sampled),
+            "tree_edge_change_fraction": len(set(original) - sampled) / len(original) if original else 0.0,
+            "changed_business_tree_edges": len(original_business - sampled_business)}
+    backbone = {"root": root, "compilation_order": order,
+                "edges": [candidates[pair] for pair in sorted(sampled)]}
+    return ({**graph, "backbone": backbone} if info["changed"] else graph), info
+
+
+def build_variants(subflow: str, graph: dict, action_rules: str, slot_policies: str,
+                   random_seeds=DEFAULT_RANDOM_SEEDS, arms=ARMS) -> dict:
     """Project identical induced semantics, without additional LLM compilation.
 
     The flat control reuses the old unordered compiler's stable hash ordering.
     Every variant has the SAME per-action/slot resources. Only explicit graph
-    layout and transition-card availability/organization change. No raw dialogue
-    reference is exposed, since it would reintroduce removed residual routes.
+    layout and transition-card availability/organization change. No extra raw
+    dialogue reference is exposed in any arm.
     """
     from skill_mining.skill_writer import _render_backbone_tree, _stable_unordered
 
@@ -52,32 +101,41 @@ def build_variants(subflow: str, graph: dict, action_rules: str, slot_policies: 
         selected.update(_pairs(edges))
     # Artificial root edges organize the tree but are not dialogue transitions.
     selected = {pair: edge for pair, edge in selected.items() if pair[0] in nodes and pair[1] in nodes}
-    tree_pairs = set(tree) & set(selected)
+    observed = {pair: edge for pair, edge in _pairs(graph.get("edges", [])).items()
+                if pair[0] in nodes and pair[1] in nodes}
+    if "full_graph_flat" in arms and not set(selected) <= set(observed):
+        raise ValueError("Observed graph is missing retained transitions; cannot construct full_graph_flat")
     rules = {(str(source), str(rule["target"])): rule
              for source, rows in graph.get("transition_induction", {}).get("rules_by_source", {}).items()
              for rule in rows if rule.get("target")}
-    missing = set(selected) - set(rules)
+    required = set(observed) if "full_graph_flat" in arms else set(selected)
+    missing = required - set(rules)
     if missing:
-        raise ValueError(f"Shared artifact lacks induced transition cards: {sorted(missing)}")
+        raise ValueError(f"Shared artifact lacks induced transition cards: {sorted(missing)}; "
+                         "complete the common induction pool, not only the full-graph arm")
     if not action_rules.strip() or not slot_policies.strip():
         raise ValueError("Shared action and slot resources must be nonempty")
-    order = {str(node): index for index, node in enumerate(graph.get("backbone", {}).get("compilation_order", []))}
     labels = lambda pair: (str(nodes[pair[0]]["label"]), str(nodes[pair[1]]["label"]))
     shared = {
         "action_rules.md": action_rules, "slot_policies.md": slot_policies,
     }
     result = {}
-    for arm in ARMS:
-        active = selected if arm != "backbone_only" else {pair: selected[pair] for pair in tree_pairs}
+    jobs = [(arm, seed) for arm in arms for seed in (random_seeds if arm == "random_backbone" else (None,))]
+    for arm, seed in jobs:
+        layout_graph, random_info = (_random_tree(subflow, graph, selected, seed)
+                                     if arm == "random_backbone" else (graph, None))
+        layout_tree_pairs = set(_pairs(layout_graph["backbone"].get("edges", []))) & set(selected)
+        order = {str(node): index for index, node in enumerate(layout_graph["backbone"].get("compilation_order", []))}
+        active = observed if arm == "full_graph_flat" else selected
         pairs = list(active)
-        if arm == "flat":
+        if arm in {"flat", "full_graph_flat"}:
             pairs = _stable_unordered(pairs, subflow, lambda pair: f"{pair[0]}->{pair[1]}")
             node_order = _stable_unordered(list(nodes), subflow, lambda node: node)
             layout = "## Unordered Actions\n" + "\n".join(f"- `{nodes[node]['label']}`" for node in node_order)
             instruction = "Transition cards have no preferred order or main-path designation."
         else:
-            pairs.sort(key=lambda pair: (order.get(pair[0], 10**9), pair not in tree_pairs, pair))
-            layout = "## Backbone\n```text\n" + _render_backbone_tree(graph) + "\n```"
+            pairs.sort(key=lambda pair: (order.get(pair[0], 10**9), pair not in layout_tree_pairs, pair))
+            layout = "## Backbone\n```text\n" + _render_backbone_tree(layout_graph) + "\n```"
             instruction = "The backbone organizes observed behavior; it is not a mandatory execution constraint."
         skill = (f"# Skill: {subflow}\n\n{layout}\n\n{instruction}\n"
                  "Retrieve transition evidence when deciding the next action. Retrieve the shared "
@@ -87,14 +145,17 @@ def build_variants(subflow: str, graph: dict, action_rules: str, slot_policies: 
             source, target = labels(pair)
             rule = rules[pair]
             reference.extend([f"## {source} -> {target}", ""])
-            if arm != "flat":
-                reference.append("- Placement: " + ("backbone" if pair in tree_pairs else "residual"))
+            if arm not in {"flat", "full_graph_flat"}:
+                reference.append("- Placement: " + ("backbone" if pair in layout_tree_pairs else "residual"))
             reference.extend([f"- Induction status: {rule.get('status', 'underspecified')}",
                               "- Condition: " + (str(rule.get("condition") or "").strip()
                                                 or "Insufficient observable evidence to identify a unique trigger."), ""])
         resources = {**shared, "skill.md": skill, "reference.md": "\n".join(reference).rstrip() + "\n"}
-        result[arm] = {"resources": resources, "edges": list(active.values()),
-                       "tree_pairs": tree_pairs, "nodes": list(nodes), "root": root,
+        job = f"{arm}/seed_{seed}" if seed is not None else arm
+        result[job] = {"arm": arm, "seed": seed, "resources": resources, "edges": list(active.values()),
+                       "tree_pairs": layout_tree_pairs, "nodes": list(nodes), "root": root,
+                       "layout_backbone": layout_graph["backbone"] if arm not in {"flat", "full_graph_flat"} else None,
+                       "randomization": random_info,
                        "resource_hashes": {name: _hash(text) for name, text in resources.items()}}
     return result
 
@@ -158,7 +219,9 @@ def _prepare(args, subflow, train, flow_dir):
     if "transition_induction" not in graph:
         raise ValueError("Shared graph must contain transition_induction; graph-only outputs are insufficient")
     variants = build_variants(subflow, graph, (source / "action_rules.md").read_text(encoding="utf-8"),
-                              (source / "slot_policies.md").read_text(encoding="utf-8"))
+                              (source / "slot_policies.md").read_text(encoding="utf-8"),
+                              random_seeds=args.random_seeds,
+                              arms=tuple(arm for arm in args.arms if arm not in args.skip_arms))
     return source, variants, _read(source / "mining_usage.json")
 
 
@@ -179,17 +242,16 @@ def _run_flow(args, subflow, workflow_ids):
     if args.max_test is not None:
         test = test[:args.max_test]
     source, variants, mining_usage = _prepare(args, subflow, train, flow_dir)
-    for arm in args.arms:
-        if arm in args.skip_arms:
-            continue
-        variant = variants[arm]
-        output = flow_dir / arm
-        manifest = {"version": VERSION, "subflow": subflow, "arm": arm,
+    for job, variant in variants.items():
+        arm, seed = variant["arm"], variant["seed"]
+        output = flow_dir / job
+        manifest = {"version": VERSION, "subflow": subflow, "arm": arm, "seed": seed,
                     "source": str(source), "train_hash": _hash(train), "test_hash": _hash(test),
-                    "resource_hashes": variant["resource_hashes"]}
+                    "resource_hashes": variant["resource_hashes"], "randomization": variant["randomization"]}
         if args.resume and (output / "result.json").is_file():
             if _read(output / "manifest.json") != manifest:
                 raise ValueError(f"Completed arm has changed resources/data: {output}")
+            print(f"A3 {subflow}/{job}: completed result reused", flush=True)
             continue
         output.mkdir(parents=True, exist_ok=True)
         for name, text in variant["resources"].items():
@@ -198,6 +260,7 @@ def _run_flow(args, subflow, workflow_ids):
         metrics = graph_metrics(subflow, variant, test)
         _json(output / "graph_metrics.json", metrics)
         _json(output / "available_edges.json", variant["edges"])
+        _json(output / "layout_backbone.json", variant["layout_backbone"])
         workflow = WorkflowStore()
         workflow.update(variant["resources"]["skill.md"])
         agent = ABCDAgent(model=args.model, workflow=workflow, memory=MemoryStore(),
@@ -209,24 +272,31 @@ def _run_flow(args, subflow, workflow_ids):
                           action_selection_candidate_limit=args.action_selection_candidate_limit,
                           expose_scenario_labels=False, workflow_id=workflow_ids[0] if workflow_ids else None)
         reset_usage()
-        result = evaluate_agent_on_subflow(agent, test, arm, subflow, save_dir=output,
+        print(f"A3 {subflow}/{job}: frozen evaluation started ({len(test)} test dialogues)", flush=True)
+        label = f"{arm}_seed_{seed}" if seed is not None else arm
+        result = evaluate_agent_on_subflow(agent, test, label, subflow, save_dir=output,
                   skip_utterance_eval=args.skip_utterance_eval,
                   eval_workflow_ids=workflow_ids if len(workflow_ids) > 1 and "fork" in mp.get_all_start_methods() else None)
         workers = result.pop("_evaluation_worker_usage", [])
         testing = merge_usage_summaries(get_usage(), *workers)
-        result.update(subflow=subflow, arm=arm, graph_metrics=metrics,
+        result.update(subflow=subflow, arm=arm, seed=seed, randomization=variant["randomization"], graph_metrics=metrics,
                       llm_usage=split_usage_summary(mining_usage, testing),
                       resource_chars={name: len(text) for name, text in variant["resources"].items()},
                       protocol=VERSION, online_refinement=False)
         _json(output / "result.json", result)
+        print(f"A3 {subflow}/{job}: completed", flush=True)
 
 
 def _aggregate(args, subflows):
     rows, summary = [], {}
-    for arm in args.arms:
+    jobs = [(arm, seed) for arm in args.arms for seed in (args.random_seeds if arm == "random_backbone" else (None,))]
+    for arm, seed in jobs:
         group = []
         for subflow in subflows:
-            path = Path(args.output_dir) / subflow / arm / "result.json"
+            directory = Path(args.output_dir) / subflow / arm
+            if seed is not None:
+                directory = directory / f"seed_{seed}"
+            path = directory / "result.json"
             if path.is_file():
                 row = _read(path)
                 group.append(row)
@@ -256,7 +326,30 @@ def _aggregate(args, subflows):
         entry["runtime_tokens_per_action_turn"] = entry["runtime_tokens"] / denom if available and denom else None
         entry["runtime_calls"] = sum(bucket["calls"] for bucket in buckets) if group and all("calls" in bucket for bucket in buckets) else None
         entry["runtime_usage_sources"] = sorted({bucket.get("usage_source", "unavailable") for bucket in buckets})
-        summary[arm] = entry
+        if seed is None:
+            summary[arm] = entry
+        else:
+            entry["seed"] = seed
+            infos = [row.get("randomization") or {} for row in group]
+            entry["changed_tree_subflows"] = sum(bool(info.get("changed")) for info in infos)
+            entry["mean_tree_edge_change_fraction"] = sum(info.get("tree_edge_change_fraction", 0) for info in infos) / len(infos) if infos else None
+            summary.setdefault(arm, {"per_seed": {}})["per_seed"][str(seed)] = entry
+    if "random_backbone" in summary:
+        random_summary = summary["random_backbone"]
+        entries = list(random_summary["per_seed"].values())
+        complete = all(entry["complete"] for entry in entries)
+        random_summary.update(complete=complete, expected_seeds=len(entries),
+                              completed_seeds=sum(entry["complete"] for entry in entries),
+                              reduction="Mean of independently action-turn-weighted seed results; no pooled duplicate turns")
+        for key in ("joint_ast", "action", "slot", "transition_coverage", "complete_route_rate", "action_coverage",
+                    "total_edges", "mean_edges", "total_nodes", "runtime_tokens", "runtime_tokens_per_action_turn",
+                    "runtime_calls", "mean_tree_edge_change_fraction"):
+            values = [entry[key] for entry in entries]
+            available = complete and all(value is not None for value in values)
+            random_summary[key] = statistics.mean(values) if available else None
+            random_summary[key + "_std"] = statistics.stdev(values) if available and len(values) > 1 else None
+        random_summary["action_turns_per_seed"] = entries[0]["action_turns"] if complete else None
+        random_summary["total_testing_tokens_all_seeds"] = sum(entry["runtime_tokens"] for entry in entries) if complete and all(entry["runtime_tokens_available"] for entry in entries) else None
     _json(Path(args.output_dir) / "a3_aggregate.json", {"protocol": VERSION, "arms": list(args.arms),
           "skipped_arms": list(args.skip_arms), "rows": rows, "aggregate": summary})
 
@@ -272,6 +365,8 @@ def main():
     parser.add_argument("--workflow-ids", default=os.environ.get("SKILLMINING_WORKFLOW_ID", ""))
     parser.add_argument("--arms", default=",".join(ARMS))
     parser.add_argument("--skip-arms", default="")
+    parser.add_argument("--random-seeds", default=",".join(map(str, DEFAULT_RANDOM_SEEDS)),
+                        help="Fixed integer seeds for random_backbone, evaluated and aggregated separately")
     parser.add_argument("--model", default="deepseek-chat")
     parser.add_argument("--max-train", type=int)
     parser.add_argument("--max-test", type=int)
@@ -287,6 +382,12 @@ def main():
     args.output_dir = str(Path(args.output_dir).resolve())
     if args.offline_root:
         args.offline_root = str(Path(args.offline_root).resolve())
+    try:
+        args.random_seeds = tuple(int(item.strip()) for item in args.random_seeds.split(","))
+    except ValueError:
+        parser.error("--random-seeds must be comma-separated integers")
+    if not args.random_seeds or len(args.random_seeds) != len(set(args.random_seeds)):
+        parser.error("--random-seeds must be nonempty and unique")
     for key in ("arms", "skip_arms"):
         values = tuple(item.strip() for item in getattr(args, key).split(",") if item.strip())
         if len(values) != len(set(values)) or any(item not in ARMS for item in values):
@@ -306,6 +407,8 @@ def main():
     buckets = {wid: subflows[index::len(ids)] for index, wid in enumerate(ids)} if len(ids) > 1 and len(subflows) > 1 else {",".join(ids): subflows}
     buckets = {wid: names for wid, names in buckets.items() if names}
     print(json.dumps({"output_dir": args.output_dir, "arms": args.arms, "skip_arms": args.skip_arms,
+                      "random_seeds": args.random_seeds,
+                      "evaluations_per_subflow": sum(len(args.random_seeds) if arm == "random_backbone" else 1 for arm in args.arms if arm not in args.skip_arms),
                       "assignments": buckets, "online_refinement": False}, indent=2), flush=True)
     if args.dry_run:
         return 0
@@ -313,7 +416,7 @@ def main():
     config = root / "a3_config.json"
     settings = {key: value for key, value in vars(args).items()
                 if key not in {"resume", "dry_run", "skip_arms", "workflow_ids", "worker_subflow"}}
-    settings.update(arms=list(args.arms), version=VERSION, selected_subflows=subflows)
+    settings.update(arms=list(args.arms), random_seeds=list(args.random_seeds), version=VERSION, selected_subflows=subflows)
     if root.exists() and any(root.iterdir()) and not args.resume:
         parser.error("Output directory is nonempty; use --resume or a fresh directory")
     if args.resume and root.exists() and any(root.iterdir()) and not config.is_file():
@@ -329,7 +432,7 @@ def main():
         for name in names:
             command = [sys.executable, str(Path(__file__).resolve()), "--subflow", name,
                        "--worker-subflow", name, "--output-dir", str(root), "--workflow-ids", wids,
-                       "--arms", ",".join(args.arms)]
+                       "--arms", ",".join(args.arms), "--random-seeds", ",".join(map(str, args.random_seeds))]
             for key in ("model", "offline_root", "max_train", "max_test", "workflow_max_chars", "reference_top_k",
                         "reference_max_chars", "action_selection_candidate_limit"):
                 value = getattr(args, key)
