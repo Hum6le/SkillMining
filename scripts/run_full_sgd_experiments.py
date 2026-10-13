@@ -43,6 +43,8 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument("--awm-workflow-max-chars", type=int, default=8000)
     parser.add_argument("--awm-exemplar-max-chars", type=int, default=3000)
     parser.add_argument("--workers", type=int, default=1)
+    parser.add_argument("--parallelism", choices=("within-domain", "across-domains"), default="within-domain",
+                        help="Default: serial domains with parallel cases; across-domains retains the old scheduling")
     parser.add_argument("--workflow-ids", default="", help="Comma-separated API workflow IDs, one per worker")
     parser.add_argument("--stop-on-error", action="store_true")
     parser.add_argument("--dry-run", action="store_true", help="Write a load plan without model calls")
@@ -68,6 +70,7 @@ def _aggregate(run_root: Path, tasks: list[dict]) -> dict:
     grouped: dict[str, Counter] = {}
     usage_groups = {}
     missing_usage = []
+    incomplete_accounting = []
     incomplete_usage = []
     completed = []
     case_errors = []
@@ -105,6 +108,8 @@ def _aggregate(run_root: Path, tasks: list[dict]) -> dict:
             missing_usage.append({"method": task["method"], "domain": task["domain"],
                                   "reason": "legacy_or_missing_phase_accounting"})
         if usage is not None:
+            if usage.get("accounting_complete") is False:
+                incomplete_accounting.append({**task, "incomplete_phases": usage.get("incomplete_phases", [])})
             usage_groups.setdefault(task["method"], []).append(usage)
         completed.append({"method": task["method"], "domain": task["domain"],
                           "turns": summary["counts"].get("turns", 0)})
@@ -114,6 +119,7 @@ def _aggregate(run_root: Path, tasks: list[dict]) -> dict:
         def merged_phase(key):
             return merge_usage_summaries({"total": {}}, *(item.get(key, {}) for item in snapshots))
         result["llm_usage"] = {key: merged_phase(key) for key in ("generation", "testing", "total")}
+        result["llm_usage"]["accounting_complete"] = all(item.get("accounting_complete", True) for item in snapshots)
         phases = {phase for item in snapshots for phase in item.get("by_phase", {})}
         result["llm_usage"]["by_phase"] = {
             phase: merge_usage_summaries({"total": {}}, *(item.get("by_phase", {}).get(phase, {}) for item in snapshots))
@@ -131,6 +137,7 @@ def _aggregate(run_root: Path, tasks: list[dict]) -> dict:
         "methods": methods,
         "usage_missing_or_legacy": missing_usage,
         "incomplete_task_usage": incomplete_usage,
+        "incomplete_worker_accounting": incomplete_accounting,
         "run_total_usage": merge_usage_summaries(
             {"total": {}}, *(result["llm_usage"]["total"] for result in methods.values()),
             *(item["llm_usage"].get("total", {}) for item in incomplete_usage)),
@@ -155,6 +162,8 @@ def _domain_command(args, task: dict, output: Path) -> list[str]:
                "--archive", str(args.archive.resolve()), "--output-dir", str(output), "--model", args.model]
     if args.max_dialogues is not None:
         command += ["--max-dialogues", str(args.max_dialogues)]
+    if args.parallelism == "within-domain":
+        command += ["--workers", str(args.workers), "--workflow-ids", args.workflow_ids]
     if task["method"] == "awm":
         for key in ("awm_batch_size", "awm_workflow_max_chars", "awm_exemplar_max_chars", "awm_max_train", "awm_max_batches"):
             value = getattr(args, key)
@@ -208,21 +217,26 @@ def main() -> None:
             for split in sorted({"train", args.split})
         }
     ids = [part.strip() for part in args.workflow_ids.split(",") if part.strip()]
+    if len(ids) != len(set(ids)):
+        raise SystemExit("Workflow IDs must be unique")
     if ids and args.workers != 1 and args.workers != len(ids):
         raise SystemExit("--workers must equal the number of --workflow-ids")
     worker_count = len(ids) if ids else args.workers
+    args.workers = worker_count
     run_root = (args.resume_run or args.output_dir or
                 ROOT / "outputs" / f"full_sgd_{datetime.now():%Y-%m-%d_%H-%M-%S}").resolve()
     if not args.resume_run and run_root.exists() and any(run_root.iterdir()):
         raise SystemExit("Output directory is nonempty; use a new directory or --resume-run")
     run_root.mkdir(parents=True, exist_ok=True)
-    assignments: list[list[dict]] = [[] for _ in range(worker_count)]
-    loads = [0] * worker_count
+    coordinator_workers = 1 if args.parallelism == "within-domain" else worker_count
+    assignments: list[list[dict]] = [[] for _ in range(coordinator_workers)]
+    loads = [0] * coordinator_workers
     for task in sorted(tasks, key=lambda item: item["estimated_policy_turns"], reverse=True):
-        worker = min(range(worker_count), key=lambda index: loads[index])
+        worker = min(range(coordinator_workers), key=lambda index: loads[index])
         assignments[worker].append(task)
         loads[worker] += task["estimated_policy_turns"]
     plan = {
+        "parallelism": args.parallelism, "case_workers": worker_count if args.parallelism == "within-domain" else 1,
         "run_root": str(run_root), "split": args.split, "model": args.model,
         "max_dialogues": args.max_dialogues, "tasks": tasks,
         "awm": {
@@ -237,6 +251,7 @@ def main() -> None:
         "archive": str(args.archive.resolve()), "splits_dir": str(args.splits_dir.resolve()),
         "workers": [
             {"worker": index, "workflow_id": ids[index] if ids else None,
+             "case_workflow_ids": ids if args.parallelism == "within-domain" else [],
              "estimated_policy_turns": loads[index], "tasks": assigned}
             for index, assigned in enumerate(assignments)
         ],
@@ -247,12 +262,16 @@ def main() -> None:
     plan_path = run_root / "workflow_load_plan.json"
     if args.resume_run and plan_path.is_file():
         previous = json.loads(plan_path.read_text(encoding="utf-8"))
-        for key in ("split", "model", "max_dialogues", "tasks", "workers", "awm", "ours", "archive", "splits_dir"):
+        for key in ("split", "model", "max_dialogues", "awm", "ours", "archive", "splits_dir"):
             if previous.get(key) != plan[key]:
                 raise SystemExit(f"Resume configuration differs for {key}; use the original settings or a new output directory")
+        strip_commands = lambda rows: [{k: v for k, v in row.items() if k != "command"} for row in rows]
+        if strip_commands(previous.get("tasks", [])) != strip_commands(plan["tasks"]):
+            raise SystemExit("Resume task/data configuration differs; use original settings or a new output directory")
     else:
         plan_path.write_text(json.dumps(plan, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(f"SGD run: {run_root} | split={args.split} | domains={len(domains)} | tasks={len(tasks)} | workers={worker_count}", flush=True)
+    (run_root / "execution_plan.json").write_text(json.dumps(plan, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"SGD run: {run_root} | split={args.split} | domains={len(domains)} | tasks={len(tasks)} | parallelism={args.parallelism} | workers={worker_count}", flush=True)
     if args.dry_run:
         print(f"Dry run: {run_root / 'workflow_load_plan.json'}", flush=True)
         return
@@ -273,9 +292,13 @@ def main() -> None:
             env["PYTHONUNBUFFERED"] = "1"
             (output / "invocation.json").write_text(json.dumps({"command": command,
                 "workflow_id": env.get("SKILLMINING_WORKFLOW_ID"),
+                "parallelism": args.parallelism,
+                "case_workflow_ids": ids if args.parallelism == "within-domain" else [],
                 "isolation": "one standalone process per domain"}, indent=2) + "\n", encoding="utf-8")
             print(f"START {task['method']}/{task['domain']} worker={worker_index}", flush=True)
-            with (output / "run.log").open("w", encoding="utf-8") as log:
+            with (output / "run.log").open("a", encoding="utf-8") as log:
+                log.write(f"\nRUN {datetime.now().isoformat()} COMMAND: {subprocess.list2cmdline(command)}\n")
+                log.flush()
                 result = subprocess.run(command, cwd=ROOT, env=env, stdout=log,
                                         stderr=subprocess.STDOUT, check=False)
             if result.returncode:
@@ -287,8 +310,11 @@ def main() -> None:
                 print(f"DONE {task['method']}/{task['domain']}", flush=True)
         return failures
 
-    with ThreadPoolExecutor(max_workers=worker_count) as pool:
-        results = list(pool.map(work, range(worker_count)))
+    if coordinator_workers == 1:
+        results = [work(0)]
+    else:
+        with ThreadPoolExecutor(max_workers=coordinator_workers) as pool:
+            results = list(pool.map(work, range(coordinator_workers)))
     failures = [item for group in results for item in group]
     aggregate = _aggregate(run_root, tasks)
     print(f"Aggregate: {run_root / 'aggregate.json'}", flush=True)
