@@ -1102,6 +1102,10 @@ def main() -> None:
         _write(out_dir / "base_skill.md", base_skill)
         working_skill = base_skill
         _write(out_dir / "base_reference.md", base_reference)
+        # Immutable K0 resource snapshots for A4 lineage checks. Never create
+        # these from evolving files during a legacy resume.
+        _write(out_dir / "base_action_rules.md", action_rules)
+        _write(out_dir / "base_slot_policies.md", slot_policies)
         _write(out_dir / "action_rules.md", action_rules)
         _write(out_dir / "slot_policies.md", slot_policies)
         working_skill = _checkpoint(
