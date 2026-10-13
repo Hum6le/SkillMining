@@ -1690,6 +1690,7 @@ class ABCDAgent(AbstractTodAgent):
         eval_results: list[dict],
         turn_results: list[dict] | None = None,
         offline_demonstrations: bool = False,
+        resource_context: str | None = None,
     ) -> str:
         """Induce workflow patterns with LLM-managed update.
 
@@ -1809,6 +1810,12 @@ class ABCDAgent(AbstractTodAgent):
             + "\n".join(lines if offline_demonstrations else lines[:60])
             + "\n\n## Existing Workflow\n"
             + existing
+            + ("\n\n## Read-only Offline Resources\n"
+               "These resources are available to the shared inference runtime. "
+               "Use them as prior knowledge when updating workflow patterns; "
+               "this induction call does not itself execute retrieval tools. "
+               "Do not copy this resource dump or literal example values into the updated workflow.\n"
+               + resource_context if resource_context else "")
             + "\n\n" + output_heading
             + output_instruction
             + (

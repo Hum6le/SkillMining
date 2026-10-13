@@ -494,29 +494,19 @@ def _build_agent(args, working_skill: str, base_reference: str, action_rules: st
                  slot_policies: str, state: dict, response_logger=None,
                  workflow_id: str | None = None) -> ABCDAgent:
     _, online_reference = render_online_resources(state)
+    from scripts.abcd_runtime_utils import build_abcd_runtime_agent
     workflow = WorkflowStore()
     workflow.update(working_skill)
-    return ABCDAgent(
-        model=args.model,
+    return build_abcd_runtime_agent(
+        args,
         workflow=workflow,
         # Keep the full evolving skill visible to the runtime. Trace2Skill's
         # agent uses the same unbounded workflow prompt; the ABCDAgent default
         # of 8000 chars would silently truncate later online additions.
-        workflow_max_chars=None,
-        memory=MemoryStore(),
         reference_text=base_reference.rstrip() + "\n\n" + online_reference,
         action_rules_text=action_rules.rstrip() + "\n\n" + render_online_action_rules(state),
         slot_policies_text=slot_policies.rstrip() + "\n\n" + render_online_slot_policies(state),
         response_logger=response_logger,
-        reference_top_k=args.reference_top_k,
-        reference_max_chars=args.reference_max_chars,
-        competitive_action_cards=not getattr(
-            args, "disable_competitive_action_cards", False,
-        ),
-        action_selection_candidate_limit=getattr(
-            args, "action_selection_candidate_limit", 3,
-        ),
-        expose_scenario_labels=False,
         workflow_id=workflow_id,
     )
 
@@ -831,6 +821,7 @@ def _run_refinement_pass(
 
 
 def main() -> None:
+    from scripts.abcd_runtime_utils import RUNTIME_DEFAULTS
     parser = argparse.ArgumentParser(description="Evidence-calibrated online refinement for a backbone skill")
     parser.add_argument("--subflow", required=True, help="One existing ABCD split directory")
     parser.add_argument("--output-dir", required=True, help="Run directory; also used by --resume")
@@ -866,14 +857,14 @@ def main() -> None:
         "--skip-utterance-eval", action="store_true",
         help="Final held-out evaluation only predicts/evaluates action turns; text metrics are left empty.",
     )
-    parser.add_argument("--reference-top-k", type=int, default=3)
-    parser.add_argument("--reference-max-chars", type=int, default=1800)
+    parser.add_argument("--reference-top-k", type=int, default=RUNTIME_DEFAULTS["reference_top_k"])
+    parser.add_argument("--reference-max-chars", type=int, default=RUNTIME_DEFAULTS["reference_max_chars"])
     parser.add_argument(
         "--disable-competitive-action-cards", action="store_true",
         help="Ablation: hide candidate Action Cards during stage-1 action selection",
     )
     parser.add_argument(
-        "--action-selection-candidate-limit", type=int, default=3,
+        "--action-selection-candidate-limit", type=int, default=RUNTIME_DEFAULTS["action_selection_candidate_limit"],
         help="Maximum candidate Action Cards compared before action selection (default: 3)",
     )
     parser.add_argument("--min-gold-support", type=int, default=3)
@@ -1620,6 +1611,8 @@ def main() -> None:
         skip_utterance_eval=args.skip_utterance_eval,
     )
     log.info("Held-out evaluation merged successfully; writing final result artifacts")
+    from scripts.abcd_runtime_utils import abcd_runtime_options
+    result["runtime_protocol"] = abcd_runtime_options(args)
     # Parallel evaluation runs in forked processes. Merge their isolated
     # usage snapshots with the parent process' mining/refinement usage.
     worker_usage = result.pop("_evaluation_worker_usage", [])
