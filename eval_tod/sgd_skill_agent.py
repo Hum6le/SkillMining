@@ -19,6 +19,7 @@ from typing import Callable
 from eval_tod.sgd_adapter import action_counter, gold_policy, score_policies, visible_context
 from eval_tod.sgd_llm import sgd_chat_with_retry
 from eval_tod.sgd_errors import record_error
+from eval_tod.sgd_parallel import ordered_cases, require_value
 from eval_tod.sgd_usage import set_phase
 
 ROOT = "<START>"
@@ -89,6 +90,8 @@ class SGDSkillAgent:
         self.graph: dict = {}
         self.resources: dict = {"action_rules": {}, "slot_policies": {}, "transition_guards": {}}
         self.ledger: list[dict] = []
+        self.parallel_workers = 1
+        self.workflow_ids = []
 
     def mine(self, dialogues: list[dict], directory: Path, *, cases_per_node: int = 3,
              compile_batch_size: int = 8) -> None:
@@ -144,6 +147,7 @@ class SGDSkillAgent:
         self.save(directory)
         nodes = self.graph["nodes"]
         groups = [nodes[start:start + compile_batch_size] for start in range(0, len(nodes), compile_batch_size)]
+        compile_requests = []
         while groups:
             group = groups.pop(0)
             ids = {node["id"] for node in group}
@@ -174,10 +178,16 @@ class SGDSkillAgent:
                 "Only use listed node/edge IDs; unsupported distinctions should remain uncertain.\n"
                 + encoded
             )
+            compile_requests.append((ids, edges, prompt))
+        def compile_case(item):
+            return _json_object(sgd_chat_with_retry(item[2], model=self.model, temperature=0,
+                                                    call_tag="sgd_ours_offline_compile"))
+        compiled = ordered_cases(compile_case, compile_requests, workers=self.parallel_workers,
+            workflow_ids=self.workflow_ids, directory=directory, phase="offline_compile")
+        for outcome, (ids, edges, prompt) in zip(compiled, compile_requests):
             before_resources, before_ledger = copy.deepcopy(self.resources), copy.deepcopy(self.ledger)
             try:
-                raw = sgd_chat_with_retry(prompt, model=self.model, temperature=0, call_tag="sgd_ours_offline_compile")
-                payload = _json_object(raw)
+                payload = require_value(outcome)
                 allowed = {"action_rules": ids, "slot_policies": ids,
                            "transition_guards": {self.edge_key(edge) for edge in edges}}
                 self.apply_updates(payload.get("updates", []), phase="offline_compile", allowed=allowed)

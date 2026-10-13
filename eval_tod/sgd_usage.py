@@ -19,11 +19,13 @@ _NUMERIC = ("calls", "successful_calls", "failed_calls", "calls_with_usage",
 _PHASE = ContextVar("sgd_usage_phase", default="testing")
 _PHASE_SUMMARIES: dict[str, dict] = {}
 _DIRECTORY: Path | None = None
+_INCOMPLETE_PHASES: set[str] = set()
 
 
 def configure_usage(directory: Path) -> None:
     global _DIRECTORY
     _PHASE_SUMMARIES.clear()
+    _INCOMPLETE_PHASES.clear()
     _DIRECTORY = directory
     directory.mkdir(parents=True, exist_ok=True)
     if os.getenv("SKILLMINING_LLM_USAGE_FILE"):
@@ -33,6 +35,7 @@ def configure_usage(directory: Path) -> None:
     existing = directory / "llm_usage.json"
     if existing.is_file():
         previous = json.loads(existing.read_text(encoding="utf-8"))
+        _INCOMPLETE_PHASES.update(previous.get("incomplete_phases", []))
         _PHASE_SUMMARIES.update(previous.get("by_phase", {}))
         if not _PHASE_SUMMARIES and previous.get("total"):
             value = previous["total"]
@@ -43,6 +46,25 @@ def configure_usage(directory: Path) -> None:
 
 def set_phase(phase: str) -> None:
     _PHASE.set(phase)
+
+
+def reset_case_usage() -> None:
+    """Child-only reset: native deltas still measure each individual call."""
+    _PHASE_SUMMARIES.clear()
+    _INCOMPLETE_PHASES.clear()
+
+
+def merge_worker_usage(payload: dict) -> None:
+    for phase, snapshot in payload.get("by_phase", {}).items():
+        _PHASE_SUMMARIES[phase] = merge_usage_summaries(
+            _PHASE_SUMMARIES.get(phase, {"total": {}}), snapshot)
+    _INCOMPLETE_PHASES.update(payload.get("incomplete_phases", []))
+    persist_usage()
+
+
+def mark_incomplete_usage(phase: str) -> None:
+    _INCOMPLETE_PHASES.add(phase)
+    persist_usage()
 
 
 def native_snapshot() -> dict:
@@ -106,6 +128,8 @@ def usage_payload() -> dict:
         "generation": generation, "testing": testing,
         "total": merge_usage_summaries({"total": {}}, *_PHASE_SUMMARIES.values()),
         "by_phase": dict(sorted(_PHASE_SUMMARIES.items())),
+        "incomplete_phases": sorted(_INCOMPLETE_PHASES),
+        "accounting_complete": not _INCOMPLETE_PHASES,
     }
 
 

@@ -18,6 +18,7 @@ from eval_tod.sgd_llm import sgd_chat_with_retry
 from eval_tod.sgd_skill_agent import SGDSkillAgent, policy_token, previous_node, _json_object
 from eval_tod.sgd_usage import set_phase
 from eval_tod.sgd_errors import record_error, error_summary
+from eval_tod.sgd_parallel import ordered_cases, require_value, diagnostics_directory
 from skill_mining.online_refinement import (
     initialize_skill_dag, build_post_rollout_batches, group_batch_reports,
     diagnose_rollout_batch, reflect_batch_report_group,
@@ -288,7 +289,7 @@ class SGDStandardSkillAgent(SGDSkillAgent):
                 log.warning("SGD %s validation failed: dialogue=%s turn=%s attempt=%s reason=%s",
                             stage, dialogue["dialogue_id"], turn_index, attempt, exc)
                 if self.runtime_diagnostics_dir is not None:
-                    directory = Path(self.runtime_diagnostics_dir)
+                    directory = Path(diagnostics_directory(self.runtime_diagnostics_dir))
                     directory.mkdir(parents=True, exist_ok=True)
                     with (directory / f"{stage}_failures.jsonl").open("a", encoding="utf-8") as stream:
                         stream.write(json.dumps(failure, ensure_ascii=False) + "\n")
@@ -322,9 +323,12 @@ class SGDStandardSkillAgent(SGDSkillAgent):
         records = []
         set_phase("train_rollout")
         with (directory / "ours_training_turns.jsonl").open("w", encoding="utf-8") as stream:
-            for dialogue, index in samples:
+            predictions = ordered_cases(lambda item: self.predict(*item), samples,
+                workers=self.parallel_workers, workflow_ids=self.workflow_ids,
+                directory=directory, phase="train_rollout")
+            for outcome, (dialogue, index) in zip(predictions, samples):
                 try:
-                    prediction, diagnostic = self.predict(dialogue, index)
+                    prediction, diagnostic = require_value(outcome)
                     gold = gold_policy(dialogue, index)
                     scores = score_policies([gold], [prediction])
                     action_ok = bool(scores["action_set_exact"])
@@ -359,12 +363,18 @@ class SGDStandardSkillAgent(SGDSkillAgent):
         self.save(directory)
         reports = []
         set_phase("online_diagnosis")
-        for batch_index, batch in enumerate(build_post_rollout_batches(records, max_batch_size=analysis_batch_size), 1):
+        batches = list(enumerate(build_post_rollout_batches(records, max_batch_size=analysis_batch_size), 1))
+        def diagnose(item):
+            batch_index, batch = item
+            return diagnose_rollout_batch(str(batch_index), batch, self.state, self.working_skill,
+                self.model, reference=self.base_reference, action_rules=self.base_action_rules,
+                slot_policies=self.base_slot_policies, record_projector=self._project_record,
+                prompt_template=DIAGNOSIS_PROMPT, chat_fn=self._chat)
+        diagnoses = ordered_cases(diagnose, batches, workers=self.parallel_workers,
+            workflow_ids=self.workflow_ids, directory=directory, phase="online_diagnosis")
+        for outcome, (batch_index, batch) in zip(diagnoses, batches):
             try:
-                report = diagnose_rollout_batch(str(batch_index), batch, self.state, self.working_skill,
-                    self.model, reference=self.base_reference, action_rules=self.base_action_rules,
-                    slot_policies=self.base_slot_policies, record_projector=self._project_record,
-                    prompt_template=DIAGNOSIS_PROMPT, chat_fn=self._chat)
+                report = require_value(outcome)
                 self._write(directory / f"diagnosis_{batch_index:04d}.json", report)
                 if report["status"] == "error":
                     raise RuntimeError(f"SGD diagnosis failed: {report['error']}")
@@ -377,6 +387,11 @@ class SGDStandardSkillAgent(SGDSkillAgent):
         applied_ids = set(self.state.get("applied_skill_operation_ids", []))
         set_phase("online_reflection")
         for group_index, group in enumerate(groups, 1):
+            # Reflection groups consume earlier writes, so only independent
+            # rollout/diagnosis cases run in parallel.
+            if self.workflow_ids:
+                import os
+                os.environ["SKILLMINING_WORKFLOW_ID"] = self.workflow_ids[(group_index - 1) % len(self.workflow_ids)]
             before = (copy.deepcopy(self.state), self.working_skill, copy.deepcopy(self.ledger), set(applied_ids))
             try:
                 reflection = reflect_batch_report_group(group, self.state, self.working_skill,

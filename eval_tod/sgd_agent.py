@@ -11,6 +11,7 @@ from eval_tod.sgd_adapter import gold_policy, score_policies, visible_context
 from eval_tod.sgd_llm import sgd_chat_with_retry
 from eval_tod.sgd_usage import set_phase
 from eval_tod.sgd_errors import record_error
+from eval_tod.sgd_parallel import ordered_cases, require_value
 
 
 class SGDAWMAgent:
@@ -32,6 +33,8 @@ class SGDAWMAgent:
         self.memory = MemoryStore()
         self.workflow_max_chars = workflow_max_chars
         self.exemplar_max_chars = exemplar_max_chars
+        self.parallel_workers = 1
+        self.workflow_ids = []
 
     def predict(self, dialogue: dict, turn_index: int) -> tuple[dict, dict]:
         context = visible_context(dialogue, turn_index)
@@ -72,23 +75,28 @@ class SGDAWMAgent:
         set_phase("train_rollout")
         successful = []
         gold_rows, pred_rows = [], []
-        for dialogue in dialogues:
-            rows = []
-            for turn_index in dialogue["target_indices"]["policy_turn_indices"]:
-                try:
-                    prediction, _ = self.predict(dialogue, turn_index)
-                except Exception as exc:
-                    record_error(trace_path.parent if trace_path else None, "train_rollout", exc,
-                                 dialogue_id=dialogue["dialogue_id"], turn_index=turn_index, batch_index=batch_index)
-                    gold_rows.append(gold_policy(dialogue, turn_index))
-                    pred_rows.append({"call": None, "acts": [], "_execution_error": True})
-                    continue
+        cases = [(d, i) for d in dialogues for i in d["target_indices"]["policy_turn_indices"]]
+        predictions = ordered_cases(lambda case: self.predict(*case), cases,
+            workers=self.parallel_workers, workflow_ids=self.workflow_ids,
+            directory=trace_path.parent if trace_path else Path("outputs/sgd_awm_parallel"), phase="train_rollout")
+        rows_by_dialogue = {d["dialogue_id"]: [] for d in dialogues}
+        for outcome, (dialogue, turn_index) in zip(predictions, cases):
+            try:
+                prediction, _ = require_value(outcome)
                 row = self._trajectory_row(dialogue, turn_index, prediction)
-                rows.append(row)
-                gold_rows.append(row["gold"])
-                pred_rows.append(prediction)
-                if row["joint_correct"]:
-                    successful.append((dialogue, row))
+            except Exception as exc:
+                record_error(trace_path.parent if trace_path else None, "train_rollout", exc,
+                             dialogue_id=dialogue["dialogue_id"], turn_index=turn_index, batch_index=batch_index)
+                gold_rows.append(gold_policy(dialogue, turn_index))
+                pred_rows.append({"call": None, "acts": [], "_execution_error": True})
+                continue
+            rows_by_dialogue[dialogue["dialogue_id"]].append(row)
+            gold_rows.append(row["gold"])
+            pred_rows.append(prediction)
+            if row["joint_correct"]:
+                successful.append((dialogue, row))
+        for dialogue in dialogues:
+            rows = rows_by_dialogue[dialogue["dialogue_id"]]
             if rows:
                 examples.append({
                     "dialogue_id": dialogue["dialogue_id"],

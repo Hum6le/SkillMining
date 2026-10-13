@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -27,6 +28,7 @@ from eval_tod.sgd_adapter import (
 )
 from eval_tod.sgd_llm import sgd_chat_with_retry
 from eval_tod.sgd_errors import record_error, error_summary
+from eval_tod.sgd_parallel import ordered_cases, require_value
 from eval_tod.sgd_usage import configure_usage, persist_usage, set_phase
 
 
@@ -205,6 +207,14 @@ def run_domain(args: argparse.Namespace) -> dict:
         raise FileExistsError("Completed summary already exists; use a new --output-dir or full-run --resume-run")
     args.output_dir.mkdir(parents=True, exist_ok=True)
     configure_usage(args.output_dir)
+    workflow_ids = [item.strip() for item in getattr(args, "workflow_ids", "").split(",") if item.strip()]
+    workers = len(workflow_ids) if workflow_ids else getattr(args, "workers", 1)
+    if workers > 1:
+        import multiprocessing as mp
+        if "fork" not in mp.get_all_start_methods():
+            raise RuntimeError("SGD within-domain workers require Linux/fork; use --workers 1 on this platform")
+    if workflow_ids:
+        os.environ["SKILLMINING_WORKFLOW_ID"] = workflow_ids[0]
     if args.method != "oracle":
         from llm import resolve_config
         resolve_config(model=args.model)
@@ -224,6 +234,7 @@ def run_domain(args: argparse.Namespace) -> dict:
             workflow_max_chars=args.awm_workflow_max_chars,
             exemplar_max_chars=args.awm_exemplar_max_chars,
         )
+        awm_agent.parallel_workers, awm_agent.workflow_ids = workers, workflow_ids
         if args.awm_resource_dir:
             awm_agent.load(args.awm_resource_dir)
         else:
@@ -276,6 +287,7 @@ def run_domain(args: argparse.Namespace) -> dict:
         )
         if args.ours_refinement_mode == "standard":
             skill_agent.runtime_diagnostics_dir = args.output_dir
+        skill_agent.parallel_workers, skill_agent.workflow_ids = workers, workflow_ids
         if args.ours_resource_dir:
             skill_agent.load(args.ours_resource_dir)
             if skill_agent.stage == "refining":
@@ -308,42 +320,47 @@ def run_domain(args: argparse.Namespace) -> dict:
     dialogue_count = 0
     set_phase("testing")
     frozen_hash = skill_agent.resource_hash() if skill_agent is not None else None
+    def predict_case(case):
+        dialogue, turn_index = case
+        if args.method == "oracle":
+            return gold_policy(dialogue, turn_index), {"oracle": True}
+        if awm_agent is not None:
+            return awm_agent.predict(dialogue, turn_index)
+        if skill_agent is not None:
+            return skill_agent.predict(dialogue, turn_index)
+        return predict_policy(dialogue, turn_index, model=args.model, ontology=ontology, frequency_graph=graph)
+
+    test_dialogues = []
+    for dialogue in iter_family_dialogues(args.splits_dir, args.domain, args.split):
+        if args.max_dialogues is not None and len(test_dialogues) >= args.max_dialogues:
+            break
+        test_dialogues.append(dialogue)
+    dialogue_count = len(test_dialogues)
+    cases = [(d, index) for d in test_dialogues for index in d["target_indices"]["policy_turn_indices"]]
+    predictions = ordered_cases(predict_case, cases, workers=workers, workflow_ids=workflow_ids,
+        directory=args.output_dir, phase="testing")
     with (args.output_dir / "predictions.jsonl").open("w", encoding="utf-8") as output:
-        for dialogue in iter_family_dialogues(args.splits_dir, args.domain, args.split):
-            if args.max_dialogues is not None and dialogue_count >= args.max_dialogues:
-                break
-            dialogue_count += 1
-            for turn_index in dialogue["target_indices"]["policy_turn_indices"]:
-                gold = gold_policy(dialogue, turn_index)
-                try:
-                    if args.method == "oracle":
-                        predicted, diagnostic = gold, {"oracle": True}
-                    elif awm_agent is not None:
-                        predicted, diagnostic = awm_agent.predict(dialogue, turn_index)
-                    elif skill_agent is not None:
-                        predicted, diagnostic = skill_agent.predict(dialogue, turn_index)
-                    else:
-                        predicted, diagnostic = predict_policy(
-                            dialogue, turn_index, model=args.model, ontology=ontology,
-                            frequency_graph=graph,
-                        )
-                    score_policies([gold], [predicted])  # Malformed policies are case failures too.
-                except Exception as exc:
-                    failure = record_error(args.output_dir, "testing", exc,
-                                           dialogue_id=dialogue["dialogue_id"], turn_index=turn_index)
-                    predicted = {"call": None, "acts": [], "_execution_error": True}
-                    diagnostic = {"status": "error", "error": failure["error"],
-                                  "exception": failure["exception"]}
-                gold_rows.append(gold)
-                pred_rows.append(predicted)
-                output.write(json.dumps({
-                    "dialogue_id": dialogue["dialogue_id"],
-                    "turn_index": turn_index,
-                    "domain_family": args.domain,
-                    "gold": gold,
-                    "prediction": predicted,
-                    "diagnostic": diagnostic,
-                }, ensure_ascii=False) + "\n")
+        for outcome, (dialogue, turn_index) in zip(predictions, cases):
+            gold = gold_policy(dialogue, turn_index)
+            try:
+                predicted, diagnostic = require_value(outcome)
+                score_policies([gold], [predicted])  # Malformed policies are case failures too.
+            except Exception as exc:
+                failure = record_error(args.output_dir, "testing", exc,
+                                       dialogue_id=dialogue["dialogue_id"], turn_index=turn_index)
+                predicted = {"call": None, "acts": [], "_execution_error": True}
+                diagnostic = {"status": "error", "error": failure["error"],
+                              "exception": failure["exception"]}
+            gold_rows.append(gold)
+            pred_rows.append(predicted)
+            output.write(json.dumps({
+                "dialogue_id": dialogue["dialogue_id"],
+                "turn_index": turn_index,
+                "domain_family": args.domain,
+                "gold": gold,
+                "prediction": predicted,
+                "diagnostic": diagnostic,
+            }, ensure_ascii=False) + "\n")
     summary = {
         "protocol": "sgd_train_seen_domain_policy_turns_v1",
         "method": args.method,
@@ -375,6 +392,8 @@ def run_domain(args: argparse.Namespace) -> dict:
     summary["config"] = {key: str(value) if isinstance(value, Path) else value for key, value in vars(args).items()}
     summary["case_errors"] = error_summary(args.output_dir)
     summary["execution_status"] = summary["case_errors"]["status"]
+    summary["execution_parallelism"] = {"workers": workers, "workflow_ids": workflow_ids,
+                                        "scope": "within_domain", "reflection_writer": "sequential"}
     if (summary.get("resource_training_errors") or {}).get("total", 0):
         summary["execution_status"] = "completed_with_errors"
     summary["data_manifest"] = {}
@@ -400,6 +419,8 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--model", default="deepseek-chat")
     parser.add_argument("--max-dialogues", type=int)
+    parser.add_argument("--workers", type=int, default=1, help="Independent cases within this domain")
+    parser.add_argument("--workflow-ids", default="", help="One workflow ID per within-domain worker")
     parser.add_argument("--awm-resource-dir", type=Path,
                         help="Evaluate frozen AWM resources; omit to train online on SGD train")
     parser.add_argument("--awm-batch-size", type=int, default=20)
@@ -410,6 +431,11 @@ def main() -> None:
     add_ours_arguments(parser)
     args = parser.parse_args()
     validate_ours_arguments(parser, args)
+    workflow_ids = [item.strip() for item in args.workflow_ids.split(",") if item.strip()]
+    if args.workers < 1 or len(workflow_ids) != len(set(workflow_ids)):
+        parser.error("Workers must be positive and workflow IDs unique")
+    if workflow_ids and args.workers not in (1, len(workflow_ids)):
+        parser.error("--workers must match the number of workflow IDs")
     if args.max_dialogues is not None and args.max_dialogues < 1:
         parser.error("--max-dialogues must be positive")
     if any(value is not None and value < 1 for value in (
