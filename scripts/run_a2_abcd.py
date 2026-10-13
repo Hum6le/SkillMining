@@ -19,8 +19,10 @@ import sys
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+from scripts.abcd_runtime_utils import RUNTIME_DEFAULTS, abcd_runtime_options, build_abcd_runtime_agent
 SPLITS = ROOT / "data/eval/abcd/splits"
 ARMS = ("schema_only", "offline_only", "online_only", "full")
+SUPPORTED_ARMS = (*ARMS, "offline_awm")
 SCHEMA_SKILL = (
     "# ABCD action skill\n\n"
     "Follow the action and ordered-slot contract supplied by the runtime. "
@@ -71,6 +73,13 @@ def _online_command(args: argparse.Namespace, subflow: str, arm: str,
            "--model", args.model, "--batch-size", str(args.batch_size),
            "--refinement-mode", args.refinement_mode]
     cmd += ["--schema-cold-start"] if arm == "online_only" else ["--offline-dir", str(offline)]
+    for key, default in RUNTIME_DEFAULTS.items():
+        value = getattr(args, key, default)
+        if isinstance(default, bool):
+            if value:
+                cmd += ["--" + key.replace("_", "-")]
+        else:
+            cmd += ["--" + key.replace("_", "-"), str(value)]
     if workflow_ids:
         cmd += ["--refine-workflow-ids", ",".join(workflow_ids)]
         # The existing test sharder needs fork. On Windows, use the first ID
@@ -111,11 +120,10 @@ def _run_online(args: argparse.Namespace, subflow: str, arm: str,
 def _run_direct(args: argparse.Namespace, subflow: str, flow_dir: Path,
                 workflow_ids: list[str]) -> None:
     execution_arms = _execution_arms(args)
-    if not any(arm in execution_arms for arm in ("schema_only", "offline_only", "full")):
+    if not any(arm in execution_arms for arm in ("schema_only", "offline_only", "full", "offline_awm")):
         return
     # Keep this import inside the worker, so --dry-run and --help need no ML deps.
-    from awm import MemoryStore, WorkflowStore
-    from eval_tod.abcd.agent import ABCDAgent
+    from awm import WorkflowStore
     from scripts.llm_usage_utils import get_usage, reset_usage, split_usage_summary
     from scripts.run_subflow_eval import evaluate_agent_on_subflow, load_subflow_data, mine_subflow_skill_backbone
 
@@ -126,7 +134,7 @@ def _run_direct(args: argparse.Namespace, subflow: str, flow_dir: Path,
         test = test[:args.max_test]
     offline = flow_dir / "offline_artifact"
     offline_usage_path = offline / "mining_usage.json"
-    need_offline = any(arm in execution_arms for arm in ("offline_only", "full"))
+    need_offline = any(arm in execution_arms for arm in ("offline_only", "full", "offline_awm"))
     if need_offline and not (offline / "complete.json").is_file():
         offline.mkdir(parents=True, exist_ok=True)
         reset_usage()
@@ -161,10 +169,9 @@ def _run_direct(args: argparse.Namespace, subflow: str, flow_dir: Path,
             reference = (offline / "reference.md").read_text(encoding="utf-8")
             rules = (offline / "action_rules.md").read_text(encoding="utf-8")
             slots = (offline / "slot_policies.md").read_text(encoding="utf-8")
-        agent = ABCDAgent(model=args.model, workflow=workflow, workflow_max_chars=None,
-                          memory=MemoryStore(),
+        agent = build_abcd_runtime_agent(args, workflow=workflow,
                           reference_text=reference, action_rules_text=rules,
-                          slot_policies_text=slots, expose_scenario_labels=False,
+                          slot_policies_text=slots,
                           workflow_id=workflow_ids[0] if workflow_ids else None)
         result = evaluate_agent_on_subflow(
             agent, test, arm, subflow, save_dir=out,
@@ -179,6 +186,7 @@ def _run_direct(args: argparse.Namespace, subflow: str, flow_dir: Path,
         result["llm_usage"] = split_usage_summary(generation, testing)
         result["subflow"] = subflow
         result["arm"] = arm
+        result["runtime_protocol"] = abcd_runtime_options(args)
         result["test_sessions"] = len(test)
         _json(result_path, result)
 
@@ -190,6 +198,9 @@ def _run_flow(args: argparse.Namespace, subflow: str, workflow_ids: list[str]) -
     if workflow_ids:
         os.environ["SKILLMINING_WORKFLOW_ID"] = workflow_ids[0]
     _run_direct(args, subflow, flow_dir, workflow_ids)
+    if "offline_awm" in _execution_arms(args):
+        from scripts.abcd_offline_awm import run_offline_awm
+        run_offline_awm(args, subflow, flow_dir, workflow_ids)
     for arm in _execution_arms(args):
         if arm not in ("online_only", "full"):
             continue
@@ -218,7 +229,7 @@ def _aggregate(args: argparse.Namespace, subflows: list[str]) -> None:
     rows = []
     for arm in args.arms:
         for subflow in subflows:
-            path = root / subflow / arm / ("result.json" if arm in ("schema_only", "offline_only")
+            path = root / subflow / arm / ("result.json" if arm in ("schema_only", "offline_only", "offline_awm")
                                            else "a2_result.json" if arm == "full"
                                            else "online_refine_result.json")
             if path.is_file():
@@ -255,6 +266,8 @@ def main() -> int:
                         help="Comma-separated workflow IDs; parallel across subflows or online batches")
     parser.add_argument("--output-dir", default=f"outputs/a2_abcd_{datetime.now():%Y%m%d_%H%M%S}")
     parser.add_argument("--arms", default=",".join(ARMS), help="Comma-separated subset of A2 arms")
+    parser.add_argument("--add-arms", default="",
+                        help="Explicitly append arms (e.g. offline_awm) while preserving the base resume configuration")
     parser.add_argument("--skip-arms", default="",
                         help="Comma-separated configured arms to skip for this invocation only; "
                              "compatible with --resume without changing the experiment arms")
@@ -263,6 +276,10 @@ def main() -> int:
     parser.add_argument("--max-test", type=int)
     parser.add_argument("--max-batches", type=int)
     parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--reference-top-k", type=int, default=RUNTIME_DEFAULTS["reference_top_k"])
+    parser.add_argument("--reference-max-chars", type=int, default=RUNTIME_DEFAULTS["reference_max_chars"])
+    parser.add_argument("--action-selection-candidate-limit", type=int, default=RUNTIME_DEFAULTS["action_selection_candidate_limit"])
+    parser.add_argument("--disable-competitive-action-cards", action="store_true")
     parser.add_argument("--refinement-mode", choices=("standard", "constrained-repair", "trace2skill-hybrid"),
                         default="standard")
     parser.add_argument("--skip-utterance-eval", action="store_true")
@@ -272,17 +289,28 @@ def main() -> int:
     args = parser.parse_args()
     args.output_dir = str(Path(args.output_dir).resolve())
     args.arms = tuple(item.strip() for item in args.arms.split(",") if item.strip())
-    if not args.arms or len(args.arms) != len(set(args.arms)) or any(arm not in ARMS for arm in args.arms):
-        parser.error("--arms must be a unique comma-separated subset of " + ",".join(ARMS))
+    if not args.arms or len(args.arms) != len(set(args.arms)) or any(arm not in SUPPORTED_ARMS for arm in args.arms):
+        parser.error("--arms must be a unique comma-separated subset of " + ",".join(SUPPORTED_ARMS))
+    args.base_arms = args.arms
+    args.add_arms = tuple(item.strip() for item in args.add_arms.split(",") if item.strip())
+    if (len(args.add_arms) != len(set(args.add_arms)) or any(arm not in SUPPORTED_ARMS for arm in args.add_arms)
+            or set(args.add_arms) & set(args.base_arms)):
+        parser.error("--add-arms must contain unique supported arms not already in --arms")
+    args.arms = (*args.base_arms, *args.add_arms)
     args.skip_arms = tuple(item.strip() for item in args.skip_arms.split(",") if item.strip())
     if len(args.skip_arms) != len(set(args.skip_arms)) or any(arm not in args.arms for arm in args.skip_arms):
         parser.error("--skip-arms must be a unique comma-separated subset of --arms")
     if not _execution_arms(args):
         parser.error("--skip-arms cannot skip every configured arm")
+    if "offline_awm" in _execution_arms(args) and args.refinement_mode != "standard":
+        parser.error("offline_awm currently matches the standard action-turn training schedule")
     for key in ("max_train", "max_test", "max_batches", "batch_size"):
         value = getattr(args, key)
         if value is not None and value <= 0:
             parser.error(f"--{key.replace('_', '-')} must be positive")
+    for key, minimum in (("reference_top_k", 0), ("reference_max_chars", 200), ("action_selection_candidate_limit", 1)):
+        if getattr(args, key) < minimum:
+            parser.error(f"--{key.replace('_', '-')} must be >= {minimum}")
     workflow_ids = _ids(args.workflow_ids)
     subflows = _subflows(args)
     if args.worker_subflow:
@@ -311,14 +339,20 @@ def main() -> int:
     if args.resume and config_path.is_file():
         prior = _read(config_path).get("arguments", {})
         for key in ("arms", "model", "max_train", "max_test", "max_batches",
-                    "batch_size", "refinement_mode", "skip_utterance_eval"):
-            current = list(args.arms) if key == "arms" else getattr(args, key)
-            if prior.get(key) != current:
-                parser.error(f"Resume configuration differs for {key}: {prior.get(key)!r} vs {current!r}")
+                    "batch_size", "refinement_mode", "skip_utterance_eval", *RUNTIME_DEFAULTS):
+            current = list(args.base_arms) if key == "arms" else getattr(args, key)
+            previous = prior.get(key, RUNTIME_DEFAULTS.get(key))
+            if previous != current:
+                parser.error(f"Resume configuration differs for {key}: {previous!r} vs {current!r}")
     root.mkdir(parents=True, exist_ok=True)
     if not config_path.is_file():
-        _json(config_path, {"arguments": {**vars(args), "arms": list(args.arms)},
+        _json(config_path, {"arguments": {**vars(args), "arms": list(args.base_arms)},
                             "assignments": buckets})
+    if args.add_arms:
+        extension = {"added_arms": list(args.add_arms), "base_arms": list(args.base_arms),
+                     "runtime_protocol": abcd_runtime_options(args),
+                     "batch_size": args.batch_size, "max_batches": args.max_batches}
+        _json(root / "a2_added_arms.json", extension)
 
     def worker(ids: str, names: list[str]) -> list[tuple[str, str]]:
         failures = []
@@ -331,6 +365,13 @@ def main() -> int:
                 cmd += ["--skip-arms", ",".join(args.skip_arms)]
             if args.model:
                 cmd += ["--model", args.model]
+            for key, default in RUNTIME_DEFAULTS.items():
+                value = getattr(args, key)
+                if isinstance(default, bool):
+                    if value:
+                        cmd += ["--" + key.replace("_", "-")]
+                else:
+                    cmd += ["--" + key.replace("_", "-"), str(value)]
             for key in ("max_train", "max_test", "max_batches"):
                 value = getattr(args, key)
                 if value is not None:
