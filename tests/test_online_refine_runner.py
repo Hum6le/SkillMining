@@ -3,11 +3,42 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.run_backbone_online_refine import _checkpoint, _replay_candidate
+from scripts.run_backbone_online_refine import _checkpoint, _replay_candidate, _restore_rollout_schedule
 from skill_mining.online_refinement import initialize_skill_dag
 
 
 class ReplayGateTest(unittest.TestCase):
+    def test_resume_restores_saved_action_turn_schedule_and_unit(self):
+        train = [{"convo_id": "c1"}, {"convo_id": "c2"}]
+        saved = {"refinement_mode": "standard", "selection_unit": "action_turn",
+                 "batches": [{"samples": [{"conversation_id": "c2", "turn_index": 7, "sample_id": "c2:7"}]},
+                             {"samples": [{"conversation_id": "c1", "turn_index": 1, "sample_id": "c1:1"}]}]}
+        batches, unit = _restore_rollout_schedule(saved, train, "standard")
+        self.assertEqual(unit, "action_turn")
+        self.assertEqual([batch[0]["sample_id"] for batch in batches], ["c2:7", "c1:1"])
+        self.assertIs(batches[0][0]["conversation"], train[1])
+        self.assertNotIn("conversation", saved["batches"][0]["samples"][0])
+
+    def test_resume_legacy_schedule_without_unit_has_mode_default(self):
+        for mode, expected in (("standard", "action_turn"),
+                               ("constrained-repair", "action_turn_uncertainty_local"),
+                               ("trace2skill-hybrid", "conversation_sequence_similarity")):
+            with self.subTest(mode=mode):
+                batches, unit = _restore_rollout_schedule({"batches": [{"conversation_ids": ["c2", "c1"]}]},
+                                                          [{"convo_id": "c1"}, {"convo_id": "c2"}], mode)
+                self.assertEqual(unit, expected)
+                self.assertEqual([item["convo_id"] for item in batches[0]], ["c2", "c1"])
+
+    def test_resume_checks_missing_sessions_in_both_schedule_formats(self):
+        for item in ({"samples": [{"conversation_id": "missing", "turn_index": 1}]},
+                     {"conversation_ids": ["missing"]}):
+            with self.subTest(item=item), self.assertRaisesRegex(RuntimeError, "absent from this train split"):
+                _restore_rollout_schedule({"batches": [item]}, [], "standard")
+
+    def test_resume_rejects_changed_refinement_mode(self):
+        with self.assertRaisesRegex(ValueError, "refinement mode differs"):
+            _restore_rollout_schedule({"refinement_mode": "trace2skill-hybrid", "batches": []}, [], "standard")
+
     def test_checkpoint_persists_promoted_branch_when_action_section_is_missing(self):
         state = initialize_skill_dag({
             "nodes": [{"id": "a", "label": "enter-details"}, {"id": "b", "label": "make-password"}],

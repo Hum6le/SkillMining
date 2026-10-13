@@ -521,6 +521,35 @@ def _build_agent(args, working_skill: str, base_reference: str, action_rules: st
     )
 
 
+def _restore_rollout_schedule(
+    saved_schedule: dict, train: list[dict], refinement_mode: str,
+) -> tuple[list[list[dict]], str]:
+    """Restore the saved batches and their unit; never resample during resume."""
+    saved_mode = saved_schedule.get("refinement_mode")
+    if saved_mode and saved_mode != refinement_mode:
+        raise ValueError(f"Saved schedule refinement mode differs: {saved_mode} vs {refinement_mode}")
+    default_unit = {
+        "standard": "action_turn",
+        "constrained-repair": "action_turn_uncertainty_local",
+        "trace2skill-hybrid": "conversation_sequence_similarity",
+    }[refinement_mode]
+    schedule_unit = str(saved_schedule.get("selection_unit") or default_unit)
+    by_id = {str(conversation.get("convo_id", "?")): conversation for conversation in train}
+    batches = []
+    for item in saved_schedule.get("batches", []):
+        samples = item.get("samples", [])
+        ids = ([str(sample["conversation_id"]) for sample in samples] if samples
+               else [str(value) for value in item.get("conversation_ids", [])])
+        missing = [sid for sid in ids if sid not in by_id]
+        if missing:
+            raise RuntimeError(f"Saved schedule references sessions absent from this train split: {missing[:3]}")
+        if samples:
+            batches.append([{**sample, "conversation": by_id[sid]} for sample, sid in zip(samples, ids)])
+        else:
+            batches.append([by_id[sid] for sid in ids])
+    return batches, schedule_unit
+
+
 def _checkpoint(
     out_dir: Path, state: dict, working_skill: str, base_reference: str,
     policy: RefinementPolicy | None = None, base_slot_policies: str = "", base_action_rules: str = "",
@@ -1092,19 +1121,8 @@ def main() -> None:
     if args.resume:
         if not schedule_path.exists():
             raise FileNotFoundError(f"Cannot resume safely: {schedule_path} does not exist")
-        by_id = {str(conversation.get("convo_id", "?")): conversation for conversation in train}
         saved_schedule = json.loads(schedule_path.read_text(encoding="utf-8"))
-        batches = []
-        for item in saved_schedule.get("batches", []):
-            samples = item.get("samples", [])
-            if samples:
-                batches.append([{**sample, "conversation": by_id[str(sample["conversation_id"])]} for sample in samples])
-                continue
-            ids = [str(value) for value in item.get("conversation_ids", [])]
-            missing = [sid for sid in ids if sid not in by_id]
-            if missing:
-                raise RuntimeError(f"Saved schedule references sessions absent from this train split: {missing[:3]}")
-            batches.append([by_id[sid] for sid in ids])
+        batches, schedule_unit = _restore_rollout_schedule(saved_schedule, train, args.refinement_mode)
     else:
         # Roll out action-turn samples under one frozen skill snapshot.  The
         # constrained mode uses an uncertainty/locality budget; other modes
