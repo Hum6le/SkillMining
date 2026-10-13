@@ -70,6 +70,7 @@ def _aggregate(run_root: Path, tasks: list[dict]) -> dict:
     missing_usage = []
     incomplete_usage = []
     completed = []
+    case_errors = []
     failed = []
     for task in tasks:
         path = run_root / task["method"] / task["domain"] / "summary.json"
@@ -80,6 +81,10 @@ def _aggregate(run_root: Path, tasks: list[dict]) -> dict:
                 incomplete_usage.append({"task": task, "llm_usage": json.loads(partial.read_text(encoding="utf-8"))})
             continue
         summary = json.loads(path.read_text(encoding="utf-8"))
+        inherited_errors = summary.get("resource_training_errors") or {}
+        if summary.get("case_errors", {}).get("total", 0) or inherited_errors.get("total", 0):
+            case_errors.append({**task, **summary.get("case_errors", {}),
+                                "resource_training_errors": inherited_errors})
         counts = grouped.setdefault(task["method"], Counter())
         counts.update(summary["counts"])
         usage = summary.get("llm_usage")
@@ -121,6 +126,8 @@ def _aggregate(run_root: Path, tasks: list[dict]) -> dict:
         "protocol": "family_event_weighted; multi-domain dialogues can contribute to several families",
         "completed": completed,
         "missing": failed,
+        "case_errors": case_errors,
+        "execution_status": "incomplete" if failed else "completed_with_errors" if case_errors else "completed",
         "methods": methods,
         "usage_missing_or_legacy": missing_usage,
         "incomplete_task_usage": incomplete_usage,
@@ -287,6 +294,8 @@ def main() -> None:
     print(f"Aggregate: {run_root / 'aggregate.json'}", flush=True)
     if failures or aggregate["missing"]:
         raise SystemExit(f"SGD run incomplete: {len(aggregate['missing'])} task(s) lack summary")
+    if aggregate["case_errors"]:
+        raise SystemExit(f"SGD finished all tasks with case errors in {len(aggregate['case_errors'])} task(s); see aggregate.json/case_errors.jsonl")
 
 
 if __name__ == "__main__":

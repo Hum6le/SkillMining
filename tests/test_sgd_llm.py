@@ -105,3 +105,16 @@ def test_backoff_cap(monkeypatch):
     with pytest.raises(RuntimeError):
         sgd_llm.sgd_chat_with_retry("request")
     assert sleeps == [2, 3]
+
+
+def test_workflow_not_ready_has_bounded_retry(monkeypatch):
+    calls = []
+    def chat(*args, **kwargs):
+        calls.append(1)
+        if len(calls) < 3:
+            raise RuntimeError("Workflow returned ret=1: workflow not ready to run")
+        return "OK"
+    monkeypatch.setattr("llm.chat", chat)
+    monkeypatch.setattr(sgd_llm.time, "sleep", lambda seconds: None)
+    assert sgd_llm.sgd_chat_with_retry("same request") == "OK"
+    assert len(calls) == 3

@@ -18,6 +18,7 @@ from typing import Callable
 
 from eval_tod.sgd_adapter import action_counter, gold_policy, score_policies, visible_context
 from eval_tod.sgd_llm import sgd_chat_with_retry
+from eval_tod.sgd_errors import record_error
 from eval_tod.sgd_usage import set_phase
 
 ROOT = "<START>"
@@ -158,7 +159,9 @@ class SGDSkillAgent:
                     midpoint = len(group) // 2
                     groups[:0] = [group[:midpoint], group[midpoint:]]
                     continue
-                raise ValueError("One-node offline evidence exceeds prompt budget; reduce --ours-cases-per-node")
+                record_error(directory, "offline_compile", ValueError(
+                    "One-node offline evidence exceeds prompt budget; reduce --ours-cases-per-node"), node_ids=sorted(ids))
+                continue
             prompt = (
                 "Compile local SGD skill rules from TRAIN traces, without any agent rollout. "
                 "Nodes are unordered action-head bundles (intent, service FAMILY), not an ordering "
@@ -171,11 +174,16 @@ class SGDSkillAgent:
                 "Only use listed node/edge IDs; unsupported distinctions should remain uncertain.\n"
                 + encoded
             )
-            raw = sgd_chat_with_retry(prompt, model=self.model, temperature=0, call_tag="sgd_ours_offline_compile")
-            payload = _json_object(raw)
-            allowed = {"action_rules": ids, "slot_policies": ids,
-                       "transition_guards": {self.edge_key(edge) for edge in edges}}
-            self.apply_updates(payload.get("updates", []), phase="offline_compile", allowed=allowed)
+            before_resources, before_ledger = copy.deepcopy(self.resources), copy.deepcopy(self.ledger)
+            try:
+                raw = sgd_chat_with_retry(prompt, model=self.model, temperature=0, call_tag="sgd_ours_offline_compile")
+                payload = _json_object(raw)
+                allowed = {"action_rules": ids, "slot_policies": ids,
+                           "transition_guards": {self.edge_key(edge) for edge in edges}}
+                self.apply_updates(payload.get("updates", []), phase="offline_compile", allowed=allowed)
+            except Exception as exc:
+                self.resources, self.ledger = before_resources, before_ledger
+                record_error(directory, "offline_compile", exc, node_ids=sorted(ids), rolled_back=True)
             self.save(directory)
         self.save(directory)
 
@@ -274,9 +282,14 @@ class SGDSkillAgent:
             for position in chosen:
                 dialogue = dialogues[position]
                 for index in dialogue["target_indices"]["policy_turn_indices"]:
-                    prediction, diagnostic = self.predict(dialogue, index)
-                    gold = gold_policy(dialogue, index)
-                    scores = score_policies([gold], [prediction])
+                    try:
+                        prediction, diagnostic = self.predict(dialogue, index)
+                        gold = gold_policy(dialogue, index)
+                        scores = score_policies([gold], [prediction])
+                    except Exception as exc:
+                        record_error(directory, "train_rollout", exc,
+                                     dialogue_id=dialogue["dialogue_id"], turn_index=index)
+                        continue
                     error = ("action" if not scores["action_set_exact"] else
                              "slot" if not scores["turn_joint_ast"] else "success")
                     row = {"dialogue_id": dialogue["dialogue_id"], "turn_index": index,
@@ -312,8 +325,14 @@ class SGDSkillAgent:
                 "update is {resource: action_rules|slot_policies|transition_guards, key: exact ID, text: rule}.\n"
                 + json.dumps({"resources": local_resources, "evidence": evidence}, ensure_ascii=False)
             )
-            raw = sgd_chat_with_retry(prompt, model=self.model, temperature=0, call_tag="sgd_ours_diagnosis")
-            report = _json_object(raw)
+            try:
+                raw = sgd_chat_with_retry(prompt, model=self.model, temperature=0, call_tag="sgd_ours_diagnosis")
+                report = _json_object(raw)
+                if not isinstance(report.get("updates", []), list):
+                    raise ValueError("Diagnosis updates must be a list")
+            except Exception as exc:
+                record_error(directory, "online_diagnosis", exc, batch_index=start // analysis_batch_size + 1)
+                continue
             allowed = {resource: set() for resource in self.resources}
             for row in evidence:
                 target = row["target_node"]
@@ -363,17 +382,21 @@ class SGDSkillAgent:
                                     "proposals": grouped[(resource, key)]}
                                    for resource, key in group]}, ensure_ascii=False)
                 )
-                raw = sgd_chat_with_retry(prompt, model=self.model, temperature=0, call_tag="sgd_ours_reflection")
-                updates = _json_object(raw).get("updates", [])
-                if not isinstance(updates, list):
-                    raise ValueError("Reflection updates must be a list")
-                seen = set()
-                for update in updates:
-                    target = (update.get("resource"), update.get("key")) if isinstance(update, dict) else (None, None)
-                    if target not in group or target in seen:
-                        raise ValueError("Reflection returned unlisted or duplicate target")
-                    seen.add(target)
-                    final_updates.append(update)
+                try:
+                    raw = sgd_chat_with_retry(prompt, model=self.model, temperature=0, call_tag="sgd_ours_reflection")
+                    updates = _json_object(raw).get("updates", [])
+                    if not isinstance(updates, list):
+                        raise ValueError("Reflection updates must be a list")
+                    seen = set()
+                    for update in updates:
+                        target = (update.get("resource"), update.get("key")) if isinstance(update, dict) else (None, None)
+                        if target not in group or target in seen:
+                            raise ValueError("Reflection returned unlisted or duplicate target")
+                        seen.add(target)
+                except Exception as exc:
+                    record_error(directory, "online_reflection", exc, group_index=start // 16 + 1)
+                    continue
+                final_updates.extend(updates)
                 (directory / f"reflection_{start // 16 + 1:04d}.json").write_text(
                     json.dumps({"targets": group, "updates": updates}, ensure_ascii=False, indent=2), encoding="utf-8")
             self.apply_updates(final_updates, phase="online_reflection")

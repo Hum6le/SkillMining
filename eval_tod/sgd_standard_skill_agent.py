@@ -17,6 +17,7 @@ from eval_tod.sgd_adapter import gold_policy, score_policies, slot_signature, vi
 from eval_tod.sgd_llm import sgd_chat_with_retry
 from eval_tod.sgd_skill_agent import SGDSkillAgent, policy_token, previous_node, _json_object
 from eval_tod.sgd_usage import set_phase
+from eval_tod.sgd_errors import record_error, error_summary
 from skill_mining.online_refinement import (
     initialize_skill_dag, build_post_rollout_batches, group_batch_reports,
     diagnose_rollout_batch, reflect_batch_report_group,
@@ -170,6 +171,9 @@ class SGDStandardSkillAgent(SGDSkillAgent):
         for node in self.graph["nodes"]:
             rows.append(f"- `{node['label']}` / `{node['id']}`: {json.dumps(node['action_heads'])}")
         rows.append("Compare retrieved Action Cards before selection; bind payloads only after selecting heads.")
+        # Native graph promotions need an editable region, even though offline
+        # action cards remain deferred resources rather than inline skill text.
+        rows.extend(["### Action Rules", "<!-- ACTION_RULES_START -->", "<!-- ACTION_RULES_END -->"])
         return "\n".join(rows)
 
     def runtime_resources(self, dialogue, turn_index):
@@ -319,11 +323,19 @@ class SGDStandardSkillAgent(SGDSkillAgent):
         set_phase("train_rollout")
         with (directory / "ours_training_turns.jsonl").open("w", encoding="utf-8") as stream:
             for dialogue, index in samples:
-                prediction, diagnostic = self.predict(dialogue, index)
-                gold = gold_policy(dialogue, index)
-                scores = score_policies([gold], [prediction])
-                action_ok = bool(scores["action_set_exact"])
-                slot_ok = slot_signature(gold) == slot_signature(prediction)
+                try:
+                    prediction, diagnostic = self.predict(dialogue, index)
+                    gold = gold_policy(dialogue, index)
+                    scores = score_policies([gold], [prediction])
+                    action_ok = bool(scores["action_set_exact"])
+                    slot_ok = slot_signature(gold) == slot_signature(prediction)
+                except Exception as exc:
+                    record_error(directory, "train_rollout", exc,
+                                 dialogue_id=dialogue["dialogue_id"], turn_index=index)
+                    stream.write(json.dumps({"sample_id": f"{dialogue['dialogue_id']}:{index}",
+                                             "status": "error", "error": str(exc)}, ensure_ascii=False) + "\n")
+                    stream.flush()
+                    continue
                 source = previous_node(dialogue, index, self.family)
                 target, predicted = policy_token(gold), policy_token(prediction)
                 prefix = [policy_token(gold_policy(dialogue, i)) for i in
@@ -348,38 +360,64 @@ class SGDStandardSkillAgent(SGDSkillAgent):
         reports = []
         set_phase("online_diagnosis")
         for batch_index, batch in enumerate(build_post_rollout_batches(records, max_batch_size=analysis_batch_size), 1):
-            report = diagnose_rollout_batch(str(batch_index), batch, self.state, self.working_skill,
-                self.model, reference=self.base_reference, action_rules=self.base_action_rules,
-                slot_policies=self.base_slot_policies, record_projector=self._project_record,
-                prompt_template=DIAGNOSIS_PROMPT, chat_fn=self._chat)
-            self._write(directory / f"diagnosis_{batch_index:04d}.json", report)
-            if report["status"] == "error":
-                raise RuntimeError(f"SGD diagnosis failed: {report['error']}")
+            try:
+                report = diagnose_rollout_batch(str(batch_index), batch, self.state, self.working_skill,
+                    self.model, reference=self.base_reference, action_rules=self.base_action_rules,
+                    slot_policies=self.base_slot_policies, record_projector=self._project_record,
+                    prompt_template=DIAGNOSIS_PROMPT, chat_fn=self._chat)
+                self._write(directory / f"diagnosis_{batch_index:04d}.json", report)
+                if report["status"] == "error":
+                    raise RuntimeError(f"SGD diagnosis failed: {report['error']}")
+            except Exception as exc:
+                record_error(directory, "online_diagnosis", exc, batch_index=batch_index,
+                             sample_ids=[r["sample"]["sample_id"] for r in batch])
+                continue
             reports.append(report)
         groups = group_batch_reports(reports, max_reports=16)
         applied_ids = set(self.state.get("applied_skill_operation_ids", []))
         set_phase("online_reflection")
         for group_index, group in enumerate(groups, 1):
-            reflection = reflect_batch_report_group(group, self.state, self.working_skill,
-                self.model, prompt_template=REFLECTION_PROMPT, chat_fn=self._chat)
-            if reflection["status"] == "error":
+            before = (copy.deepcopy(self.state), self.working_skill, copy.deepcopy(self.ledger), set(applied_ids))
+            try:
+                reflection = reflect_batch_report_group(group, self.state, self.working_skill,
+                    self.model, prompt_template=REFLECTION_PROMPT, chat_fn=self._chat)
+                if reflection["status"] == "error":
+                    self._write(directory / f"reflection_{group_index:04d}.json", reflection)
+                    raise RuntimeError(f"SGD reflection failed: {reflection['error']}")
+                accepted, rejected = apply_reflection_updates_to_state(self.state, reflection.get("updates", []))
+                self.working_skill, operations = apply_dynamic_skill_operations(
+                    self.working_skill, reflection.get("skill_operations", []), applied_ids)
+                failed_operations = [op for op in operations if op.get("error")]
+                if failed_operations:
+                    raise RuntimeError("SGD skill text edits failed: " + json.dumps(failed_operations, ensure_ascii=False))
+                self.state["applied_skill_operation_ids"] = sorted(applied_ids)
+                reflection.update(accepted_updates=accepted, rejected_updates=rejected,
+                                  applied_skill_operations=operations)
+                self.ledger.append({"phase": "online_reflection", "group_index": group_index,
+                                    "accepted_updates": accepted, "rejected_updates": rejected,
+                                    "skill_operations": operations})
+                self.save(directory)  # Validate/materialize before committing proposal diagnostics.
                 self._write(directory / f"reflection_{group_index:04d}.json", reflection)
-                raise RuntimeError(f"SGD reflection failed: {reflection['error']}")
-            accepted, rejected = apply_reflection_updates_to_state(self.state, reflection.get("updates", []))
-            self.working_skill, operations = apply_dynamic_skill_operations(
-                self.working_skill, reflection.get("skill_operations", []), applied_ids)
-            self.state["applied_skill_operation_ids"] = sorted(applied_ids)
-            reflection.update(accepted_updates=accepted, rejected_updates=rejected,
-                              applied_skill_operations=operations)
-            self.ledger.append({"phase": "online_reflection", "group_index": group_index,
-                                "accepted_updates": accepted, "rejected_updates": rejected,
-                                "skill_operations": operations})
-            self._write(directory / f"reflection_{group_index:04d}.json", reflection)
-            self.save(directory)  # Next group sees the just-applied state/text.
-        self.stage = "refined"
+            except Exception as exc:
+                self.state, self.working_skill, self.ledger, applied_ids = before
+                failure = record_error(directory, "online_reflection", exc, group_index=group_index,
+                                       batch_ids=[r.get("batch_id") for r in group], rolled_back=True)
+                self._write(directory / f"reflection_{group_index:04d}_error.json", failure)
+                # A structural edit error cannot poison the next group. Disk
+                # write failures are also recorded; in-memory K1 stays valid.
+                try:
+                    self.save(directory)
+                except Exception as rollback_exc:
+                    record_error(directory, "checkpoint_rollback", rollback_exc, group_index=group_index)
+        failures = error_summary(directory)
+        self.state["refinement_errors"] = failures
+        self.stage = "refined_with_errors" if failures["total"] else "refined"
         self.save(directory)
         summary = {"protocol": self.protocol, "schedule_unit": "policy_turn",
-                   "rollout_turns": len(records), "reports": len(reports), "reflection_groups": len(groups),
+                   "rollout_turns": len(records), "scheduled_turns": len(samples),
+                   "failed_rollout_turns": len(samples) - len(records),
+                   "reports": len(reports), "reflection_groups": len(groups),
+                   "case_errors": failures,
                    "selected_dialogue_ids": list(dict.fromkeys(d["dialogue_id"] for d, _ in samples)),
                    "snapshot_sha256": initial_hash, "final_sha256": self.resource_hash()}
         self._write(directory / "ours_training.json", summary)
@@ -417,13 +455,17 @@ class SGDStandardSkillAgent(SGDSkillAgent):
 
     @staticmethod
     def _write(path, value):
-        path.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary = path.with_name(path.name + ".tmp")
+        temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(path)
 
     def save(self, directory):
+        if self.state:
+            # Fail before overwriting any checkpoint with an invalid edit.
+            self.working_skill = merge_online_skill_additions(self.working_skill, self.state)
         super().save(directory)
         if not self.state:
             return
-        self.working_skill = merge_online_skill_additions(self.working_skill, self.state)
         save_skill_dag(self.state, directory / "skill_dag_state.json")
         guards, reference = render_online_resources(self.state)
         for name, text in {"skill.md": self.working_skill, "working_skill.md": self.working_skill,

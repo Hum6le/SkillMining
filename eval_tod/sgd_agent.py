@@ -10,6 +10,7 @@ from awm.memory import MemoryStore, WorkflowStore
 from eval_tod.sgd_adapter import gold_policy, score_policies, visible_context
 from eval_tod.sgd_llm import sgd_chat_with_retry
 from eval_tod.sgd_usage import set_phase
+from eval_tod.sgd_errors import record_error
 
 
 class SGDAWMAgent:
@@ -74,7 +75,14 @@ class SGDAWMAgent:
         for dialogue in dialogues:
             rows = []
             for turn_index in dialogue["target_indices"]["policy_turn_indices"]:
-                prediction, _ = self.predict(dialogue, turn_index)
+                try:
+                    prediction, _ = self.predict(dialogue, turn_index)
+                except Exception as exc:
+                    record_error(trace_path.parent if trace_path else None, "train_rollout", exc,
+                                 dialogue_id=dialogue["dialogue_id"], turn_index=turn_index, batch_index=batch_index)
+                    gold_rows.append(gold_policy(dialogue, turn_index))
+                    pred_rows.append({"call": None, "acts": [], "_execution_error": True})
+                    continue
                 row = self._trajectory_row(dialogue, turn_index, prediction)
                 rows.append(row)
                 gold_rows.append(row["gold"])
@@ -132,8 +140,15 @@ class SGDAWMAgent:
             + "\n\nOutput only the complete workflow as Markdown."
         )
         set_phase("awm_induction")
-        updated = sgd_chat_with_retry(prompt, model=self.model, temperature=0,
-                                      call_tag="sgd_awm_induction").strip()
+        updated = ""
+        if examples:
+            try:
+                updated = sgd_chat_with_retry(prompt, model=self.model, temperature=0,
+                                              call_tag="sgd_awm_induction").strip()
+            except Exception as exc:
+                record_error(trace_path.parent if trace_path else None, "awm_induction", exc,
+                             batch_index=batch_index)
+                successful = []  # Keep the entire prior workflow/memory snapshot.
         if updated:
             self.workflow.replace(updated)
         for dialogue, row in successful:

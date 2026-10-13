@@ -102,14 +102,16 @@ def score_policies(gold: list[dict], predicted: list[dict]) -> dict:
         raise ValueError("Gold and prediction counts differ")
     counts = Counter()
     for truth, guess in zip(gold, predicted):
+        failed = bool(guess.get("_execution_error"))
         true_actions, pred_actions = action_counter(truth), action_counter(guess)
         common = sum((true_actions & pred_actions).values())
         counts["action_tp"] += common
         counts["action_gold"] += sum(true_actions.values())
         counts["action_pred"] += sum(pred_actions.values())
-        action_ok = true_actions == pred_actions
+        action_ok = not failed and true_actions == pred_actions
         joint_ok = action_ok and slot_signature(truth) == slot_signature(guess)
         counts["turns"] += 1
+        counts["execution_failed_turns"] += int(failed)
         counts["action_exact"] += int(action_ok)
         counts["joint_exact"] += int(joint_ok)
         counts["slot_exact_given_action"] += int(joint_ok)
@@ -119,7 +121,7 @@ def score_policies(gold: list[dict], predicted: list[dict]) -> dict:
         counts["call_gold"] += int(true_call is not None)
         counts["call_pred"] += int(pred_call is not None)
         if true_call is not None:
-            counts["api_joint_correct"] += int(true_call == pred_call)
+            counts["api_joint_correct"] += int(not failed and true_call == pred_call)
     return metrics_from_counts(counts)
 
 

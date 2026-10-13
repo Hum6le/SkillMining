@@ -188,7 +188,7 @@ def test_sgd_exhausted_induction_leaves_resources_unchanged(monkeypatch):
     agent = SGDAWMAgent(family="Restaurants", model="mock", ontology={}, predictor=predictor)
     agent.workflow.replace("### Existing workflow")
     old_workflow = agent.workflow.text
-    with pytest.raises(RuntimeError, match="Workflow HTTP error 502"):
-        agent.train_batch([_dialogue()], batch_index=1)
+    result = agent.train_batch([_dialogue()], batch_index=1)
+    assert result["induced"] is False
     assert agent.workflow.text == old_workflow
     assert len(agent.memory) == 0

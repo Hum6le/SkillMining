@@ -54,7 +54,7 @@ def sgd_chat_with_retry(messages, **kwargs) -> str:
     """Retry only one LLM request, never a rollout or resource update.
 
     Defaults: five total attempts, capped exponential backoff with jitter.
-    Only explicit HTTP 429/502/503/504 failures are retried. Exhaustion
+    Explicit HTTP 429/502/503/504 and the workflow-not-ready response are retried. Exhaustion
     re-raises the provider error. A swallowed failure (empty reply) also
     aborts instead of becoming an apparently valid empty policy.
     """
@@ -70,14 +70,15 @@ def sgd_chat_with_retry(messages, **kwargs) -> str:
         except Exception as exc:
             record_attempt(before, messages, "", tag=kwargs.get("call_tag", "chat"), success=False)
             status = _http_status(exc)
-            if status not in _RETRYABLE_STATUS or attempt == attempts:
+            not_ready = str(exc).startswith("Workflow returned ret=1:") and "workflow not ready to run" in str(exc).lower()
+            if (status not in _RETRYABLE_STATUS and not not_ready) or attempt == attempts:
                 raise
             wait = min(cap, delay * random.uniform(1.0, 1.25))
             log.warning(
                 "SGD LLM retry: tag=%s workflow=%s HTTP=%s next_attempt=%s/%s wait=%.2fs",
                 kwargs.get("call_tag", "chat"),
                 os.getenv("SKILLMINING_WORKFLOW_ID", "<configured>"),
-                status, attempt + 1, attempts, wait,
+                status if status is not None else "workflow_not_ready", attempt + 1, attempts, wait,
             )
             time.sleep(wait)
             delay = min(cap, delay * 2)

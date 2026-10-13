@@ -26,6 +26,7 @@ from eval_tod.sgd_adapter import (
     visible_context,
 )
 from eval_tod.sgd_llm import sgd_chat_with_retry
+from eval_tod.sgd_errors import record_error, error_summary
 from eval_tod.sgd_usage import configure_usage, persist_usage, set_phase
 
 
@@ -314,17 +315,25 @@ def run_domain(args: argparse.Namespace) -> dict:
             dialogue_count += 1
             for turn_index in dialogue["target_indices"]["policy_turn_indices"]:
                 gold = gold_policy(dialogue, turn_index)
-                if args.method == "oracle":
-                    predicted, diagnostic = gold, {"oracle": True}
-                elif awm_agent is not None:
-                    predicted, diagnostic = awm_agent.predict(dialogue, turn_index)
-                elif skill_agent is not None:
-                    predicted, diagnostic = skill_agent.predict(dialogue, turn_index)
-                else:
-                    predicted, diagnostic = predict_policy(
-                        dialogue, turn_index, model=args.model, ontology=ontology,
-                        frequency_graph=graph,
-                    )
+                try:
+                    if args.method == "oracle":
+                        predicted, diagnostic = gold, {"oracle": True}
+                    elif awm_agent is not None:
+                        predicted, diagnostic = awm_agent.predict(dialogue, turn_index)
+                    elif skill_agent is not None:
+                        predicted, diagnostic = skill_agent.predict(dialogue, turn_index)
+                    else:
+                        predicted, diagnostic = predict_policy(
+                            dialogue, turn_index, model=args.model, ontology=ontology,
+                            frequency_graph=graph,
+                        )
+                    score_policies([gold], [predicted])  # Malformed policies are case failures too.
+                except Exception as exc:
+                    failure = record_error(args.output_dir, "testing", exc,
+                                           dialogue_id=dialogue["dialogue_id"], turn_index=turn_index)
+                    predicted = {"call": None, "acts": [], "_execution_error": True}
+                    diagnostic = {"status": "error", "error": failure["error"],
+                                  "exception": failure["exception"]}
                 gold_rows.append(gold)
                 pred_rows.append(predicted)
                 output.write(json.dumps({
@@ -356,6 +365,7 @@ def run_domain(args: argparse.Namespace) -> dict:
             raise AssertionError("Evaluation changed frozen skill resources")
         summary["skill_sha256"] = frozen_hash
         summary["skill_stage"] = skill_agent.stage
+        summary["resource_training_errors"] = getattr(skill_agent, "state", {}).get("refinement_errors")
         summary["skill_protocol"] = getattr(skill_agent, "protocol", "sgd_backbone_online_prototype_v1")
         summary["graph_mining_method"] = skill_agent.graph.get("mining_method", "unknown")
         summary["skill_protocol"] = getattr(skill_agent, "protocol", "sgd_backbone_online_prototype_v1")
@@ -363,6 +373,10 @@ def run_domain(args: argparse.Namespace) -> dict:
         summary["backbone_edges"] = len(skill_agent.graph["backbone"]["edges"])
         summary["residual_edges"] = len(skill_agent.graph["residual_edges"])
     summary["config"] = {key: str(value) if isinstance(value, Path) else value for key, value in vars(args).items()}
+    summary["case_errors"] = error_summary(args.output_dir)
+    summary["execution_status"] = summary["case_errors"]["status"]
+    if (summary.get("resource_training_errors") or {}).get("total", 0):
+        summary["execution_status"] = "completed_with_errors"
     summary["data_manifest"] = {}
     for split in sorted({"train", args.split}):
         path = args.splits_dir / args.domain / f"{split}.jsonl.gz"
@@ -407,7 +421,7 @@ def main() -> None:
     print(json.dumps({key: result[key] for key in (
         "method", "domain", "split", "num_dialogues", "action_set_exact",
         "slot_exact_given_action", "turn_joint_ast", "call_gate_f1", "api_joint_ast",
-        "mining_usage", "usage", "total_usage"
+        "mining_usage", "usage", "total_usage", "execution_status", "case_errors"
     )}, ensure_ascii=False))
 
 
