@@ -1843,19 +1843,34 @@ class ABCDAgent(AbstractTodAgent):
                 "order, normalization and reuse conditions, never private example values. "
                 "Keep workflow and cards consistent. Do not change canonical action names or the "
                 "runtime action schema. reference.md remains read-only.\n"
-                "Override the markdown-only output format above: return exactly one JSON object: "
-                '{"workflow":"complete updated workflow markdown",'
-                '"action_card_updates":[{"action":"canonical action",'
+                "Return the COMPLETE updated workflow as ordinary Markdown first, NOT inside a "
+                "JSON string. Then append exactly one delimited JSON ARRAY of card updates:\n"
+                + _AWM_CARD_START + "\n"
+                '[{"action":"canonical action",'
                 '"action_rule":"complete action rule body (optional)",'
-                '"slot_policy":"complete ordered binding policy body (optional)"}]}\n'
+                '"slot_policy":"complete ordered binding policy body (optional)"}]\n'
+                + _AWM_CARD_END + "\n"
+                "Use [] if no cards change. Both delimiter lines are required, even with []. "
+                "Escape quotes/newlines only inside the JSON array. Do not wrap the whole response "
+                "in JSON, and write nothing after the end delimiter.\n"
                 "Allowed action names: " + json.dumps(sorted(self.action_schema.get("actions", [])))
             )
 
         updated = ""
+        retry_error = ""
         for attempt in range(3):
+            raw_reply = ""
+            request_prompt = prompt
+            if editable_action_cards and retry_error:
+                request_prompt += (
+                    "\n\n## Previous Attempt Rejected\n" + retry_error + "\n"
+                    "Regenerate a COMPLETE concise workflow as plain Markdown followed by the "
+                    "delimited JSON array. Close both delimiters and all JSON strings/brackets. "
+                    "Do not return a partial continuation or put workflow inside a JSON string."
+                )
             try:
-                updated = self._chat(
-                    prompt,
+                raw_reply = self._chat(
+                    request_prompt,
                     model=self.model,
                     api_key=self.api_key,
                     base_url=self.base_url,
@@ -1863,14 +1878,29 @@ class ABCDAgent(AbstractTodAgent):
                     response_logger=self._response_logger,
                     call_tag="skill_induction",
                 ).strip()
+                updated = raw_reply
+                if editable_action_cards and self._response_logger is not None:
+                    self._response_logger.log(
+                        messages=[{"role": "user", "content": request_prompt}],
+                        response={"raw_response": raw_reply}, call_tag="awm_induction_output",
+                        extra={"attempt": attempt + 1, "response_chars": len(raw_reply)},
+                    )
                 if updated:
                     if editable_action_cards:
                         updated, card_updates = _parse_awm_card_update(updated, self.action_schema.get("actions", set()))
                         self.last_awm_card_updates = card_updates
                     break
                 print(f"  [ABCD induce] empty response, retry {attempt + 1}/3")
+                retry_error = "Empty response"
             except Exception as exc:
                 updated = ""
+                retry_error = str(exc)
+                if self._response_logger is not None:
+                    self._response_logger.log(
+                        messages=[{"role": "user", "content": request_prompt}], response={"raw_response": raw_reply},
+                        call_tag="awm_induction_validation_error",
+                        extra={"attempt": attempt + 1, "error": retry_error, "response_chars": len(raw_reply)},
+                    )
                 print(f"  [ABCD induce] LLM error ({attempt + 1}/3): {exc}")
             if attempt < 2:
                 time.sleep(2 ** attempt)
@@ -1950,12 +1980,34 @@ class ABCDAgent(AbstractTodAgent):
 
 # ── Output parsing helpers ────────────────────────────────────
 
+_AWM_CARD_START = "<<<AWM_CARD_UPDATES>>>"
+_AWM_CARD_END = "<<<END_AWM_CARD_UPDATES>>>"
+
+
 def _parse_awm_card_update(raw: str, valid_actions) -> tuple[str, list[dict]]:
     """Validate the entire AWM workflow/card proposal before mutating anything."""
     text = raw.strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE | re.DOTALL).strip()
-    payload = json.loads(text)
+    if _AWM_CARD_START in text or _AWM_CARD_END in text:
+        if text.count(_AWM_CARD_START) != 1 or text.count(_AWM_CARD_END) != 1:
+            raise ValueError("Expected exactly one complete AWM card-update block")
+        start, end = text.index(_AWM_CARD_START), text.index(_AWM_CARD_END)
+        if end <= start or text[end + len(_AWM_CARD_END):].strip():
+            raise ValueError("AWM card-update delimiters reversed or extra trailing output")
+        workflow = text[:start].strip()
+        cards = text[start + len(_AWM_CARD_START):end].strip()
+        for name, value in (("workflow", workflow), ("cards", cards)):
+            if value.startswith("```"):
+                value = re.sub(r"^```(?:json|markdown|md)?\s*|\s*```$", "", value, flags=re.IGNORECASE | re.DOTALL).strip()
+            if name == "workflow":
+                workflow = value
+            else:
+                cards = value
+        payload = {"workflow": workflow, "action_card_updates": json.loads(cards)}
+    else:
+        # Accept complete legacy v3 JSON replies; no checkpoint migration needed.
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE | re.DOTALL).strip()
+        payload = json.loads(text)
     if not isinstance(payload, dict) or set(payload) != {"workflow", "action_card_updates"}:
         raise ValueError("Expected workflow and action_card_updates only")
     workflow, updates = payload["workflow"], payload["action_card_updates"]

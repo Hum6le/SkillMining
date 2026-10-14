@@ -32,6 +32,44 @@ def _args(root, **changes):
 
 
 class OfflineAWMTest(unittest.TestCase):
+    def test_plain_markdown_workflow_does_not_require_json_escaping(self):
+        from eval_tod.abcd.agent import _parse_awm_card_update, _AWM_CARD_START, _AWM_CARD_END
+        workflow = '### Rule\nUse "quoted" cues and C:\\local\\path.\n' + "long learned rule\n" * 400
+        text = workflow + _AWM_CARD_START + '\n[{"action":"send-link","slot_policy":"Use the verified current email."}]\n' + _AWM_CARD_END
+        parsed, updates = _parse_awm_card_update(text, {"send-link"})
+        self.assertEqual(parsed, workflow.strip())
+        self.assertEqual(updates[0]["action"], "send-link")
+        self.assertGreater(len(parsed), 4000)
+        for invalid in (workflow + _AWM_CARD_START + "\n[]", text + " trailing",
+                        text + "\n" + _AWM_CARD_END, workflow + _AWM_CARD_END + _AWM_CARD_START,
+                        workflow + _AWM_CARD_START + '\n[{"slot_policy":"cut' + _AWM_CARD_END):
+            with self.subTest(text=invalid[-100:]), self.assertRaises(ValueError):
+                _parse_awm_card_update(invalid, {"send-link"})
+
+    def test_invalid_json_retry_gets_error_feedback_and_preserves_raw_response(self):
+        from awm import WorkflowStore
+        from eval_tod.abcd.agent import ABCDAgent, _AWM_CARD_START, _AWM_CARD_END
+        from eval_tod.response_logger import ResponseLogger
+        workflow = WorkflowStore()
+        workflow.replace("OLD")
+        bad = '{\n"workflow":"truncated'
+        good = '### Fixed workflow\nUse "literal" cues.\n' + _AWM_CARD_START + '\n[]\n' + _AWM_CARD_END
+        with tempfile.TemporaryDirectory() as directory, \
+             patch("llm.resolve_config", return_value={"model": "test", "api_key": "", "base_url": ""}), \
+             patch.object(ABCDAgent, "_chat", side_effect=[bad, good]) as chat, \
+             patch("eval_tod.abcd.agent.time.sleep"):
+            agent = ABCDAgent(model="test", workflow=workflow, response_logger=ResponseLogger(directory))
+            result = agent.induce([], [], [], editable_action_cards=True)
+            self.assertEqual(chat.call_count, 2)
+            self.assertIn("Previous Attempt Rejected", chat.call_args_list[1].args[0])
+            self.assertIn("Unterminated string", chat.call_args_list[1].args[0])
+            files = list(Path(directory).glob("*awm_induction_validation_error_response.json"))
+            self.assertEqual(len(files), 1)
+            self.assertEqual(json.loads(files[0].read_text(encoding="utf-8"))["raw_response"], bad)
+            self.assertEqual(len(list(Path(directory).glob("*awm_induction_output_response.json"))), 2)
+            self.assertTrue(result.startswith("### Fixed workflow"))
+            self.assertEqual(agent.last_awm_card_updates, [])
+
     def test_resume_diagnostics_distinguish_protocol_runtime_and_schedule(self):
         saved = {"protocol": "v2", "runtime": {"model": "old", "max_turns": 1},
                  "schedule": [["a", "b"]], "train_hash": "unchanged"}

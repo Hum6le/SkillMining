@@ -211,6 +211,7 @@ def run_offline_awm(args, subflow, flow_dir, workflow_ids):
     from awm import MemoryStore, WorkflowStore
     from eval_tod.abcd.agent import compute_ast_from_turn_results, _AWM_WORKFLOW_RESOURCE_SECTION
     from eval_tod.schemas import Prediction
+    from eval_tod.response_logger import ResponseLogger
     from skill_mining.online_refinement import build_action_turn_samples
     from scripts.run_backbone_online_refine import _rollout_online_batch
     from scripts.run_subflow_eval import load_subflow_data, evaluate_agent_on_subflow
@@ -268,6 +269,7 @@ def run_offline_awm(args, subflow, flow_dir, workflow_ids):
     memory.exemplars = copy.deepcopy(state["exemplars"])
     ids = workflow_ids or [None]
     live_resources = {**resources, **state["cards"]}
+    response_logger = ResponseLogger(output / "llm_responses" / uuid4().hex)
 
     def make_agent(workflow_id, snapshot=False):
         current_workflow, current_memory = workflow, memory
@@ -277,7 +279,8 @@ def run_offline_awm(args, subflow, flow_dir, workflow_ids):
             current_memory.exemplars = copy.deepcopy(memory.exemplars)
         return build_abcd_runtime_agent(args, workflow=current_workflow, memory=current_memory,
                  reference_text=live_resources["reference.md"], action_rules_text=live_resources["action_rules.md"],
-                 slot_policies_text=live_resources["slot_policies.md"], workflow_id=workflow_id)
+                 slot_policies_text=live_resources["slot_policies.md"], workflow_id=workflow_id,
+                 response_logger=response_logger)
 
     previous_usage = state.get("usage")
     reset_usage()
