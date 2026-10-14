@@ -239,7 +239,9 @@ def _aggregate(args: argparse.Namespace, subflows: list[str]) -> None:
                              "slot": data["ast_cds"]["ast_slot_value"],
                              "action_turns": data["ast_cds"]["num_action_turns"],
                              "usage": data.get("a2_total_usage") if arm == "full"
-                             else data.get("llm_usage"), "result": str(path)})
+                             else data.get("llm_usage"), "result": str(path),
+                             "method_protocol": data.get("protocol"),
+                             "training_lineage": data.get("training_lineage"), "migration": data.get("migration")})
     aggregate = {}
     for arm in args.arms:
         group = [row for row in rows if row["arm"] == arm]
@@ -249,6 +251,10 @@ def _aggregate(args: argparse.Namespace, subflows: list[str]) -> None:
             **{key: round(sum(row[key] * row["action_turns"] for row in group) / denom, 6)
                if denom else None for key in ("joint_ast", "action", "slot")},
         }
+        if arm == "offline_awm":
+            lineages = [row.get("training_lineage") or "legacy-or-unrecorded" for row in group]
+            aggregate[arm]["training_lineages"] = {name: lineages.count(name) for name in sorted(set(lineages))}
+            aggregate[arm]["contains_migrated_training"] = "mixed-v2-to-v3" in lineages
     _json(root / "a2_aggregate.json", {"protocol": "ABCD independent coarse subflows",
                                          "arms": list(args.arms),
                                          "execution_arms": list(_execution_arms(args)),
@@ -284,6 +290,8 @@ def main() -> int:
                         default="standard")
     parser.add_argument("--skip-utterance-eval", action="store_true")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--migrate-offline-awm-v2", action="store_true",
+                        help="Explicit backed-up v2->v3 mixed continuation; preserves prior completed batches")
     parser.add_argument("--dry-run", action="store_true", help="Show workflow assignment without API calls")
     parser.add_argument("--worker-subflow", help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -302,6 +310,8 @@ def main() -> int:
         parser.error("--skip-arms must be a unique comma-separated subset of --arms")
     if not _execution_arms(args):
         parser.error("--skip-arms cannot skip every configured arm")
+    if args.migrate_offline_awm_v2 and (not args.resume or "offline_awm" not in _execution_arms(args)):
+        parser.error("--migrate-offline-awm-v2 requires --resume and an executing offline_awm arm")
     if "offline_awm" in _execution_arms(args) and args.refinement_mode != "standard":
         parser.error("offline_awm currently matches the standard action-turn training schedule")
     for key in ("max_train", "max_test", "max_batches", "batch_size"):
@@ -380,6 +390,8 @@ def main() -> int:
                 cmd += ["--skip-utterance-eval"]
             if args.resume:
                 cmd += ["--resume"]
+            if args.migrate_offline_awm_v2:
+                cmd += ["--migrate-offline-awm-v2"]
             flow_dir = root / name
             flow_dir.mkdir(parents=True, exist_ok=True)
             with (flow_dir / "a2_worker.log").open("a", encoding="utf-8") as log:

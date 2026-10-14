@@ -11,11 +11,15 @@ import hashlib
 import json
 import multiprocessing as mp
 import re
+import shutil
+from datetime import datetime, timezone
+from uuid import uuid4
 from pathlib import Path
 
 from scripts.abcd_runtime_utils import abcd_runtime_options, build_abcd_runtime_agent
 
 PROTOCOL = "offline-awm-online-v3-writable-action-cards"
+V2_PROTOCOL = "offline-awm-online-v2-target-complete-feedback"
 RESOURCE_START = "<!-- OFFLINE_AWM_RESOURCE_START -->"
 RESOURCE_END = "<!-- OFFLINE_AWM_RESOURCE_END -->"
 RESOURCE_USE = f"""{RESOURCE_START}
@@ -51,6 +55,86 @@ def _save(path, value):
     temporary = path.with_name(path.name + ".tmp")
     temporary.write_text(json.dumps(value, indent=2, ensure_ascii=False), encoding="utf-8")
     temporary.replace(path)
+
+
+def _scope_differences(saved, current):
+    """Readable resume diagnostics without dumping dialogue/resource contents."""
+    differences = {}
+    for key in sorted(set(saved) | set(current)):
+        old, new = saved.get(key), current.get(key)
+        if old == new:
+            continue
+        if key == "schedule":
+            def summary(schedule):
+                return {"batches": len(schedule or []), "action_turns": sum(len(b) for b in schedule or [])}
+            differences[key] = {"saved": summary(old), "current": summary(new),
+                                "note": "Batch membership/order differs even when counts match"}
+        elif key == "runtime" and isinstance(old, dict) and isinstance(new, dict):
+            differences[key] = {name: {"saved": old.get(name), "current": new.get(name)}
+                                for name in sorted(set(old) | set(new)) if old.get(name) != new.get(name)}
+        else:
+            differences[key] = {"saved": old, "current": new}
+    return differences
+
+
+def migrate_v2_checkpoint(state, scope, resources, checkpoint_path):
+    """Explicit, backed-up continuation, not retroactive v3 training."""
+    differences = _scope_differences(state["scope"], scope)
+    if state["scope"].get("protocol") != V2_PROTOCOL or set(differences) != {"protocol"}:
+        raise ValueError("v2->v3 migration requires v2 and protocol-only differences: "
+                         + json.dumps(differences, ensure_ascii=False))
+    completed = state.get("completed_batches")
+    if (type(completed) is not int or not 0 <= completed <= len(scope["schedule"])
+            or not isinstance(state.get("workflow"), str) or not state["workflow"].strip()
+            or not isinstance(state.get("exemplars"), list)):
+        raise ValueError("Invalid v2 checkpoint batch/workflow/memory state")
+    old_scope_hash = _hash(state["scope"])
+    result_path = checkpoint_path.parent / "result.json"
+    if result_path.is_file() and _read(result_path).get("scope_hash") != old_scope_hash:
+        raise ValueError("Existing v2 result does not match the migration source checkpoint")
+    backup = checkpoint_path.parent / "migration_backups" / (
+        datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "_" + uuid4().hex[:8])
+    backup.mkdir(parents=True, exist_ok=False)
+    shutil.copy2(checkpoint_path, backup / checkpoint_path.name)
+    # Preserve any prior final artifact before re-evaluation can replace it.
+    for path in checkpoint_path.parent.iterdir():
+        if path.is_file() and path != checkpoint_path:
+            shutil.copy2(path, backup / path.name)
+    cards = {name: resources[name] for name in ("action_rules.md", "slot_policies.md")}
+    record = {"source_protocol": V2_PROTOCOL, "target_protocol": PROTOCOL,
+              "source_scope_hash": old_scope_hash, "target_scope_hash": _hash(scope),
+              "source_checkpoint_sha256": hashlib.sha256(checkpoint_path.read_bytes()).hexdigest(),
+              "source_workflow_hash": _hash(state["workflow"].strip()), "initial_cards_hash": _hash(cards),
+              "completed_v2_batches": completed,
+              "completed_v2_action_turns": sum(len(b) for b in scope["schedule"][:completed]),
+              "first_v3_batch_index": completed, "first_v3_batch_number": completed + 1,
+              "planned_v3_batches": len(scope["schedule"]) - completed,
+              "historical_usage": copy.deepcopy(state.get("usage")),
+              "backup_dir": str(backup), "migrated_at_utc": datetime.now(timezone.utc).isoformat(),
+              "interpretation": "mixed v2->v3 continuation; prior batches were not retrained"}
+    updated = copy.deepcopy(state)
+    updated.update(scope=scope, cards=cards, migration=record)
+    _save(backup / "migration.json", record)
+    _save(checkpoint_path, updated)  # Commit only after the backup is complete.
+    print(f"Migrated offline_awm v2->v3 after {completed} batches; backup={backup}", flush=True)
+    return updated
+
+
+def cached_rollout_matches(cached, identity, state):
+    if not cached:
+        return False
+    if cached.get("identity") == identity:
+        return True
+    migration = state.get("migration") or {}
+    # The boundary rollout used the same v2 workflow, original cards, data and
+    # runtime. Only its subsequent induction changes; reuse at this boundary only.
+    if (identity["index"] == migration.get("first_v3_batch_index")
+            and identity["workflow_hash"] == migration.get("source_workflow_hash")
+            and identity["cards_hash"] == migration.get("initial_cards_hash")):
+        legacy = {"scope_hash": migration["source_scope_hash"],
+                  "workflow_hash": identity["workflow_hash"], "index": identity["index"]}
+        return cached.get("identity") == legacy
+    return False
 
 
 def _without_resource_use(text):
@@ -151,7 +235,15 @@ def run_offline_awm(args, subflow, flow_dir, workflow_ids):
     if args.resume and checkpoint_path.is_file():
         state = _read(checkpoint_path)
         if state["scope"] != scope:
-            raise ValueError("Offline-AWM checkpoint resources/data/runtime/schedule differ")
+            if getattr(args, "migrate_offline_awm_v2", False):
+                state = migrate_v2_checkpoint(state, scope, resources, checkpoint_path)
+        if state["scope"] != scope:
+            differences = _scope_differences(state["scope"], scope)
+            advice = ("For an explicit mixed v2->v3 continuation use --resume --migrate-offline-awm-v2; otherwise start a fresh arm."
+                      if "protocol" in differences else
+                      "Restore the original data/resources/runtime/batch settings; do not bypass checkpoint validation.")
+            raise ValueError("Offline-AWM checkpoint resources/data/runtime/schedule differ: "
+                             + json.dumps(differences, ensure_ascii=False) + ". " + advice)
     else:
         if checkpoint_path.exists():
             raise ValueError("Offline-AWM checkpoint exists; use --resume")
@@ -161,9 +253,12 @@ def run_offline_awm(args, subflow, flow_dir, workflow_ids):
     if set(state.get("cards", {})) != {"action_rules.md", "slot_policies.md"}:
         raise ValueError("Offline-AWM checkpoint is missing its evolving Action Cards")
     if args.resume and (output / "result.json").is_file():
-        if _read(output / "result.json").get("scope_hash") != _hash(scope):
+        result_scope = _read(output / "result.json").get("scope_hash")
+        if result_scope == _hash(scope):
+            return
+        if result_scope != (state.get("migration") or {}).get("source_scope_hash"):
             raise ValueError("Completed offline-AWM result has incompatible scope")
-        return
+        print("Existing v2 test result is backed up; evaluating the migrated continuation anew", flush=True)
     if not 0 <= int(state["completed_batches"]) <= len(batches):
         raise ValueError("Offline-AWM completed batch count is outside the saved schedule")
     output.mkdir(parents=True, exist_ok=True)
@@ -196,8 +291,9 @@ def run_offline_awm(args, subflow, flow_dir, workflow_ids):
             identity = {"scope_hash": _hash(scope), "workflow_hash": _hash(before),
                         "cards_hash": _hash(state["cards"]), "index": index}
             cached = _read(batch_path) if args.resume and batch_path.is_file() else None
-            if cached and cached.get("identity") == identity:
+            if args.resume and cached_rollout_matches(cached, identity, state):
                 rows = cached["rows"]
+                print(f"offline_awm {subflow}: reused cached rollout batch {index + 1}", flush=True)
             else:
                 shards = [batch[offset::len(ids)] for offset in range(len(ids))]
                 tasks = [(wid, shard) for wid, shard in zip(ids, shards) if shard]
@@ -285,5 +381,7 @@ def run_offline_awm(args, subflow, flow_dir, workflow_ids):
                   training_protocol="sequential AWM updates on standard action-turn batches; sampled-prefix exemplars",
                   training_action_turns=sum(len(batch) for batch in batches), training_batches=len(batches),
                   protocol=PROTOCOL, writable_action_cards=True, cards_hash=_hash(state["cards"]),
+                  training_lineage="mixed-v2-to-v3" if state.get("migration") else "v3-from-start",
+                  migration=state.get("migration"),
                   exemplar_count=len(memory))
     _save(output / "result.json", result)

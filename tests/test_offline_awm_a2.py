@@ -32,6 +32,18 @@ def _args(root, **changes):
 
 
 class OfflineAWMTest(unittest.TestCase):
+    def test_resume_diagnostics_distinguish_protocol_runtime_and_schedule(self):
+        saved = {"protocol": "v2", "runtime": {"model": "old", "max_turns": 1},
+                 "schedule": [["a", "b"]], "train_hash": "unchanged"}
+        current = {"protocol": "v3", "runtime": {"model": "new", "max_turns": 1},
+                   "schedule": [["b", "a"]], "train_hash": "unchanged"}
+        diff = experiment._scope_differences(saved, current)
+        self.assertEqual(set(diff), {"protocol", "runtime", "schedule"})
+        self.assertEqual(diff["protocol"], {"saved": "v2", "current": "v3"})
+        self.assertEqual(set(diff["runtime"]), {"model"})
+        self.assertEqual(diff["schedule"]["saved"], {"batches": 1, "action_turns": 2})
+        self.assertEqual(experiment._scope_differences(current, current), {})
+
     def test_unbounded_induction_keeps_late_targets_without_react_or_repeated_context(self):
         from eval_tod.abcd.agent import _format_abcd_turn_trajectory
         conv = _conversation("train")
@@ -113,7 +125,7 @@ class OfflineAWMTest(unittest.TestCase):
                 self.assertEqual(experiment._with_resource_use(result), result)
                 self.assertNotIn("stale resource guide", result)
 
-    def _run_case(self, root, fail_once=False, card_updates=False):
+    def _run_case(self, root, fail_once=False, card_updates=False, migrate_v2=False, legacy_completed=0):
         offline = root / "offline_artifact"
         offline.mkdir()
         for name, content in (("skill.md", "OFFLINE K0"), ("reference.md", "BASE REFERENCE"),
@@ -149,7 +161,7 @@ class OfflineAWMTest(unittest.TestCase):
                 events.append(("induce", copy.deepcopy(views)))
                 assert all(conv["convo_id"] == "train" for conv in views)
                 assert "BASE SLOT POLICIES" in resource_context and "BASE ACTION RULES" in resource_context
-                if fail[0]:
+                if fail[0] and int(turn_results[0]["turn_index"]) == (3 if legacy_completed else 1):
                     from eval_tod.abcd.agent import _AWM_WORKFLOW_RESOURCE_SECTION
                     fail[0] = False
                     self.workflow.replace(_AWM_WORKFLOW_RESOURCE_SECTION)
@@ -185,8 +197,19 @@ class OfflineAWMTest(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "retaining previous workflow"):
                     experiment.run_offline_awm(args, "f", root, ["ID1", "ID2"])
                 state = experiment._read(root / "offline_awm" / "awm_state.json")
-                self.assertEqual(state["completed_batches"], 0)
-                self.assertIn("OFFLINE K0", state["workflow"])
+                self.assertEqual(state["completed_batches"], legacy_completed)
+                if not legacy_completed:
+                    self.assertIn("OFFLINE K0", state["workflow"])
+                if migrate_v2:
+                    state["scope"]["protocol"] = experiment.V2_PROTOCOL
+                    state.pop("cards")
+                    experiment._save(root / "offline_awm" / "awm_state.json", state)
+                    path = root / "offline_awm" / "batches" / f"batch_{legacy_completed + 1:04d}.json"
+                    cached = experiment._read(path)
+                    cached["identity"]["scope_hash"] = experiment._hash(state["scope"])
+                    cached["identity"].pop("cards_hash")
+                    experiment._save(path, cached)
+                    args.migrate_offline_awm_v2 = True
                 args.resume = True
             experiment.run_offline_awm(args, "f", root, ["ID1", "ID2"])
             count = len(events)
@@ -200,6 +223,10 @@ class OfflineAWMTest(unittest.TestCase):
         self.assertEqual(result["runtime_protocol"], abcd_runtime_options(args))
         self.assertEqual(result["llm_usage"]["generation"]["total"]["calls"], 8 if fail_once else 7)
         self.assertEqual(result["llm_usage"]["testing"]["total"]["calls"], 1)
+        if migrate_v2:
+            self.assertEqual(result["training_lineage"], "mixed-v2-to-v3")
+            self.assertEqual(result["migration"]["completed_v2_batches"], legacy_completed)
+            self.assertEqual(len(list((root / "offline_awm" / "migration_backups").glob("*/awm_state.json"))), 1)
 
     def test_online_training_frozen_test_and_usage(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -216,6 +243,49 @@ class OfflineAWMTest(unittest.TestCase):
             self.assertIn("EVOLVED SLOT POLICY", (root / "slot_policies.md").read_text(encoding="utf-8"))
             self.assertIn("EVOLVED SLOT POLICY", experiment._read(root / "awm_state.json")["cards"]["slot_policies.md"])
             self.assertEqual(len(list((root / "card_updates").glob("*.json"))), 2)
+
+    def test_v2_migration_reuses_boundary_rollout_and_preserves_failed_attempt_cost(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self._run_case(Path(directory), fail_once=True, card_updates=True, migrate_v2=True)
+
+    def test_v2_migration_skips_completed_batches_and_preserves_memory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self._run_case(Path(directory), fail_once=True, migrate_v2=True, legacy_completed=1)
+
+    def test_v2_migration_preserves_completed_workflow_memory_and_cost(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "awm_state.json"
+            scope = {"protocol": experiment.PROTOCOL, "schedule": [["a"], ["b"], ["c"]],
+                     "runtime": {"model": "test"}, "resource_hash": "same"}
+            old = {"scope": {**scope, "protocol": experiment.V2_PROTOCOL}, "completed_batches": 2,
+                   "workflow": "LEARNED V2", "exemplars": [{"dialogue_id": "kept"}],
+                   "usage": {"total": {"calls": 999, "total_tokens": 12345}}}
+            experiment._save(path, old)
+            original = path.read_bytes()
+            resources = {"action_rules.md": "K0 rules", "slot_policies.md": "K0 slots"}
+            migrated = experiment.migrate_v2_checkpoint(old, scope, resources, path)
+            self.assertEqual(migrated["completed_batches"], 2)
+            for key in ("workflow", "exemplars", "usage"):
+                self.assertEqual(migrated[key], old[key])
+            self.assertEqual(migrated["cards"], resources)
+            backup = Path(migrated["migration"]["backup_dir"])
+            self.assertEqual((backup / "awm_state.json").read_bytes(), original)
+            self.assertEqual(migrated["migration"]["planned_v3_batches"], 1)
+            self.assertEqual(migrated["migration"]["first_v3_batch_number"], 3)
+            self.assertEqual(experiment._read(path), migrated)
+
+    def test_migration_refuses_nonprotocol_drift_without_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "awm_state.json"
+            scope = {"protocol": experiment.PROTOCOL, "schedule": [["a"]], "train_hash": "new"}
+            old = {"scope": {**scope, "protocol": experiment.V2_PROTOCOL, "train_hash": "old"},
+                   "completed_batches": 0, "workflow": "keep", "exemplars": []}
+            experiment._save(path, old)
+            original = path.read_bytes()
+            with self.assertRaisesRegex(ValueError, "protocol-only"):
+                experiment.migrate_v2_checkpoint(old, scope, {}, path)
+            self.assertEqual(path.read_bytes(), original)
+            self.assertFalse((path.parent / "migration_backups").exists())
 
     def test_card_replacement_preserves_other_actions_and_removes_duplicates(self):
         cards = {"action_rules.md": "# Rules\n#### `send-link`\nold\n#### `enter-details`\nkeep\n",
@@ -287,7 +357,7 @@ class OfflineAWMTest(unittest.TestCase):
             a2._json(root / "a2_config.json", {"arguments": previous})
             original = (root / "a2_config.json").read_bytes()
             argv = ["run_a2_abcd.py", "--subflow", "f", "--output-dir", str(root), "--resume", "--skip-utterance-eval",
-                    "--add-arms", "offline_awm", "--skip-arms", ",".join(a2.ARMS)]
+                    "--add-arms", "offline_awm", "--skip-arms", ",".join(a2.ARMS), "--migrate-offline-awm-v2"]
             with patch.object(sys, "argv", argv), patch.object(a2, "_subflows", return_value=["f"]), \
                     patch.object(a2.subprocess, "run") as run, contextlib.redirect_stdout(io.StringIO()):
                 run.return_value.returncode = 0
@@ -295,6 +365,7 @@ class OfflineAWMTest(unittest.TestCase):
             self.assertEqual((root / "a2_config.json").read_bytes(), original)
             command = run.call_args.args[0]
             self.assertIn("offline_awm", command[command.index("--arms") + 1])
+            self.assertIn("--migrate-offline-awm-v2", command)
             aggregate = a2._read(root / "a2_aggregate.json")
             self.assertIn("offline_awm", aggregate["arms"])
             self.assertEqual(aggregate["execution_arms"], ["offline_awm"])
