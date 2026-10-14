@@ -1692,6 +1692,8 @@ class ABCDAgent(AbstractTodAgent):
         offline_demonstrations: bool = False,
         resource_context: str | None = None,
         editable_action_cards: bool = False,
+        edit_mode: str = "rewrite",
+        editable_resources: dict[str, str] | None = None,
     ) -> str:
         """Induce workflow patterns with LLM-managed update.
 
@@ -1699,6 +1701,10 @@ class ABCDAgent(AbstractTodAgent):
         Offline induction compiles a fixed corpus of gold demonstrations.
         """
         from llm import chat
+        if edit_mode not in {"rewrite", "tools"}:
+            raise ValueError("AWM edit_mode must be rewrite or tools")
+        if edit_mode == "tools" and (not editable_action_cards or editable_resources is None):
+            raise ValueError("Tool editing requires explicit writable-card resources")
 
         # Build batch summary with ground-truth actions
         lines = ["## New Batch Summary"]
@@ -1832,7 +1838,12 @@ class ABCDAgent(AbstractTodAgent):
         )
 
         self.last_awm_card_updates = []
-        if editable_action_cards:
+        self.last_awm_edit_operations = []
+        self.last_awm_edited_resources = None
+        if edit_mode == "tools":
+            from skill_mining.awm_edit_tools import TOOL_INSTRUCTIONS
+            prompt += TOOL_INSTRUCTIONS + "\nAllowed canonical action names: " + json.dumps(sorted(self.action_schema.get("actions", [])))
+        elif editable_action_cards:
             prompt += (
                 "\n\n## Writable Action Cards: Output Override\n"
                 "In the SAME workflow induction step, also refine reusable action rules and ordered "
@@ -1864,9 +1875,11 @@ class ABCDAgent(AbstractTodAgent):
             if editable_action_cards and retry_error:
                 request_prompt += (
                     "\n\n## Previous Attempt Rejected\n" + retry_error + "\n"
+                    + ("Regenerate a complete corrected JSON edit plan only, with exact file/section/anchor. "
+                     "The previous plan was not applied.\n" if edit_mode == "tools" else
                     "Regenerate a COMPLETE concise workflow as plain Markdown followed by the "
                     "delimited JSON array. Close both delimiters and all JSON strings/brackets. "
-                    "Do not return a partial continuation or put workflow inside a JSON string."
+                    "Do not return a partial continuation or put workflow inside a JSON string.")
                 )
             try:
                 raw_reply = self._chat(
@@ -1886,7 +1899,14 @@ class ABCDAgent(AbstractTodAgent):
                         extra={"attempt": attempt + 1, "response_chars": len(raw_reply)},
                     )
                 if updated:
-                    if editable_action_cards:
+                    if edit_mode == "tools":
+                        from skill_mining.awm_edit_tools import apply_awm_edit_plan
+                        files = {**editable_resources, "skill.md": existing}
+                        edited, operations = apply_awm_edit_plan(updated, files, self.action_schema.get("actions", set()))
+                        updated = edited["skill.md"]
+                        self.last_awm_edited_resources = edited
+                        self.last_awm_edit_operations = operations
+                    elif editable_action_cards:
                         updated, card_updates = _parse_awm_card_update(updated, self.action_schema.get("actions", set()))
                         self.last_awm_card_updates = card_updates
                     break
