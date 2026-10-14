@@ -163,7 +163,7 @@ class OfflineAWMTest(unittest.TestCase):
                 self.assertEqual(experiment._with_resource_use(result), result)
                 self.assertNotIn("stale resource guide", result)
 
-    def _run_case(self, root, fail_once=False, card_updates=False, migrate_v2=False, legacy_completed=0):
+    def _run_case(self, root, fail_once=False, card_updates=False, migrate_v2=False, legacy_completed=0, tools=False):
         offline = root / "offline_artifact"
         offline.mkdir()
         for name, content in (("skill.md", "OFFLINE K0"), ("reference.md", "BASE REFERENCE"),
@@ -191,7 +191,7 @@ class OfflineAWMTest(unittest.TestCase):
                 return [{"convo_id": conversation["convo_id"], "turn_index": turn_index, "target_type": "action",
                          "predicted_action": targets[2], "predicted_slots": targets[3], "prediction": "Predicted action."}]
 
-            def induce(self, views, predictions, metrics, *, turn_results, resource_context, editable_action_cards):
+            def induce(self, views, predictions, metrics, *, turn_results, resource_context, editable_action_cards, **options):
                 assert editable_action_cards is True
                 assert experiment.RESOURCE_START not in self.workflow.text
                 assert experiment.RESOURCE_END not in self.workflow.text
@@ -208,6 +208,11 @@ class OfflineAWMTest(unittest.TestCase):
                 self.workflow.replace("### AWM learned workflow\nWhen a link is requested, use dialogue values.\n" + experiment.RESOURCE_START)
                 if card_updates:
                     self.last_awm_card_updates = [{"action": "send-link", "slot_policy": "EVOLVED SLOT POLICY"}]
+                if tools:
+                    assert options["edit_mode"] == "tools"
+                    self.last_awm_edited_resources = {**options["editable_resources"],
+                        "slot_policies.md": "BASE SLOT POLICIES\n#### `send-link`\nEVOLVED SLOT POLICY\n"}
+                    self.last_awm_edit_operations = [{"file": "slot_policies.md", "applied": True}]
                 return self.workflow.text
 
             def update_memory(self, views, predictions, metrics, **kwargs):
@@ -226,6 +231,8 @@ class OfflineAWMTest(unittest.TestCase):
             return {"ast_cds": {"ast_joint": .5, "ast_action_name": .6, "ast_slot_value": .7, "num_action_turns": 2}}
 
         args = _args(root)
+        if tools:
+            args.offline_awm_edit_mode = "tools"
         with patch("scripts.run_subflow_eval.load_subflow_data", return_value=(train, test)), \
                 patch.object(experiment, "build_abcd_runtime_agent", side_effect=lambda args, **kwargs: FakeAgent(**kwargs)), \
                 patch("scripts.run_subflow_eval.evaluate_agent_on_subflow", side_effect=evaluate), \
@@ -249,6 +256,8 @@ class OfflineAWMTest(unittest.TestCase):
                     experiment._save(path, cached)
                     args.migrate_offline_awm_v2 = True
                 args.resume = True
+                if tools:
+                    args.offline_awm_edit_mode = None  # Inherit tools from checkpoint.
             experiment.run_offline_awm(args, "f", root, ["ID1", "ID2"])
             count = len(events)
             args.resume = True
@@ -265,6 +274,8 @@ class OfflineAWMTest(unittest.TestCase):
             self.assertEqual(result["training_lineage"], "mixed-v2-to-v3")
             self.assertEqual(result["migration"]["completed_v2_batches"], legacy_completed)
             self.assertEqual(len(list((root / "offline_awm" / "migration_backups").glob("*/awm_state.json"))), 1)
+        if tools:
+            self.assertEqual(result["induction_edit_mode"], "tools")
 
     def test_online_training_frozen_test_and_usage(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -281,6 +292,14 @@ class OfflineAWMTest(unittest.TestCase):
             self.assertIn("EVOLVED SLOT POLICY", (root / "slot_policies.md").read_text(encoding="utf-8"))
             self.assertIn("EVOLVED SLOT POLICY", experiment._read(root / "awm_state.json")["cards"]["slot_policies.md"])
             self.assertEqual(len(list((root / "card_updates").glob("*.json"))), 2)
+
+    def test_tool_mode_adapter_updates_cards_and_resumes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self._run_case(Path(directory), card_updates=True, tools=True)
+
+    def test_failed_tool_mode_resume_inherits_saved_interface(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self._run_case(Path(directory), fail_once=True, card_updates=True, tools=True)
 
     def test_v2_migration_reuses_boundary_rollout_and_preserves_failed_attempt_cost(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -395,7 +414,8 @@ class OfflineAWMTest(unittest.TestCase):
             a2._json(root / "a2_config.json", {"arguments": previous})
             original = (root / "a2_config.json").read_bytes()
             argv = ["run_a2_abcd.py", "--subflow", "f", "--output-dir", str(root), "--resume", "--skip-utterance-eval",
-                    "--add-arms", "offline_awm", "--skip-arms", ",".join(a2.ARMS), "--migrate-offline-awm-v2"]
+                    "--add-arms", "offline_awm", "--skip-arms", ",".join(a2.ARMS), "--migrate-offline-awm-v2",
+                    "--offline-awm-edit-mode", "tools"]
             with patch.object(sys, "argv", argv), patch.object(a2, "_subflows", return_value=["f"]), \
                     patch.object(a2.subprocess, "run") as run, contextlib.redirect_stdout(io.StringIO()):
                 run.return_value.returncode = 0
@@ -404,6 +424,7 @@ class OfflineAWMTest(unittest.TestCase):
             command = run.call_args.args[0]
             self.assertIn("offline_awm", command[command.index("--arms") + 1])
             self.assertIn("--migrate-offline-awm-v2", command)
+            self.assertEqual(command[command.index("--offline-awm-edit-mode") + 1], "tools")
             aggregate = a2._read(root / "a2_aggregate.json")
             self.assertIn("offline_awm", aggregate["arms"])
             self.assertEqual(aggregate["execution_arms"], ["offline_awm"])

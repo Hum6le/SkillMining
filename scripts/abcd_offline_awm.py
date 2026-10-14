@@ -263,6 +263,20 @@ def run_offline_awm(args, subflow, flow_dir, workflow_ids):
     if not 0 <= int(state["completed_batches"]) <= len(batches):
         raise ValueError("Offline-AWM completed batch count is outside the saved schedule")
     output.mkdir(parents=True, exist_ok=True)
+    old_mode = state.get("induction_edit_mode", "rewrite")
+    edit_mode = getattr(args, "offline_awm_edit_mode", None) or old_mode
+    if edit_mode != old_mode:
+        if checkpoint_path.is_file():
+            backup = output / "edit_mode_backups" / (datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "_" + uuid4().hex[:8])
+            backup.mkdir(parents=True)
+            shutil.copy2(checkpoint_path, backup / checkpoint_path.name)
+        else:
+            backup = None
+        state.setdefault("edit_interface_history", []).append({"from": old_mode, "to": edit_mode,
+            "first_batch_index": state["completed_batches"], "first_batch_number": state["completed_batches"] + 1,
+            "backup_dir": str(backup) if backup else None, "changed_at_utc": datetime.now(timezone.utc).isoformat()})
+        print(f"AWM edit interface {old_mode}->{edit_mode} from batch {state['completed_batches'] + 1}", flush=True)
+    state["induction_edit_mode"] = edit_mode
     _save(checkpoint_path, state)
     workflow, memory = WorkflowStore(), MemoryStore()
     workflow.replace(state["workflow"])
@@ -323,8 +337,10 @@ def run_offline_awm(args, subflow, flow_dir, workflow_ids):
             # rollout still gets the complete footer; reconstruct it afterward.
             workflow.replace(_without_resource_use(before))
             try:
-                updated = updater.induce(views, predictions, metrics, turn_results=rows,
-                                          resource_context=resource_context, editable_action_cards=True)
+                options = {"resource_context": resource_context, "editable_action_cards": True}
+                if edit_mode == "tools":
+                    options.update(edit_mode="tools", editable_resources=state["cards"])
+                updated = updater.induce(views, predictions, metrics, turn_results=rows, **options)
             finally:
                 workflow.replace(before)
             if not updated.strip() or updated.strip() == _AWM_WORKFLOW_RESOURCE_SECTION.strip():
@@ -333,13 +349,15 @@ def run_offline_awm(args, subflow, flow_dir, workflow_ids):
             # Replace the legacy resource-only footer with this adapter's
             # accurate resource contract (hidden scenario labels, prefix memory).
             updated = updated.replace(_AWM_WORKFLOW_RESOURCE_SECTION.strip(), "")
-            cards = update_card_resources(state["cards"], updater.last_awm_card_updates)
+            cards = ({name: updater.last_awm_edited_resources[name] for name in state["cards"]}
+                     if edit_mode == "tools" else update_card_resources(state["cards"], updater.last_awm_card_updates))
             workflow.replace(_with_resource_use(updated))
             updater.update_memory(views, predictions, metrics, turn_results=rows)
             state.update(completed_batches=index + 1, workflow=workflow.text, exemplars=copy.deepcopy(memory.exemplars), cards=cards)
             state["usage"] = merge_usage_summaries(previous_usage, get_usage())
             _save(output / "card_updates" / f"batch_{index + 1:04d}.json", {
-                "identity": identity, "updates": updater.last_awm_card_updates,
+                "identity": identity, "edit_mode": edit_mode, "updates": updater.last_awm_card_updates,
+                "file_edits": updater.last_awm_edit_operations if edit_mode == "tools" else [],
                 "cards_before_hash": _hash(before_state["cards"]), "cards_after_hash": _hash(cards)})
             _save(checkpoint_path, state)
             live_resources.update(cards)
@@ -384,7 +402,10 @@ def run_offline_awm(args, subflow, flow_dir, workflow_ids):
                   training_protocol="sequential AWM updates on standard action-turn batches; sampled-prefix exemplars",
                   training_action_turns=sum(len(batch) for batch in batches), training_batches=len(batches),
                   protocol=PROTOCOL, writable_action_cards=True, cards_hash=_hash(state["cards"]),
-                  training_lineage="mixed-v2-to-v3" if state.get("migration") else "v3-from-start",
+                  training_lineage=("mixed-v2-to-v3" if state.get("migration") else
+                      "mixed-edit-interface" if any(h["first_batch_index"] > 0 for h in state.get("edit_interface_history", [])) else
+                      "v3-tools-from-start" if edit_mode == "tools" else "v3-from-start"),
+                  induction_edit_mode=edit_mode, edit_interface_history=state.get("edit_interface_history", []),
                   migration=state.get("migration"),
                   exemplar_count=len(memory))
     _save(output / "result.json", result)

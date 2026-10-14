@@ -241,6 +241,8 @@ def _aggregate(args: argparse.Namespace, subflows: list[str]) -> None:
                              "usage": data.get("a2_total_usage") if arm == "full"
                              else data.get("llm_usage"), "result": str(path),
                              "method_protocol": data.get("protocol"),
+                             "induction_edit_mode": data.get("induction_edit_mode"),
+                             "edit_interface_history": data.get("edit_interface_history"),
                              "training_lineage": data.get("training_lineage"), "migration": data.get("migration")})
     aggregate = {}
     for arm in args.arms:
@@ -255,6 +257,8 @@ def _aggregate(args: argparse.Namespace, subflows: list[str]) -> None:
             lineages = [row.get("training_lineage") or "legacy-or-unrecorded" for row in group]
             aggregate[arm]["training_lineages"] = {name: lineages.count(name) for name in sorted(set(lineages))}
             aggregate[arm]["contains_migrated_training"] = "mixed-v2-to-v3" in lineages
+            aggregate[arm]["contains_mixed_edit_interfaces"] = any(
+                any(h.get("first_batch_index", 0) > 0 for h in row.get("edit_interface_history") or []) for row in group)
     _json(root / "a2_aggregate.json", {"protocol": "ABCD independent coarse subflows",
                                          "arms": list(args.arms),
                                          "execution_arms": list(_execution_arms(args)),
@@ -292,6 +296,8 @@ def main() -> int:
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--migrate-offline-awm-v2", action="store_true",
                         help="Explicit backed-up v2->v3 mixed continuation; preserves prior completed batches")
+    parser.add_argument("--offline-awm-edit-mode", choices=("rewrite", "tools"), default=None,
+                        help="AWM full rewrite or shared file-edit tools; resume inherits saved mode if omitted")
     parser.add_argument("--dry-run", action="store_true", help="Show workflow assignment without API calls")
     parser.add_argument("--worker-subflow", help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -392,6 +398,8 @@ def main() -> int:
                 cmd += ["--resume"]
             if args.migrate_offline_awm_v2:
                 cmd += ["--migrate-offline-awm-v2"]
+            if args.offline_awm_edit_mode is not None:
+                cmd += ["--offline-awm-edit-mode", args.offline_awm_edit_mode]
             flow_dir = root / name
             flow_dir.mkdir(parents=True, exist_ok=True)
             with (flow_dir / "a2_worker.log").open("a", encoding="utf-8") as log:
