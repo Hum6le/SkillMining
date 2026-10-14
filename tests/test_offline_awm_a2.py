@@ -32,6 +32,48 @@ def _args(root, **changes):
 
 
 class OfflineAWMTest(unittest.TestCase):
+    def test_unbounded_induction_keeps_late_targets_without_react_or_repeated_context(self):
+        from eval_tod.abcd.agent import _format_abcd_turn_trajectory
+        conv = _conversation("train")
+        history = [{"speaker": "customer", "text": f"HISTORY_{i}_" + "x" * 200,
+                    "targets": ["", "", "", [], -1]} for i in range(40)]
+        conv["delexed"] = history + conv["delexed"]
+        conv["original"] = [[t["speaker"], t["text"]] for t in conv["delexed"]]
+        target = len(conv["delexed"]) - 1
+        row = {"convo_id": "train", "turn_index": target, "target_type": "action",
+               "context": "FULL_REACT_CONTEXT_SENTINEL", "predicted_action": "send-link",
+               "predicted_slots": ["WRONG_VALUE"], "prediction": "AGENT_FINAL_PREDICTION_" + "y" * 800,
+               "react_trace": [{"messages": "REACT_MESSAGES_SENTINEL", "observation": "TOOL_DUMP_SENTINEL"}],
+               "action_selection": {"messages": "SELECTION_MESSAGES_SENTINEL"}}
+        prefix = experiment.feedback_prefixes(build_action_turn_samples([conv])[-1:])[0]
+        text = _format_abcd_turn_trajectory(prefix, [row], max_chars=None)
+        self.assertGreater(len(text), 4000)
+        self.assertIn(f"turn_index: {target}", text)
+        self.assertIn('gold_slots: ["FUTURE_VALUE"]', text)
+        self.assertIn('predicted_slots: ["WRONG_VALUE"]', text)
+        self.assertIn("slot_correct: False", text)
+        self.assertIn(row["prediction"], text)
+        for i in range(40):
+            self.assertEqual(text.count(f"HISTORY_{i}_"), 1)
+        for forbidden in ("FULL_REACT_CONTEXT_SENTINEL", "REACT_MESSAGES_SENTINEL", "TOOL_DUMP_SENTINEL", "SELECTION_MESSAGES_SENTINEL"):
+            self.assertNotIn(forbidden, text)
+        self.assertEqual(text.count("predicted_action:"), 1)
+        self.assertNotIn("gold_action: enter-details", text)  # unsampled history
+
+    def test_native_induction_does_not_drop_large_batch_summaries(self):
+        from awm import WorkflowStore
+        from eval_tod.abcd.agent import ABCDAgent
+        from eval_tod.schemas import Prediction
+        conversations = [_conversation(f"train-{i}") for i in range(30)]
+        predictions = [Prediction(dialogue_id=str(i), inform_slots={}, request_slots={},
+            booking={}, response_text="response") for i in range(30)]
+        workflow = WorkflowStore()
+        with patch("llm.resolve_config", return_value={"model": "test", "api_key": "", "base_url": ""}), \
+             patch.object(ABCDAgent, "_chat", return_value="### Updated pattern") as chat:
+            agent = ABCDAgent(model="test", workflow=workflow, expose_scenario_labels=False)
+            agent.induce(conversations, predictions, [{} for _ in conversations], turn_results=[])
+        self.assertIn("### Conversation train-29", chat.call_args.args[0])
+
     def test_feedback_is_prefix_only_and_only_sampled_turns_have_gold(self):
         conv = _conversation("train")
         before = copy.deepcopy(conv)

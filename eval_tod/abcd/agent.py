@@ -1722,7 +1722,7 @@ class ABCDAgent(AbstractTodAgent):
                     row for row in turn_results
                     if str(row.get("convo_id", "")) == str(convo_id)
                 ]
-                trajectory = _format_abcd_turn_trajectory(conv, rows)
+                trajectory = _format_abcd_turn_trajectory(conv, rows, max_chars=None)
             if offline_demonstrations:
                 lines.append(
                     f"{header}\n"
@@ -1807,7 +1807,7 @@ class ABCDAgent(AbstractTodAgent):
             "missing/unverified values are handled, and when a previous value "
             "may be safely reused. Describe availability patterns, never literal "
             "customer values or invented field names.\n\n"
-            + "\n".join(lines if offline_demonstrations else lines[:60])
+            + "\n".join(lines)
             + "\n\n## Existing Workflow\n"
             + existing
             + ("\n\n## Read-only Offline Resources\n"
@@ -2124,9 +2124,39 @@ def _build_abcd_turn_trajectory(
 def _format_abcd_turn_trajectory(
     conversation: dict[str, Any],
     turn_results: list[dict[str, Any]],
-    max_chars: int = 4000,
+    max_chars: int | None = 4000,
 ) -> str:
-    """Render a bounded prompt view of a structured ABCD trajectory."""
+    """Render trajectory evidence, never serialized ReAct prompts/tool state.
+
+    Induction uses None: dialogue history once plus observed predictions, without
+    dropping late targets. The bounded legacy view remains for exemplar memory.
+    """
+    if max_chars is None:
+        result_by_index = {int(r["turn_index"]): r for r in turn_results
+                           if isinstance(r, dict) and "turn_index" in r}
+        lines = ["## Observed Dialogue Trajectory (each turn once)"]
+        for index, turn in enumerate(conversation.get("delexed", [])):
+            speaker, text = _get_original_turn(conversation, index, turn)
+            # Only actual dialogue text, not row.context, messages, reference
+            # dumps, planner thoughts, action_selection or react_trace.
+            lines.append(f"- turn_index: {index} | speaker: {speaker}\n  text: {text}")
+            row = result_by_index.get(index)
+            if row is None:
+                continue  # Observed history is not an evaluated prediction.
+            action = str(row.get("predicted_action") or "")
+            slots = [str(v) for v in (row.get("predicted_slots") or [])]
+            lines.extend([f"  predicted_action: {action or 'none'}",
+                          "  predicted_slots: " + json.dumps(slots, ensure_ascii=False),
+                          "  agent_prediction: " + str(row.get("prediction") or "")])
+            targets = turn.get("targets") or []
+            if len(targets) >= 3 and targets[1] == "take_action":
+                gold_action = str(targets[2] or "")
+                gold_slots = [str(v) for v in targets[3]] if len(targets) > 3 and isinstance(targets[3], list) else []
+                action_ok, slot_ok = action == gold_action, slots == gold_slots
+                lines.extend([f"  gold_action: {gold_action}",
+                              "  gold_slots: " + json.dumps(gold_slots, ensure_ascii=False),
+                              f"  action_correct: {action_ok} | slot_correct: {slot_ok} | ast_correct: {action_ok and slot_ok}"])
+        return "\n".join(lines)
     rows = _build_abcd_turn_trajectory(conversation, turn_results)
     lines: list[str] = []
     for row in rows:

@@ -14,7 +14,7 @@ from pathlib import Path
 
 from scripts.abcd_runtime_utils import abcd_runtime_options, build_abcd_runtime_agent
 
-PROTOCOL = "offline-awm-online-v1"
+PROTOCOL = "offline-awm-online-v2-target-complete-feedback"
 RESOURCE_START = "<!-- OFFLINE_AWM_RESOURCE_START -->"
 RESOURCE_END = "<!-- OFFLINE_AWM_RESOURCE_END -->"
 RESOURCE_USE = f"""{RESOURCE_START}
