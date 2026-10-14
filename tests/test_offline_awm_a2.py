@@ -94,7 +94,7 @@ class OfflineAWMTest(unittest.TestCase):
         self.assertIn("retrieve_action_card", text)
         self.assertIn("sampled action turns", text)
 
-    def _run_case(self, root, fail_once=False):
+    def _run_case(self, root, fail_once=False, card_updates=False):
         offline = root / "offline_artifact"
         offline.mkdir()
         for name, content in (("skill.md", "OFFLINE K0"), ("reference.md", "BASE REFERENCE"),
@@ -111,15 +111,19 @@ class OfflineAWMTest(unittest.TestCase):
         class FakeAgent:
             def __init__(self, **kwargs):
                 self.workflow, self.memory, self.kwargs = kwargs["workflow"], kwargs["memory"], kwargs
+                self.last_awm_card_updates = []
 
             def predict_all_turns(self, conversation, *, turn_index, **kwargs):
                 calls[0] += 1
                 events.append(("predict", conversation["convo_id"], turn_index))
+                if card_updates and turn_index == 3:
+                    assert "EVOLVED SLOT POLICY" in self.kwargs["slot_policies_text"]
                 targets = conversation["delexed"][turn_index]["targets"]
                 return [{"convo_id": conversation["convo_id"], "turn_index": turn_index, "target_type": "action",
                          "predicted_action": targets[2], "predicted_slots": targets[3], "prediction": "Predicted action."}]
 
-            def induce(self, views, predictions, metrics, *, turn_results, resource_context):
+            def induce(self, views, predictions, metrics, *, turn_results, resource_context, editable_action_cards):
+                assert editable_action_cards is True
                 calls[0] += 1
                 events.append(("induce", copy.deepcopy(views)))
                 assert all(conv["convo_id"] == "train" for conv in views)
@@ -130,6 +134,8 @@ class OfflineAWMTest(unittest.TestCase):
                     self.workflow.replace(_AWM_WORKFLOW_RESOURCE_SECTION)
                     return _AWM_WORKFLOW_RESOURCE_SECTION
                 self.workflow.replace("### AWM learned workflow\nWhen a link is requested, use dialogue values.")
+                if card_updates:
+                    self.last_awm_card_updates = [{"action": "send-link", "slot_policy": "EVOLVED SLOT POLICY"}]
                 return self.workflow.text
 
             def update_memory(self, views, predictions, metrics, **kwargs):
@@ -140,7 +146,10 @@ class OfflineAWMTest(unittest.TestCase):
             events.append(("test",))
             self.assertEqual(conversations, test)
             self.assertIn(experiment.RESOURCE_START, agent.workflow.text)
-            self.assertEqual(agent.kwargs["slot_policies_text"], "BASE SLOT POLICIES")
+            if card_updates:
+                self.assertIn("EVOLVED SLOT POLICY", agent.kwargs["slot_policies_text"])
+            else:
+                self.assertEqual(agent.kwargs["slot_policies_text"], "BASE SLOT POLICIES")
             self.assertEqual(len(agent.memory.exemplars), 2)
             return {"ast_cds": {"ast_joint": .5, "ast_action_name": .6, "ast_slot_value": .7, "num_action_turns": 2}}
 
@@ -177,6 +186,60 @@ class OfflineAWMTest(unittest.TestCase):
     def test_failed_induction_resumes_cached_rollout_without_losing_k0_or_usage(self):
         with tempfile.TemporaryDirectory() as directory:
             self._run_case(Path(directory), fail_once=True)
+
+    def test_updated_cards_reach_next_rollout_and_frozen_test(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self._run_case(Path(directory), card_updates=True)
+            root = Path(directory) / "offline_awm"
+            self.assertIn("EVOLVED SLOT POLICY", (root / "slot_policies.md").read_text(encoding="utf-8"))
+            self.assertIn("EVOLVED SLOT POLICY", experiment._read(root / "awm_state.json")["cards"]["slot_policies.md"])
+            self.assertEqual(len(list((root / "card_updates").glob("*.json"))), 2)
+
+    def test_card_replacement_preserves_other_actions_and_removes_duplicates(self):
+        cards = {"action_rules.md": "# Rules\n#### `send-link`\nold\n#### `enter-details`\nkeep\n",
+                 "slot_policies.md": "# Slots\n#### `send-link`\nwrong\n#### `enter-details`\nkeep-slot\n#### `send-link`\nobsolete\n"}
+        updated = experiment.update_card_resources(cards, [{"action": "send-link", "slot_policy": "new-order"}])
+        self.assertEqual(updated["action_rules.md"], cards["action_rules.md"])
+        self.assertEqual(updated["slot_policies.md"].count("#### `send-link`"), 1)
+        self.assertIn("keep-slot", updated["slot_policies.md"])
+        self.assertNotIn("obsolete", updated["slot_policies.md"])
+        self.assertEqual(experiment.update_card_resources(updated, [{"action": "send-link", "slot_policy": "new-order"}]), updated)
+
+    def test_native_awm_card_proposal_validates_and_keeps_single_induction(self):
+        from awm import WorkflowStore
+        from eval_tod.abcd.agent import ABCDAgent, _parse_awm_card_update
+        workflow = WorkflowStore()
+        workflow.replace("OLD")
+        raw = json.dumps({"workflow": "### Updated workflow", "action_card_updates": [
+            {"action": "send-link", "slot_policy": "Use the validated email from the current dialogue."}]})
+        with patch("llm.resolve_config", return_value={"model": "test", "api_key": "", "base_url": ""}), \
+             patch.object(ABCDAgent, "_chat", return_value=raw) as chat:
+            agent = ABCDAgent(model="test", workflow=workflow, expose_scenario_labels=False)
+            result = agent.induce([], [], [], resource_context="CURRENT CARDS", editable_action_cards=True)
+        self.assertEqual(chat.call_count, 1)
+        self.assertIn("Writable Action Cards", chat.call_args.args[0])
+        self.assertEqual(agent.last_awm_card_updates[0]["action"], "send-link")
+        self.assertTrue(result.startswith("### Updated workflow"))
+        for updates in ([{"action": "not-valid", "slot_policy": "bad"}],
+                        [{"action": "send-link", "slot_policy": "#### `enter-details`\nhijack"}],
+                        [{"action": "send-link", "slot_policy": ""}],
+                        [{"action": "send-link", "slot_policy": "a"}, {"action": "send-link", "slot_policy": "b"}]):
+            with self.assertRaises(ValueError):
+                _parse_awm_card_update(json.dumps({"workflow": "ok", "action_card_updates": updates}), {"send-link"})
+
+    def test_invalid_card_response_does_not_mutate_workflow(self):
+        from awm import WorkflowStore
+        from eval_tod.abcd.agent import ABCDAgent
+        workflow = WorkflowStore()
+        workflow.replace("OLD")
+        with patch("llm.resolve_config", return_value={"model": "test", "api_key": "", "base_url": ""}), \
+             patch.object(ABCDAgent, "_chat", return_value='{"workflow":"bad","action_card_updates":[{"action":"BAD"}]}'), \
+             patch("eval_tod.abcd.agent.time.sleep"):
+            agent = ABCDAgent(model="test", workflow=workflow)
+            with self.assertRaisesRegex(RuntimeError, "no update applied"):
+                agent.induce([], [], [], editable_action_cards=True)
+        self.assertEqual(workflow.text, "OLD")
+        self.assertEqual(agent.last_awm_card_updates, [])
 
     def test_native_awm_receives_read_only_resource_context(self):
         from awm import WorkflowStore

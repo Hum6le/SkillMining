@@ -1691,6 +1691,7 @@ class ABCDAgent(AbstractTodAgent):
         turn_results: list[dict] | None = None,
         offline_demonstrations: bool = False,
         resource_context: str | None = None,
+        editable_action_cards: bool = False,
     ) -> str:
         """Induce workflow patterns with LLM-managed update.
 
@@ -1810,11 +1811,13 @@ class ABCDAgent(AbstractTodAgent):
             + "\n".join(lines)
             + "\n\n## Existing Workflow\n"
             + existing
-            + ("\n\n## Read-only Offline Resources\n"
+            + ("\n\n## Current Resources\n"
                "These resources are available to the shared inference runtime. "
                "Use them as prior knowledge when updating workflow patterns; "
                "this induction call does not itself execute retrieval tools. "
-               "Do not copy this resource dump or literal example values into the updated workflow.\n"
+               + ("reference.md is read-only; action_rules.md and slot_policies.md may be updated "
+                  "through the action_card_updates output below. " if editable_action_cards else "All resources are read-only. ")
+               + "Do not copy this resource dump or literal example values into the updated workflow.\n"
                + resource_context if resource_context else "")
             + "\n\n" + output_heading
             + output_instruction
@@ -1827,6 +1830,26 @@ class ABCDAgent(AbstractTodAgent):
             "**Do**: [concrete strategy — what actions to take, what to say]\n"
             "**Avoid**: [common mistakes to avoid]\n"
         )
+
+        self.last_awm_card_updates = []
+        if editable_action_cards:
+            prompt += (
+                "\n\n## Writable Action Cards: Output Override\n"
+                "In the SAME workflow induction step, also refine reusable action rules and ordered "
+                "slot binding policies when supported by this batch. Existing cards are the prior. "
+                "Preserve unrelated cards; [] means no card changes. For each changed action, return "
+                "the COMPLETE replacement body of each changed field, not an append or a diff. "
+                "Omit unchanged fields. Keep each card concise; describe value sources, availability, "
+                "order, normalization and reuse conditions, never private example values. "
+                "Keep workflow and cards consistent. Do not change canonical action names or the "
+                "runtime action schema. reference.md remains read-only.\n"
+                "Override the markdown-only output format above: return exactly one JSON object: "
+                '{"workflow":"complete updated workflow markdown",'
+                '"action_card_updates":[{"action":"canonical action",'
+                '"action_rule":"complete action rule body (optional)",'
+                '"slot_policy":"complete ordered binding policy body (optional)"}]}\n'
+                "Allowed action names: " + json.dumps(sorted(self.action_schema.get("actions", [])))
+            )
 
         updated = ""
         for attempt in range(3):
@@ -1841,14 +1864,20 @@ class ABCDAgent(AbstractTodAgent):
                     call_tag="skill_induction",
                 ).strip()
                 if updated:
+                    if editable_action_cards:
+                        updated, card_updates = _parse_awm_card_update(updated, self.action_schema.get("actions", set()))
+                        self.last_awm_card_updates = card_updates
                     break
                 print(f"  [ABCD induce] empty response, retry {attempt + 1}/3")
             except Exception as exc:
+                updated = ""
                 print(f"  [ABCD induce] LLM error ({attempt + 1}/3): {exc}")
             if attempt < 2:
                 time.sleep(2 ** attempt)
 
         if not updated:
+            if editable_action_cards:
+                raise RuntimeError("AWM workflow/card induction failed after 3 attempts; no update applied")
             print("  [ABCD induce] failed after 3 attempts; preserving resource contract")
             updated = _AWM_WORKFLOW_RESOURCE_SECTION.strip()
 
@@ -1920,6 +1949,37 @@ class ABCDAgent(AbstractTodAgent):
 
 
 # ── Output parsing helpers ────────────────────────────────────
+
+def _parse_awm_card_update(raw: str, valid_actions) -> tuple[str, list[dict]]:
+    """Validate the entire AWM workflow/card proposal before mutating anything."""
+    text = raw.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE | re.DOTALL).strip()
+    payload = json.loads(text)
+    if not isinstance(payload, dict) or set(payload) != {"workflow", "action_card_updates"}:
+        raise ValueError("Expected workflow and action_card_updates only")
+    workflow, updates = payload["workflow"], payload["action_card_updates"]
+    if not isinstance(workflow, str) or not workflow.strip() or not isinstance(updates, list):
+        raise ValueError("AWM proposal needs nonempty workflow text and a card-update list")
+    seen = set()
+    for update in updates:
+        if not isinstance(update, dict) or set(update) - {"action", "action_rule", "slot_policy"}:
+            raise ValueError("Unsupported AWM card fields")
+        action = update.get("action")
+        if not isinstance(action, str) or action not in valid_actions or action in seen:
+            raise ValueError("Unknown or duplicate canonical action in AWM card update")
+        seen.add(action)
+        fields = set(update) - {"action"}
+        if not fields:
+            raise ValueError("Card update has no changed fields")
+        for key in fields:
+            content = update[key]
+            if not isinstance(content, str) or not content.strip():
+                raise ValueError("Card bodies must be nonempty text; omit unchanged fields")
+            if re.search(r"(?m)^#{1,4}\s", content):
+                raise ValueError("Card body must not introduce resource/other-action headings")
+    return workflow.strip(), updates
+
 
 def _extract_action_sequence(conv: dict) -> list[str]:
     """Extract ground-truth action sequence from an ABCD conversation.

@@ -10,11 +10,12 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import multiprocessing as mp
+import re
 from pathlib import Path
 
 from scripts.abcd_runtime_utils import abcd_runtime_options, build_abcd_runtime_agent
 
-PROTOCOL = "offline-awm-online-v2-target-complete-feedback"
+PROTOCOL = "offline-awm-online-v3-writable-action-cards"
 RESOURCE_START = "<!-- OFFLINE_AWM_RESOURCE_START -->"
 RESOURCE_END = "<!-- OFFLINE_AWM_RESOURCE_END -->"
 RESOURCE_USE = f"""{RESOURCE_START}
@@ -31,7 +32,7 @@ RESOURCE_USE = f"""{RESOURCE_START}
   Only sampled action turns in each stored prefix were jointly validated; do not
   assume every historical turn was evaluated. Examples are procedural evidence,
   never default names, emails, order IDs or other private slot values.
-- AWM workflow updates may refine the prior using training feedback. Preserve the
+- AWM updates may refine both the workflow and Action Cards using training feedback. Preserve the
   canonical action schema and obtain every argument from the current dialogue.
 {RESOURCE_END}
 """
@@ -94,6 +95,30 @@ def feedback_prefixes(batch):
     return prefixes
 
 
+def update_card_resources(cards, updates):
+    """Deterministic action-keyed replacement, independent of ours graph writers."""
+    result = dict(cards)
+    for update in updates:
+        action = update["action"]
+        for key, filename in (("action_rule", "action_rules.md"), ("slot_policy", "slot_policies.md")):
+            if key not in update:
+                continue
+            text = result[filename]
+            matches = list(re.finditer(r"(?m)^####\s+`([^`]+)`\s*$", text))
+            spans = [(m.start(), matches[i + 1].start() if i + 1 < len(matches) else len(text))
+                     for i, m in enumerate(matches) if m.group(1).strip() == action]
+            replacement = f"#### `{action}`\n{update[key].strip()}\n\n"
+            if spans:
+                # Replace the first section and remove obsolete duplicate cards.
+                for i in range(len(spans) - 1, -1, -1):
+                    start, end = spans[i]
+                    text = text[:start] + (replacement if i == 0 else "") + text[end:]
+            else:
+                text = text.rstrip() + "\n\n" + replacement
+            result[filename] = text.rstrip() + "\n"
+    return result
+
+
 def run_offline_awm(args, subflow, flow_dir, workflow_ids):
     from awm import MemoryStore, WorkflowStore
     from eval_tod.abcd.agent import compute_ast_from_turn_results, _AWM_WORKFLOW_RESOURCE_SECTION
@@ -127,7 +152,10 @@ def run_offline_awm(args, subflow, flow_dir, workflow_ids):
         if checkpoint_path.exists():
             raise ValueError("Offline-AWM checkpoint exists; use --resume")
         state = {"scope": scope, "completed_batches": 0,
-                 "workflow": _with_resource_use(resources["skill.md"]), "exemplars": [], "usage": None}
+                 "workflow": _with_resource_use(resources["skill.md"]), "exemplars": [], "usage": None,
+                 "cards": {name: resources[name] for name in ("action_rules.md", "slot_policies.md")}}
+    if set(state.get("cards", {})) != {"action_rules.md", "slot_policies.md"}:
+        raise ValueError("Offline-AWM checkpoint is missing its evolving Action Cards")
     if args.resume and (output / "result.json").is_file():
         if _read(output / "result.json").get("scope_hash") != _hash(scope):
             raise ValueError("Completed offline-AWM result has incompatible scope")
@@ -140,6 +168,7 @@ def run_offline_awm(args, subflow, flow_dir, workflow_ids):
     workflow.replace(state["workflow"])
     memory.exemplars = copy.deepcopy(state["exemplars"])
     ids = workflow_ids or [None]
+    live_resources = {**resources, **state["cards"]}
 
     def make_agent(workflow_id, snapshot=False):
         current_workflow, current_memory = workflow, memory
@@ -148,8 +177,8 @@ def run_offline_awm(args, subflow, flow_dir, workflow_ids):
             current_workflow.replace(workflow.text)
             current_memory.exemplars = copy.deepcopy(memory.exemplars)
         return build_abcd_runtime_agent(args, workflow=current_workflow, memory=current_memory,
-                 reference_text=resources["reference.md"], action_rules_text=resources["action_rules.md"],
-                 slot_policies_text=resources["slot_policies.md"], workflow_id=workflow_id)
+                 reference_text=live_resources["reference.md"], action_rules_text=live_resources["action_rules.md"],
+                 slot_policies_text=live_resources["slot_policies.md"], workflow_id=workflow_id)
 
     previous_usage = state.get("usage")
     reset_usage()
@@ -157,9 +186,11 @@ def run_offline_awm(args, subflow, flow_dir, workflow_ids):
         batch = batches[index]
         print(f"offline_awm {subflow}: batch {index + 1}/{len(batches)} action-turns={len(batch)}", flush=True)
         before = workflow.text
+        before_state = copy.deepcopy(state)
         batch_path = output / "batches" / f"batch_{index + 1:04d}.json"
         try:
-            identity = {"scope_hash": _hash(scope), "workflow_hash": _hash(before), "index": index}
+            identity = {"scope_hash": _hash(scope), "workflow_hash": _hash(before),
+                        "cards_hash": _hash(state["cards"]), "index": index}
             cached = _read(batch_path) if args.resume and batch_path.is_file() else None
             if cached and cached.get("identity") == identity:
                 rows = cached["rows"]
@@ -184,21 +215,30 @@ def run_offline_awm(args, subflow, flow_dir, workflow_ids):
             predictions = [Prediction(dialogue_id=f"abcd-{conv['convo_id']}", inform_slots={}, request_slots={},
                            booking={}, response_text=str(last_rows[str(conv["convo_id"])].get("prediction") or "")) for conv in views]
             updater = make_agent(ids[index % len(ids)])
-            resource_context = "\n\n".join(f"## {name}\n{text}" for name, text in resources.items() if name != "skill.md")
+            resource_context = "\n\n".join(f"## {name}\n{text}" for name, text in live_resources.items() if name != "skill.md")
             updated = updater.induce(views, predictions, metrics, turn_results=rows,
-                                      resource_context=resource_context)
+                                      resource_context=resource_context, editable_action_cards=True)
             if not updated.strip() or updated.strip() == _AWM_WORKFLOW_RESOURCE_SECTION.strip():
                 workflow.replace(before)
                 raise RuntimeError("AWM induction failed; retaining previous workflow and cached rollout for resume")
             # Replace the legacy resource-only footer with this adapter's
             # accurate resource contract (hidden scenario labels, prefix memory).
             updated = updated.replace(_AWM_WORKFLOW_RESOURCE_SECTION.strip(), "")
+            cards = update_card_resources(state["cards"], updater.last_awm_card_updates)
             workflow.replace(_with_resource_use(updated))
             updater.update_memory(views, predictions, metrics, turn_results=rows)
-            state.update(completed_batches=index + 1, workflow=workflow.text, exemplars=copy.deepcopy(memory.exemplars))
+            state.update(completed_batches=index + 1, workflow=workflow.text, exemplars=copy.deepcopy(memory.exemplars), cards=cards)
             state["usage"] = merge_usage_summaries(previous_usage, get_usage())
+            _save(output / "card_updates" / f"batch_{index + 1:04d}.json", {
+                "identity": identity, "updates": updater.last_awm_card_updates,
+                "cards_before_hash": _hash(before_state["cards"]), "cards_after_hash": _hash(cards)})
             _save(checkpoint_path, state)
+            live_resources.update(cards)
         except Exception:
+            state = before_state
+            workflow.replace(state["workflow"])
+            memory.exemplars = copy.deepcopy(state["exemplars"])
+            live_resources.update(state["cards"])
             state["usage"] = merge_usage_summaries(previous_usage, get_usage())
             _save(checkpoint_path, state)
             raise
@@ -206,7 +246,7 @@ def run_offline_awm(args, subflow, flow_dir, workflow_ids):
     (output / "skill.md").write_text(workflow.text, encoding="utf-8")
     _save(output / "exemplars.json", memory.exemplars)
     for name in ("reference.md", "action_rules.md", "slot_policies.md"):
-        (output / name).write_text(resources[name], encoding="utf-8")
+        (output / name).write_text(live_resources[name], encoding="utf-8")
     reset_usage()
     agent = make_agent(ids[0])
     testing_path = output / "testing_attempt_usage.json"
@@ -234,5 +274,6 @@ def run_offline_awm(args, subflow, flow_dir, workflow_ids):
                   scope_hash=_hash(scope), llm_usage=split_usage_summary(generation, testing),
                   training_protocol="sequential AWM updates on standard action-turn batches; sampled-prefix exemplars",
                   training_action_turns=sum(len(batch) for batch in batches), training_batches=len(batches),
+                  protocol=PROTOCOL, writable_action_cards=True, cards_hash=_hash(state["cards"]),
                   exemplar_count=len(memory))
     _save(output / "result.json", result)

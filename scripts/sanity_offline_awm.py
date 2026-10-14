@@ -21,7 +21,8 @@ from scripts.abcd_runtime_utils import RUNTIME_DEFAULTS
 
 class OracleMockAgent(ABCDAgent):
     def _chat(self, *args, **kwargs):
-        return "### MOCK workflow pattern\n**When**: A known request is observed.\n**Do**: Use current dialogue values."
+        return json.dumps({"workflow": "### MOCK workflow pattern\n**When**: A known request is observed.\n**Do**: Use current dialogue values.",
+                           "action_card_updates": []})
 
     def predict_all_turns(self, conversation, *, turn_index=None, **kwargs):
         rows = []
