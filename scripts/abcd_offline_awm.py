@@ -53,19 +53,23 @@ def _save(path, value):
     temporary.replace(path)
 
 
+def _without_resource_use(text):
+    """Remove adapter-owned scaffolding, not learned rules between bad markers.
+
+    Markers are metadata, not model-authored edit anchors. In particular, never
+    delete everything after an unmatched START or between reversed markers.
+    """
+    text = re.sub(r"<!--\s*OFFLINE_AWM_RESOURCE_(?:START|END)\s*-->", "", text)
+    # The reserved section contains adapter instructions only. Stop at ANY new
+    # markdown heading, preserving subsequent learned patterns even with ###.
+    text = re.sub(r"(?ms)^## Offline and Online Resources[^\n]*\n.*?(?=^#{1,6}\s|\Z)", "", text)
+    return text.strip()
+
+
 def _with_resource_use(text):
-    # Compiler-owned instructions are restored deterministically after global
-    # AWM rewriting, without touching the model's learned workflow patterns.
-    if RESOURCE_START in text:
-        if text.count(RESOURCE_START) != 1 or text.count(RESOURCE_END) != 1:
-            raise ValueError("Malformed offline-AWM resource-use markers")
-        start, end = text.index(RESOURCE_START), text.index(RESOURCE_END)
-        if end < start:
-            raise ValueError("Offline-AWM resource-use markers are reversed")
-        text = text[:start] + text[end + len(RESOURCE_END):]
-    elif RESOURCE_END in text:
-        raise ValueError("Malformed offline-AWM resource-use markers")
-    return text.rstrip() + "\n\n" + RESOURCE_USE
+    # Always reconstruct exactly one compiler-owned footer. LLM formatting
+    # damage must not invalidate otherwise usable workflow/card induction.
+    return _without_resource_use(text) + "\n\n" + RESOURCE_USE
 
 
 def feedback_prefixes(batch):
@@ -216,8 +220,14 @@ def run_offline_awm(args, subflow, flow_dir, workflow_ids):
                            booking={}, response_text=str(last_rows[str(conv["convo_id"])].get("prediction") or "")) for conv in views]
             updater = make_agent(ids[index % len(ids)])
             resource_context = "\n\n".join(f"## {name}\n{text}" for name, text in live_resources.items() if name != "skill.md")
-            updated = updater.induce(views, predictions, metrics, turn_results=rows,
-                                      resource_context=resource_context, editable_action_cards=True)
+            # Hide compiler-owned metadata from the global AWM rewrite. Runtime
+            # rollout still gets the complete footer; reconstruct it afterward.
+            workflow.replace(_without_resource_use(before))
+            try:
+                updated = updater.induce(views, predictions, metrics, turn_results=rows,
+                                          resource_context=resource_context, editable_action_cards=True)
+            finally:
+                workflow.replace(before)
             if not updated.strip() or updated.strip() == _AWM_WORKFLOW_RESOURCE_SECTION.strip():
                 workflow.replace(before)
                 raise RuntimeError("AWM induction failed; retaining previous workflow and cached rollout for resume")

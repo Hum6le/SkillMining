@@ -94,6 +94,25 @@ class OfflineAWMTest(unittest.TestCase):
         self.assertIn("retrieve_action_card", text)
         self.assertIn("sampled action turns", text)
 
+    def test_damaged_resource_markers_are_repaired_without_losing_patterns(self):
+        cases = [
+            f"### Pattern\nKeep this rule.\n{experiment.RESOURCE_START}",
+            f"{experiment.RESOURCE_END}\n### Pattern\nKeep this rule.",
+            f"{experiment.RESOURCE_END}\n### Pattern\nKeep this rule.\n{experiment.RESOURCE_START}",
+            experiment.RESOURCE_USE + "\n### Pattern\nKeep this rule.\n" + experiment.RESOURCE_USE,
+            f"{experiment.RESOURCE_START}\n## Offline and Online Resources\n- stale resource guide\n### Pattern\nKeep this rule.",
+            f"{experiment.RESOURCE_START}\n### Pattern\nKeep this rule.\n{experiment.RESOURCE_END}",
+        ]
+        for text in cases:
+            with self.subTest(text=text):
+                result = experiment._with_resource_use(text)
+                self.assertIn("### Pattern\nKeep this rule.", result)
+                self.assertEqual(result.count(experiment.RESOURCE_START), 1)
+                self.assertEqual(result.count(experiment.RESOURCE_END), 1)
+                self.assertEqual(result.count("## Offline and Online Resources"), 1)
+                self.assertEqual(experiment._with_resource_use(result), result)
+                self.assertNotIn("stale resource guide", result)
+
     def _run_case(self, root, fail_once=False, card_updates=False):
         offline = root / "offline_artifact"
         offline.mkdir()
@@ -124,6 +143,8 @@ class OfflineAWMTest(unittest.TestCase):
 
             def induce(self, views, predictions, metrics, *, turn_results, resource_context, editable_action_cards):
                 assert editable_action_cards is True
+                assert experiment.RESOURCE_START not in self.workflow.text
+                assert experiment.RESOURCE_END not in self.workflow.text
                 calls[0] += 1
                 events.append(("induce", copy.deepcopy(views)))
                 assert all(conv["convo_id"] == "train" for conv in views)
@@ -133,7 +154,8 @@ class OfflineAWMTest(unittest.TestCase):
                     fail[0] = False
                     self.workflow.replace(_AWM_WORKFLOW_RESOURCE_SECTION)
                     return _AWM_WORKFLOW_RESOURCE_SECTION
-                self.workflow.replace("### AWM learned workflow\nWhen a link is requested, use dialogue values.")
+                # Deliberate malformed echo: must not crash the whole A2 worker.
+                self.workflow.replace("### AWM learned workflow\nWhen a link is requested, use dialogue values.\n" + experiment.RESOURCE_START)
                 if card_updates:
                     self.last_awm_card_updates = [{"action": "send-link", "slot_policy": "EVOLVED SLOT POLICY"}]
                 return self.workflow.text
