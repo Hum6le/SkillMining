@@ -2455,10 +2455,12 @@ def diagnose_rollout_batch(
     max_retries: int = 3, retry_base_delay: float = 2.0,
     record_projector: Any = None, prompt_template: str | None = None,
     chat_fn: Any = None,
+    graph_context: dict[str, Any] | None = None,
+    available_resources_override: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     nodes = sorted({str(record.get("sample", {}).get(key, ""))
                     for record in records for key in ("source_action", "target_action") if record.get("sample", {}).get(key)})
-    local_graph = lookup_graph_neighborhood(state, nodes, radius=1)
+    local_graph = graph_context if graph_context is not None else lookup_graph_neighborhood(state, nodes, radius=1)
     resource_query = " ".join(nodes)
     available_resources = []
     for resource_name, resource_text in (
@@ -2469,6 +2471,8 @@ def diagnose_rollout_batch(
             available_resources.extend(_resource_lookup_sections(
                 resource_name, resource_text, resource_query, 2,
             ))
+    if available_resources_override is not None:
+        available_resources = available_resources_override
     prompt_records = []
     seen_trajectory_ids: set[str] = set()
     for record in records:
@@ -2574,6 +2578,7 @@ def reflect_batch_report_group(
     response_logger: Any = None, workflow_id: str | None = None,
     max_retries: int = 3, retry_base_delay: float = 2.0,
     prompt_template: str | None = None, chat_fn: Any = None,
+    graph_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     reports = reports[:16]
     nodes = sorted({node for report in reports for node in
@@ -2583,7 +2588,7 @@ def reflect_batch_report_group(
         for report in reports for node in (report.get("local_graph") or {}).get("nodes", [])
         if node.get("label") or node.get("id")
     })
-    local_graph = lookup_graph_neighborhood(state, nodes, radius=1)
+    local_graph = graph_context if graph_context is not None else lookup_graph_neighborhood(state, nodes, radius=1)
     compact = [{key: report.get(key) for key in (
         "batch_id", "summary", "root_causes", "graph_footprint", "candidate_updates",
         "candidate_skill_operations", "unresolved_questions")}
