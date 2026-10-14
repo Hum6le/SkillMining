@@ -293,7 +293,7 @@ def test_parent_continues_after_worker_failure_and_writes_partial_aggregate(tmp_
             dump(source / flow / relative, {})
     monkeypatch.setattr(a4, "validate_source", lambda *args: ({}, [], {}))
     monkeypatch.setattr(a4.sys, "argv", ["a4", "--subflows", ",".join(flows),
-        "--a2-root", str(source), "--output-dir", str(output), "--workflow-ids", "ID1"])
+        "--a2-root", str(source), "--output-dir", str(output), "--workflow-ids", "ID1", "--experiment", "legacy-updater"])
     seen = []
 
     def fake_worker(cmd, **kwargs):

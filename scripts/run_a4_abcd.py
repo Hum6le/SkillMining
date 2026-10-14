@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""A4: compare graph-local and generic updates on identical cached K0 feedback.
+"""A4: graph-context ablation on cached ABCD training feedback.
 
 The A2 ``full`` arm is the graph-local updater. Its standard-mode training
 feedback is saved in ``post_rollout_records.json`` (the executable skill stays
 at K0 during collection; auxiliary evidence may accumulate).
-This runner verifies that cache, starts a generic updater from the same K0,
-and evaluates both frozen K1 artifacts against the same held-out split.
+The default experiment replays the native updater with real/empty/optional
+unrelated local graph context. The old generic-updater comparison is available
+with --experiment legacy-updater.
 """
 from __future__ import annotations
 
@@ -22,8 +23,9 @@ import sys
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+if str(ROOT) in sys.path:
+    sys.path.remove(str(ROOT))
+sys.path.insert(0, str(ROOT))
 
 from scripts.run_a2_abcd import SPLITS, _ids
 from scripts.abcd_runtime_utils import abcd_runtime_options
@@ -539,13 +541,15 @@ def workflow_buckets(flows: list[str], ids: list[str]) -> dict[str, list[str]]:
     return {wid: names for wid, names in buckets.items() if names}
 
 
-def aggregate_results(root: Path, flows: list[str], failures: list[dict] | None = None) -> dict:
+def aggregate_results(root: Path, flows: list[str], failures: list[dict] | None = None,
+                      *, arms=None, comparison_keys=None, protocol=PROTOCOL, source_graph_local=True) -> dict:
     """Aggregate completed flows only; ratios use pooled counts, not mean rates."""
     failed = {item["subflow"] for item in failures or []}
     rows = [read(root / flow / "a4_result.json") for flow in flows
             if flow not in failed and (root / flow / "a4_result.json").is_file()]
+    rows = [row for row in rows if row.get("complete", True)]
     aggregate, comparisons, cost = {}, {}, {}
-    for arm in ("frozen_k0", "generic_global", "graph_local"):
+    for arm in arms or ("frozen_k0", "generic_global", "graph_local"):
         count = sum(row[arm]["num_action_turns"] for row in rows)
         aggregate[arm] = {"subflows": len(rows), "action_turns": count, **{
             key: sum(row[arm][key] * row[arm]["num_action_turns"] for row in rows) / count
@@ -558,7 +562,7 @@ def aggregate_results(root: Path, flows: list[str], failures: list[dict] | None 
                 snapshot = usage.get("generation" if phase == "updater" else phase) or {}
                 if phase == "updater" and arm == "frozen_k0":
                     buckets.append({"calls": 0, "total_tokens": 0, "usage_available": True})
-                elif phase == "updater" and arm == "graph_local":
+                elif phase == "updater" and arm == "graph_local" and source_graph_local:
                     tags = snapshot.get("by_call_tag", {})
                     selected = [tags[tag] for tag in ("online_batch_root_cause", "online_group_reflection") if tag in tags]
                     # Missing tag accounting is unknown, never zero updater cost.
@@ -577,7 +581,7 @@ def aggregate_results(root: Path, flows: list[str], failures: list[dict] | None 
                                 "total_tokens": sum(tokens) if rows and len(tokens) == len(rows) else None,
                                 "known_calls": sum(known_calls), "known_tokens": sum(tokens),
                                 "flows_with_calls": len(known_calls), "flows_with_tokens": len(tokens)}
-    for key in ("graph_local_vs_k0", "generic_global_vs_k0", "graph_local_vs_generic"):
+    for key in comparison_keys if comparison_keys is not None else ("graph_local_vs_k0", "generic_global_vs_k0", "graph_local_vs_generic"):
         counts = {field: sum(row[key][field] for row in rows) for field in
                   ("action_turns", "k0_wrong", "k0_correct", "fixed", "regressed")}
         comparisons[key] = {**counts,
@@ -585,12 +589,17 @@ def aggregate_results(root: Path, flows: list[str], failures: list[dict] | None 
                             "regression_rate": counts["regressed"] / counts["k0_correct"] if counts["k0_correct"] else None,
                             "net_gain": (counts["fixed"] - counts["regressed"]) / counts["action_turns"] if counts["action_turns"] else None}
     completed = {row["subflow"] for row in rows}
-    return {"protocol": PROTOCOL, "complete": len(rows) == len(flows),
+    return {"protocol": protocol, "complete": len(rows) == len(flows),
             "expected_subflows": flows, "completed_subflows": sorted(completed),
             "missing_subflows": [flow for flow in flows if flow not in completed],
             "failures": failures or [], "rows": rows, "aggregate": aggregate,
             "paired": comparisons, "cost": cost,
-            "cost_note": "K0/graph_local source costs are reused, not new A4 charges. Graph-local generation includes training rollout; updater uses diagnosis/reflection tags only. Unknown costs are null."}
+            "edit_metrics": {arm: {key: sum(row.get("edit_metrics", {}).get(arm, {}).get(key, 0) for row in rows)
+                             for key in ("accepted_updates", "rejected_updates", "text_applied", "text_failed",
+                                         "text_skipped", "rolled_back_groups")}
+                             for arm in arms or ()},
+            "cost_note": ("K0/graph_local source costs are reused, not new A4 charges. Graph-local generation includes training rollout; updater uses diagnosis/reflection tags only. Unknown costs are null."
+                          if source_graph_local else "K0 evaluation is reused; every updated arm is a fresh controlled replay. Generation includes diagnosis/reflection only, no new train rollout. Unknown costs are null.")}
 
 
 def bootstrap_command(args, ids: list[str], flows: list[str]) -> list[str]:
@@ -633,6 +642,10 @@ def main() -> int:
     group.add_argument("--all", action="store_true")
     parser.add_argument("--a2-root", required=True, help="A2 offline_only/full result root")
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--experiment", choices=("graph-localization", "legacy-updater"), default="graph-localization")
+    parser.add_argument("--arms", default="graph_local,no_graph,no_graph_grouping,no_context_and_grouping",
+                        help="Context/grouping factorial arms; random_graph is optional")
+    parser.add_argument("--seed", type=int, default=0, help="Semantic grouping tie/order and unrelated-neighborhood seed")
     parser.add_argument("--workflow-ids", default=os.environ.get("SKILLMINING_WORKFLOW_ID", ""))
     parser.add_argument("--bootstrap-a2", action="store_true", help="Run missing A2 offline_only/full arms first")
     parser.add_argument("--max-train", type=int, help="Only for --bootstrap-a2")
@@ -647,6 +660,16 @@ def main() -> int:
     parser.add_argument("--validate-only", action="store_true", help="Audit completed A2 sources without model calls or writes")
     parser.add_argument("--worker-subflow", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    graph_experiment = args.experiment == "graph-localization"
+    if graph_experiment:
+        from scripts import abcd_a4_localization as localization
+        names = [arm.strip() for arm in args.arms.split(",") if arm.strip()]
+        if not names or len(names) != len(set(names)) or any(arm not in localization.ARMS for arm in names):
+            parser.error("--arms must contain unique entries from: " + ",".join(localization.ARMS))
+        args.arms = ",".join(names)
+        protocol = localization.PROTOCOL
+    else:
+        protocol = PROTOCOL
     if args.retries <= 0 or any(value is not None and value <= 0 for value in
                                 (args.max_train, args.max_test, args.max_batches, args.batch_size)):
         parser.error("Limits and retries must be positive")
@@ -668,28 +691,41 @@ def main() -> int:
     if args.worker_subflow:
         if args.worker_subflow not in flows:
             parser.error("Worker subflow must match the selected subflow")
-        run_flow(args, args.worker_subflow, ids)
-        return 0
+        result = (localization.run_flow if graph_experiment else run_flow)(args, args.worker_subflow, ids)
+        return 0 if result.get("complete", True) else 1
     missing = [flow for flow in flows if any(not path.is_file() for path in (
         Path(args.a2_root) / flow / "full" / "online_refine_result.json",
         Path(args.a2_root) / flow / "full" / "post_rollout_records.json",
         Path(args.a2_root) / flow / "offline_only" / "result.json",
         Path(args.a2_root) / flow / "offline_artifact" / "complete.json",
     ))]
-    plan = {"flows": flows, "workflow_ids": ids, "a2_root": args.a2_root,
+    buckets = {",".join(ids): flows} if graph_experiment else workflow_buckets(flows, ids)
+    plan = {"flows": flows, "workflow_ids": ids, "a2_root": args.a2_root, "experiment": args.experiment,
             "output_dir": args.output_dir, "missing_a2": missing,
-            "bootstrap_a2": args.bootstrap_a2, "assignments": workflow_buckets(flows, ids)}
+            "bootstrap_a2": args.bootstrap_a2, "assignments": buckets,
+            "arms": args.arms if graph_experiment else "frozen_k0,generic_global,graph_local"}
     print(json.dumps(plan, ensure_ascii=False, indent=2), flush=True)
     if args.dry_run:
         return 0
     if args.validate_only:
         for flow in flows:
-            _, records, context = validate_source(source_root, flow)
+            config, records, context = validate_source(source_root, flow)
             print(json.dumps({"subflow": flow, "feedback_samples": len(records),
                               "resource_lineage": context["resource_lineage"]}), flush=True)
+            if graph_experiment:
+                shared = localization.prepare_plan(config, records, context, args.seed)
+                print(json.dumps({"subflow": flow, "diagnosis_batches": len(shared["jobs"]),
+                                  "reflection_groups": len(shared["groups"]), "shared_plan_sha256": value_digest(shared),
+                                  "grouping": {arm: {"mode": localization.arm_plan(shared, arm)["grouping_mode"],
+                                      "batch_sizes": [len(j["records"]) for j in localization.arm_plan(shared, arm)["jobs"]],
+                                      "group_sizes": [len(g) for g in localization.arm_plan(shared, arm)["groups"]]}
+                                      for arm in names},
+                                  "graph_controls": localization.audit_graph_inputs(shared, names, args.seed)}), flush=True)
         return 0
     config_path = output_root / "a4_config.json"
-    experiment_config = {"protocol": PROTOCOL, "a2_root": args.a2_root, "flows": flows, "retries": args.retries}
+    experiment_config = {"protocol": protocol, "a2_root": args.a2_root, "flows": flows, "retries": args.retries}
+    if graph_experiment:
+        experiment_config.update(arms=args.arms, seed=args.seed)
     if output_root.exists() and any(output_root.iterdir()):
         if not args.resume:
             parser.error("Output directory is nonempty; use --resume or a fresh --output-dir")
@@ -706,14 +742,15 @@ def main() -> int:
     if not config_path.is_file():
         write(config_path, experiment_config)
     # Distinct workflow IDs are serialized per worker, as in A2.
-    buckets = workflow_buckets(flows, ids)
     def worker(wid: str, names: list[str]):
         failures = []
         for flow in names:
             cmd = [sys.executable, str(Path(__file__).resolve()),
                    "--worker-subflow", flow, "--subflow", flow,
                    "--a2-root", args.a2_root, "--output-dir", args.output_dir,
-                   "--workflow-ids", wid, "--retries", str(args.retries)]
+                   "--workflow-ids", wid, "--retries", str(args.retries), "--experiment", args.experiment]
+            if graph_experiment:
+                cmd += ["--arms", args.arms, "--seed", str(args.seed)]
             if args.resume:
                 cmd.append("--resume")
             output = Path(args.output_dir) / flow
@@ -743,7 +780,15 @@ def main() -> int:
         futures = [pool.submit(worker, wid, names) for wid, names in buckets.items() if names]
         for future in as_completed(futures):
             failures.extend(future.result())
-    report = aggregate_results(output_root, flows, failures)
+    if graph_experiment:
+        comparisons = [f"{arm}_vs_k0" for arm in names]
+        comparisons += [f"{left}_vs_{right}" for left, right in localization.comparison_pairs(names)]
+        report = aggregate_results(output_root, flows, failures, arms=["frozen_k0", *names],
+            comparison_keys=comparisons, protocol=protocol, source_graph_local=False)
+        report["partial_flow_results"] = [str(output_root / flow / "a4_result.json") for flow in flows
+                                         if flow in report["missing_subflows"] and (output_root / flow / "a4_result.json").is_file()]
+    else:
+        report = aggregate_results(output_root, flows, failures)
     write(output_root / "a4_aggregate.json", report)
     print(json.dumps(report["aggregate"], ensure_ascii=False, indent=2))
     return 0 if report["complete"] else 1
