@@ -40,7 +40,8 @@ ID_TOOL_INSTRUCTIONS = '''
 Output ONLY {"operations":[...]} for the supplied edit catalog, not a full workflow.
 Writable: skill.md, action_rules.md, slot_policies.md. reference.md/schema are read-only.
 Each operation: file, target_id, op (replace/insert_before/insert_after/delete),
-new_text (empty for delete). section/rationale are optional descriptions.
+new_text (required for replace/insert; empty or omitted for delete).
+section/rationale are optional descriptions.
 Copy target_id from the catalog; NEVER copy or paraphrase old text as an anchor.
 Catalog brackets are display delimiters: [5d9cc6170bb3ef49:L135] means
 "target_id":"5d9cc6170bb3ef49:L135" (without brackets).
@@ -54,6 +55,12 @@ One operation per target/span; merge overlapping changes into one operation.
 Replacement targets include the line body but not its trailing newline. Include
 newlines in new_text for inserted/new multiple lines. Preserve unrelated rules
 and canonical action headings; never hard-code private customer values.
+For Action Cards, never replace a body line with a complete card containing its
+heading: that creates a duplicate heading. To replace a whole card, target its
+existing heading through its last body line using end_target_id, excluding the
+next card's heading. To change only a body line, omit the heading in new_text.
+Deleting a heading alone does NOT delete its section body; use an explicit range
+when removing a whole section.
 All operations are checked before any write. Invalid/stale IDs or overlaps reject
 the whole plan, never fuzzy-match. [] means no change. This is the same single
 AWM induction, not a multi-step graph/reflection procedure.
@@ -159,7 +166,7 @@ Each operation must specify:
   Never paraphrase it or copy from the batch dialogue/examples. Prefer a small
   verbatim paragraph/line, not a regenerated whole section. On error, inspect
   exact_match_count and literal_candidates and explicitly select a valid anchor.
-- new_text: replacement/insertion text; MUST be empty for delete.
+- new_text: replacement/insertion text; empty or omitted for delete.
 - rationale (recommended metadata): what evidence supports this specific change.
 Missing section/rationale does not invalidate an otherwise exact safe edit.
 Edits execute in array order against the CURRENT modified file, not line numbers.
@@ -192,10 +199,15 @@ def apply_awm_edit_plan(raw, files, valid_actions):
     current = {name: files[name] for name in EDITABLE_FILES}
     outcomes = []
     for index, operation in enumerate(plan["operations"], 1):
+        display_index = id_mapping[index - 1][0] + 1 if id_mapping is not None else index
+        delete_text_defaulted = False
         try:
             if not isinstance(operation, dict) or set(operation) - {
                 "file", "section", "op", "match_text", "new_text", "rationale", "occurrence"}:
                 raise ValueError("unsupported edit fields")
+            if operation.get("op") == "delete" and "new_text" not in operation:
+                operation = {**operation, "new_text": ""}
+                delete_text_defaulted = True
             for key in ("file", "op", "match_text", "new_text"):
                 if not isinstance(operation.get(key), str):
                     raise ValueError(f"missing/non-text {key}")
@@ -232,6 +244,8 @@ def apply_awm_edit_plan(raw, files, valid_actions):
                 heading_path.append((depth, heading[0].strip()))
             section = heading_path[-1][1] if heading_path else "<document>"
             warnings = []
+            if delete_text_defaulted:
+                warnings.append("delete_new_text_defaulted_empty")
             if not isinstance(section_hint, str) or not section_hint.strip():
                 warnings.append("section_inferred")
             elif section_hint != "<document>" and not any(
@@ -252,17 +266,25 @@ def apply_awm_edit_plan(raw, files, valid_actions):
                     if action not in valid_actions and action not in before:
                         raise ValueError("new card heading is not a canonical action")
                     if after.count(action) > max(1, before.count(action)):
-                        raise ValueError("edit creates duplicate action cards")
+                        heading_ids = [key for key, row in build_edit_catalog(files).items()
+                                       if row["file"] == name and re.fullmatch(
+                                           r"####\s+`" + re.escape(action) + r"`\s*", row["text"])]
+                        raise AWMEditError("edit creates duplicate action cards", {
+                            "action": action, "before_heading_count": before.count(action),
+                            "after_heading_count": after.count(action),
+                            "existing_card_heading_ids": heading_ids,
+                            "instruction": "A body-only edit must not repeat the card heading. For a complete card replacement, explicitly target its existing heading through its last body line, excluding the next card heading. Do not add another copy."})
             current[name] = updated
             outcomes.append({**records[0], "file": name, "section": section,
                              "section_hint": section_hint, "section_path": [h for _, h in heading_path],
                              "warnings": warnings})
         except Exception as exc:
-            context = {**getattr(exc, "repair_context", {}), "edit_index": index,
+            context = {**getattr(exc, "repair_context", {}), "edit_index": display_index,
+                       "execution_index": index,
                        "file": operation.get("file", "?") if isinstance(operation, dict) else "?",
                        "validated_prefix_edits": index - 1,
                        "note": "Earlier operations were simulated only; the whole rejected plan was NOT committed."}
-            raise AWMEditError(f"Edit {index} ({context['file']}): {exc}", context) from exc
+            raise AWMEditError(f"Edit {display_index} ({context['file']}): {exc}", context) from exc
     if not current["skill.md"].strip():
         raise ValueError("Edit plan erased the entire workflow")
     if id_mapping is not None:

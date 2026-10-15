@@ -36,6 +36,55 @@ def operation(**changes):
             "match_text": "Old route.", "new_text": "New route.", "rationale": "Observed failure", **changes}
 
 
+@pytest.mark.parametrize("addressing", ["id", "legacy"])
+def test_delete_may_omit_new_text_without_mutating_plan(addressing):
+    source = files()
+    if addressing == "id":
+        target = next(k for k, row in build_edit_catalog(source).items() if row["text"] == "Old route.")
+        op = {"file": "skill.md", "target_id": target, "op": "delete"}
+    else:
+        op = {"file": "skill.md", "match_text": "Old route.", "op": "delete"}
+    original = deepcopy(source)
+    edited, logs = apply_awm_edit_plan(json.dumps({"operations": [op]}), source, {"send-link"})
+    assert "Old route." not in edited["skill.md"] and "Keep." in edited["skill.md"]
+    assert "new_text" not in op and source == original
+    assert "delete_new_text_defaulted_empty" in logs[0]["warnings"]
+    for bad in (None, 123, "not empty"):
+        with pytest.raises(ValueError):
+            apply_awm_edit_plan(json.dumps({"operations": [{**op, "new_text": bad}]}), source, {"send-link"})
+    for other in ("replace", "insert_before", "insert_after"):
+        with pytest.raises(ValueError, match="new_text"):
+            apply_awm_edit_plan(json.dumps({"operations": [{**op, "op": other}]}), source, {"send-link"})
+
+
+def test_id_validation_error_uses_original_response_index_after_reverse_sort():
+    source = files()
+    catalog = build_edit_catalog(source)
+    targets = {row["text"]: key for key, row in catalog.items()}
+    ops = [{"file": "skill.md", "target_id": targets["Old route."], "op": "replace", "new_text": "New."},
+           {"file": "skill.md", "target_id": targets["Keep."], "op": "replace"}]
+    with pytest.raises(AWMEditError, match=r"Edit 2 \(skill.md\): missing/non-text new_text") as caught:
+        apply_awm_edit_plan(json.dumps({"operations": ops}), source, {"send-link"})
+    assert caught.value.repair_context["edit_index"] == 2
+    assert caught.value.repair_context["execution_index"] == 1
+    assert source == files()
+
+
+def test_duplicate_card_rejection_provides_original_heading_ids():
+    source = files()
+    catalog = build_edit_catalog(source)
+    target = next(k for k, row in catalog.items() if row["text"] == "Old rule.")
+    heading = next(k for k, row in catalog.items() if row["file"] == "action_rules.md" and row["text"] == "#### `send-link`")
+    plan = {"operations": [{"file": "action_rules.md", "target_id": target, "op": "replace",
+                            "new_text": "#### `send-link`\nNew rule."}]}
+    with pytest.raises(AWMEditError, match="duplicate action cards") as caught:
+        apply_awm_edit_plan(json.dumps(plan), source, {"send-link"})
+    assert caught.value.repair_context["existing_card_heading_ids"] == [heading]
+    assert caught.value.repair_context["before_heading_count"] == 1
+    assert caught.value.repair_context["after_heading_count"] == 2
+    assert source == files()
+
+
 def test_catalog_ids_disambiguate_duplicates_and_do_not_shift_within_plan():
     source = files()
     source["skill.md"] = "# Skill\n## Route\nSame.\nMiddle.\nSame.\n"
