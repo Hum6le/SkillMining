@@ -1880,6 +1880,7 @@ class ABCDAgent(AbstractTodAgent):
         partial_edit_response = ""
         targeted_parent = None
         targeted_targets = []
+        minimal_recovery = False
         attempt = call_count = continuation_calls = 0
         # Three candidate/repair attempts plus at most two continuation calls.
         # An unfinished response must not consume the only semantic repair slot.
@@ -1889,7 +1890,20 @@ class ABCDAgent(AbstractTodAgent):
             plan = None
             pending_prefix = partial_edit_response
             if pending_prefix and continuation_calls >= 2:
-                break
+                # The unfinished candidate used its continuation allowance, not
+                # all candidate attempts. Never commit it or endlessly extend it.
+                abandoned_chars = len(pending_prefix)
+                partial_edit_response = pending_prefix = ""
+                targeted_parent, targeted_targets = None, []
+                attempt += 1
+                if attempt >= 3:
+                    break
+                minimal_recovery = True
+                rejected_edit_plan = "[Unfinished proposal discarded in full; no edits applied.]"
+                edit_repair_context = {"error_kind": "unfinished_plan_abandoned",
+                    "discarded_proposal_chars": abandoned_chars,
+                    "instruction": "Generate a new complete local correction from the original snapshot. Do not continue or repeat the unfinished proposal."}
+                print(f"  [ABCD induce] continuation allowance exhausted; discarding {abandoned_chars}-char unfinished proposal (no writes); retrying a fresh local correction")
             if pending_prefix:
                 continuation_calls += 1
             call_count += 1
@@ -1929,8 +1943,14 @@ class ABCDAgent(AbstractTodAgent):
                 from skill_mining.awm_edit_tools import render_targeted_edit_repair
                 request_prompt += render_targeted_edit_repair(targeted_targets)
                 response_mode = "targeted_repair"
+            elif minimal_recovery and not pending_prefix:
+                from skill_mining.awm_edit_tools import render_minimal_edit_recovery
+                request_prompt += render_minimal_edit_recovery()
+                response_mode = "minimal_recovery"
+            request_started = time.monotonic()
+            request_elapsed_seconds = None
             try:
-                raw_chunk = self._chat(
+                reply = self._chat(
                     request_prompt,
                     model=self.model,
                     api_key=self.api_key,
@@ -1939,6 +1959,10 @@ class ABCDAgent(AbstractTodAgent):
                     response_logger=self._response_logger,
                     call_tag="skill_induction",
                 )
+                request_elapsed_seconds = time.monotonic() - request_started
+                if not isinstance(reply, str):
+                    raise ValueError(f"LLM response must be text, got {type(reply).__name__}")
+                raw_chunk = reply
                 if pending_prefix:
                     if not raw_chunk:
                         raise ValueError("Empty continuation response; unfinished plan retained, no update applied")
@@ -1959,6 +1983,7 @@ class ABCDAgent(AbstractTodAgent):
                         extra={"attempt": call_count, "plan_attempt": attempt + 1,
                                "continuation_calls": continuation_calls, "response_chars": len(raw_reply),
                                "chunk_chars": len(raw_chunk), "response_mode": response_mode,
+                               "request_elapsed_seconds": request_elapsed_seconds,
                                "prefix_chars": len(pending_prefix),
                                "requested_edit_format": "AWM_EDIT_PLAN_V1" if edit_mode == "tools" else "rewrite"},
                     )
@@ -1985,6 +2010,8 @@ class ABCDAgent(AbstractTodAgent):
                 retry_error = "Empty response"
                 attempt += 1
             except Exception as exc:
+                if request_elapsed_seconds is None:
+                    request_elapsed_seconds = time.monotonic() - request_started
                 updated = ""
                 retry_error = str(exc)
                 if edit_mode == "tools":
@@ -2023,6 +2050,7 @@ class ABCDAgent(AbstractTodAgent):
                                "continuation_calls": continuation_calls,
                                "error": retry_error, "response_chars": len(raw_reply),
                                "chunk_chars": len(raw_chunk), "response_mode": response_mode,
+                               "request_elapsed_seconds": request_elapsed_seconds,
                                "prefix_chars": len(pending_prefix),
                                "continuable_incomplete": bool(partial_edit_response),
                                "edit_repair_context": edit_repair_context},

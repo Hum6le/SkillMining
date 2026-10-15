@@ -188,7 +188,7 @@ def audit(directory, recent=3):
                 "record_keys": sorted(record), "shape": output_shape(extract_text(record)),
                 "metadata": metadata(record), "attempt_metadata": {key: extra[key] for key in (
                     "attempt", "plan_attempt", "continuation_calls", "chunk_chars", "prefix_chars",
-                    "response_chars", "response_mode", "continuable_incomplete", "error") if key in extra}}
+                    "response_chars", "response_mode", "continuable_incomplete", "request_elapsed_seconds", "error") if key in extra}}
     def latest(pattern):
         return sorted(session.glob(pattern), key=lambda path: int(path.name.split("_", 1)[0]))[-recent:]
     return {"read_only": True, "session": str(session),

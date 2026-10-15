@@ -302,11 +302,17 @@ def main() -> int:
                         help="AWM full rewrite or shared file-edit tools; resume inherits saved mode if omitted")
     parser.add_argument("--offline-awm-stop-on-error", action="store_true",
                         help="Stop immediately on exhausted AWM induction retries; default records failures and continues")
+    parser.add_argument("--offline-awm-continue-on-error", action="store_true",
+                        help="Explicitly record induction failures and continue; overrides --offline-awm-stop-on-error in either order")
     parser.add_argument("--offline-awm-recover-failed-tail", action="store_true",
                         help="With --resume: validate, back up and rewind an unchanged contiguous failed induction tail")
     parser.add_argument("--dry-run", action="store_true", help="Show workflow assignment without API calls")
     parser.add_argument("--worker-subflow", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.offline_awm_continue_on_error:
+        if args.offline_awm_stop_on_error:
+            print("Offline-AWM: --offline-awm-continue-on-error overrides --offline-awm-stop-on-error", flush=True)
+        args.offline_awm_stop_on_error = False
     args.output_dir = str(Path(args.output_dir).resolve())
     args.arms = tuple(item.strip() for item in args.arms.split(",") if item.strip())
     if not args.arms or len(args.arms) != len(set(args.arms)) or any(arm not in SUPPORTED_ARMS for arm in args.arms):
@@ -414,6 +420,8 @@ def main() -> int:
                 cmd += ["--offline-awm-edit-mode", args.offline_awm_edit_mode]
             if args.offline_awm_stop_on_error:
                 cmd += ["--offline-awm-stop-on-error"]
+            elif args.offline_awm_continue_on_error:
+                cmd += ["--offline-awm-continue-on-error"]
             if args.offline_awm_recover_failed_tail:
                 cmd += ["--offline-awm-recover-failed-tail"]
             flow_dir = root / name

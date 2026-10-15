@@ -332,6 +332,25 @@ def edit_response_instructions(attempt):
     return message
 
 
+def render_minimal_edit_recovery():
+    """A fresh small proposal, NOT acceptance of a prefix or a length quota."""
+    return (
+        "\n\n## Recover from an Unfinished Oversized Proposal\n"
+        "The previous proposal never completed and NONE of it was applied. "
+        "DISCARD that proposal; do not continue, reproduce, summarize, or preserve "
+        "its planned edit list. From the ORIGINAL snapshot and current batch, "
+        "choose the single most important LOCAL correction and return a NEW, "
+        "standalone, COMPLETE AWM_EDIT_PLAN_V1. Prefer a narrow existing line/span "
+        "and its complete necessary replacement, not an entire workflow/card "
+        "inserted into one line. Defer independent corrections to later batches. "
+        "Close the edit with END_EDIT and the plan with END_PLAN. Do not append "
+        "discussion of deferred work. This is generation guidance, NOT a character "
+        "or operation-count acceptance limit: valid complete plans are not rejected "
+        "for their length. Return no-change only if no justified correction exists, "
+        "not merely to satisfy size guidance.\n"
+    )
+
+
 def parse_edit_response(raw):
     """Decode only COMPLETE plans. Never repair JSON or salvage partial operations."""
     text = raw.strip()

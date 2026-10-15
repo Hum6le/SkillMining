@@ -194,7 +194,7 @@ def diagnose(directory, examples=6, latest_run=False, recent=None):
                 "target_present", "end_target_present", "actual_file", "address_checks") if key in feedback}
             result["response_recovery"] = {key: record.get("extra", {})[key] for key in (
                 "chunk_chars", "response_mode", "prefix_chars", "continuable_incomplete",
-                "plan_attempt", "continuation_calls")
+                "plan_attempt", "continuation_calls", "request_elapsed_seconds")
                 if key in record.get("extra", {})}
             if feedback.get("error_kind"):
                 result["validator_error_kind"] = feedback["error_kind"]
