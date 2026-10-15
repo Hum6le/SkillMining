@@ -72,6 +72,10 @@ def inspect_plan(raw, catalog, other_ids):
             target, name = op[field], op.get("file")
             if not isinstance(target, str):
                 reason = "non_text_id"
+            elif (re.fullmatch(r"\[[0-9a-f]{16}:L[1-9][0-9]*\]", target)
+                  and target[1:-1] in catalog):
+                reason = ("display_brackets_only" if catalog[target[1:-1]] == name
+                          else "display_brackets_and_wrong_file")
             elif target in catalog:
                 if catalog[target] == name:
                     continue

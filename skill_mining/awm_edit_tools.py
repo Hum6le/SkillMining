@@ -42,6 +42,10 @@ Writable: skill.md, action_rules.md, slot_policies.md. reference.md/schema are r
 Each operation: file, target_id, op (replace/insert_before/insert_after/delete),
 new_text (empty for delete). section/rationale are optional descriptions.
 Copy target_id from the catalog; NEVER copy or paraphrase old text as an anchor.
+Catalog brackets are display delimiters: [5d9cc6170bb3ef49:L135] means
+"target_id":"5d9cc6170bb3ef49:L135" (without brackets).
+Return only necessary local edits, preferably at most 6 per batch. Do not rewrite
+whole files or repeat unchanged text; prioritize the most important corrections.
 target_id selects that exact line EVEN WHEN identical text appears elsewhere.
 For a multiline span, optionally provide end_target_id from the SAME file; the
 inclusive range is selected. All IDs refer to the ORIGINAL supplied snapshot,
@@ -58,16 +62,34 @@ Example: {"operations":[{"file":"skill.md","target_id":"COPY_ACTUAL_ID",
 '''
 
 
+def normalize_target_id(value):
+    """Accept one catalog display wrapper, never fuzzy-match or drop revisions."""
+    if isinstance(value, str):
+        match = re.fullmatch(r"\[([0-9a-f]{16}:L[1-9][0-9]*)\]", value)
+        if match:
+            return match[1]
+    return value
+
+
 def _resolve_id_plan(plan, files):
     catalog, spans = build_edit_catalog(files), []
     for index, operation in enumerate(plan["operations"], 1):
         if not isinstance(operation, dict) or set(operation) - {
             "file", "target_id", "end_target_id", "op", "new_text", "section", "rationale"}:
             raise AWMEditError(f"Edit {index}: do not mix ID addressing and old match_text fields")
-        first, last = catalog.get(operation.get("target_id")), catalog.get(operation.get("end_target_id", operation.get("target_id")))
+        first_id = normalize_target_id(operation.get("target_id"))
+        last_id = normalize_target_id(operation.get("end_target_id", operation.get("target_id")))
+        if not isinstance(first_id, str) or not isinstance(last_id, str):
+            raise AWMEditError(f"Edit {index}: target IDs must be strings")
+        first, last = catalog.get(first_id), catalog.get(last_id)
         name = operation.get("file")
         if first is None or last is None or first["file"] != name or last["file"] != name:
-            raise AWMEditError(f"Edit {index}: unknown/stale target_id or wrong file; copy an ID from the supplied snapshot")
+            raise AWMEditError(f"Edit {index}: unknown/stale target_id or wrong file; copy an ID from the supplied snapshot",
+                {"edit_index": index, "file": name, "target_id": first_id,
+                 "end_target_id": last_id, "target_present": first is not None,
+                 "end_target_present": last is not None,
+                 "actual_file": first["file"] if first else None,
+                 "instruction": "Copy the current snapshot ID without display brackets; revision and line must both match."})
         start, end = first["start"], last["end"]
         if start >= end:
             raise AWMEditError(f"Edit {index}: reversed/empty target range")

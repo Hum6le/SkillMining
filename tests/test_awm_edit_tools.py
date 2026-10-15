@@ -13,6 +13,24 @@ def files():
             "slot_policies.md": "# Slots\n#### `send-link`\nOld binding.\n"}
 
 
+def test_display_brackets_accept_exact_current_ids_and_ranges_only():
+    source = files()
+    catalog = build_edit_catalog(source)
+    ids = [key for key, row in catalog.items() if row["file"] == "skill.md"]
+    ops = [{"file": "skill.md", "target_id": f"[{ids[1]}]",
+            "end_target_id": f"[{ids[2]}]", "op": "replace", "new_text": "## Fixed\nNew route."}]
+    edited, logs = apply_awm_edit_plan(json.dumps({"operations": ops}), source, {"send-link"})
+    assert "## Fixed\nNew route." in edited["skill.md"]
+    assert logs[0]["target_id"] == f"[{ids[1]}]"  # Original response retained for audit.
+    for target in (f"[[{ids[1]}]]", "[0000000000000000:L2]", f"`{ids[1]}`"):
+        with pytest.raises(ValueError):
+            apply_awm_edit_plan(json.dumps({"operations": [{**ops[0], "target_id": target}]}), source, {"send-link"})
+    with pytest.raises(ValueError):
+        apply_awm_edit_plan(json.dumps({"operations": [{**ops[0], "file": "slot_policies.md"}]}), source, {"send-link"})
+    with pytest.raises(ValueError, match="overlapping"):
+        apply_awm_edit_plan(json.dumps({"operations": ops * 2}), source, {"send-link"})
+
+
 def operation(**changes):
     return {"file": "skill.md", "section": "## Route", "op": "replace",
             "match_text": "Old route.", "new_text": "New route.", "rationale": "Observed failure", **changes}
@@ -40,7 +58,8 @@ def test_catalog_ids_disambiguate_duplicates_and_do_not_shift_within_plan():
         apply_awm_edit_plan(json.dumps({"operations": ops}), changed, {"send-link"})
 
 
-def test_native_id_induction_uses_the_same_addressed_prior_once():
+@pytest.mark.parametrize("display_brackets", [False, True])
+def test_native_id_induction_uses_the_same_addressed_prior_once(display_brackets):
     source = files()
     workflow = WorkflowStore()
     workflow.replace(source["skill.md"])
@@ -49,6 +68,8 @@ def test_native_id_induction_uses_the_same_addressed_prior_once():
         calls.append(prompt)
         target = next(k for k, row in build_edit_catalog({**source, "skill.md": workflow.text}).items()
                       if row["text"] == "Old route.")
+        if display_brackets:
+            target = f"[{target}]"
         return json.dumps({"operations": [{"file": "skill.md", "target_id": target,
                                            "op": "replace", "new_text": "Updated route."}]})
     with patch("llm.resolve_config", return_value={"model": "test", "api_key": "", "base_url": ""}), \

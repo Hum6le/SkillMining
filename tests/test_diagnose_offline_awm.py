@@ -21,6 +21,8 @@ def test_distinguishes_id_failure_classes():
         "wrong_file", "unknown_line_in_current_revision", "id_seen_in_other_logged_snapshot",
         "unknown_revision", "malformed_or_placeholder_id"]
     assert inspect_plan('{"operations": [', ids, set())["status"] == "invalid_json"
+    wrapped = {"operations": [{"file": "skill.md", "target_id": "[aaaaaaaaaaaaaaaa:L1]"}]}
+    assert inspect_plan(json.dumps(wrapped), ids, set())["issues"][0]["reason"] == "display_brackets_only"
 
 
 def test_tail_cache_verification(tmp_path):
