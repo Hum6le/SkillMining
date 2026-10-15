@@ -1841,8 +1841,14 @@ class ABCDAgent(AbstractTodAgent):
         self.last_awm_edit_operations = []
         self.last_awm_edited_resources = None
         if edit_mode == "tools":
-            from skill_mining.awm_edit_tools import TOOL_INSTRUCTIONS
-            prompt += TOOL_INSTRUCTIONS + "\nAllowed canonical action names: " + json.dumps(sorted(self.action_schema.get("actions", [])))
+            from skill_mining.awm_edit_tools import ID_TOOL_INSTRUCTIONS, render_edit_catalog
+            files = {**editable_resources, "skill.md": existing}
+            # Replace the raw prior with the addressed view, not a second dump.
+            prefix = prompt.split("\n\n## Existing Workflow\n", 1)[0]
+            prompt = (prefix + "\n\n## Current Editable Snapshot\n" + render_edit_catalog(files)
+                      + "\n\n## Read-only Reference\n" + editable_resources.get("reference.md", "")
+                      + ID_TOOL_INSTRUCTIONS + "\nAllowed canonical action names: "
+                      + json.dumps(sorted(self.action_schema.get("actions", []))))
         elif editable_action_cards:
             prompt += (
                 "\n\n## Writable Action Cards: Output Override\n"
@@ -1877,7 +1883,7 @@ class ABCDAgent(AbstractTodAgent):
             if editable_action_cards and retry_error:
                 request_prompt += (
                     "\n\n## Previous Attempt Rejected\n" + retry_error + "\n"
-                    + ("Regenerate a complete corrected JSON edit plan only, with exact file/section/anchor. "
+                    + ("Regenerate a complete corrected JSON edit plan only, using target_id from the snapshot. "
                      "The previous plan was not applied.\n" if edit_mode == "tools" else
                     "Regenerate a COMPLETE concise workflow as plain Markdown followed by the "
                     "delimited JSON array. Close both delimiters and all JSON strings/brackets. "
@@ -1888,7 +1894,7 @@ class ABCDAgent(AbstractTodAgent):
                         "\n<rejected_edit_plan>\n" + rejected_edit_plan + "\n</rejected_edit_plan>\n"
                         "<edit_validation_feedback>\n" + json.dumps(edit_repair_context, ensure_ascii=False)
                         + "\n</edit_validation_feedback>\n"
-                        "Use the literal candidate excerpts to repair the failed operation, not a paraphrase. "
+                        "Select the correct snapshot target_id; do not generate match_text or guess an occurrence. "
                         "Preserve the intended change and any still-valid earlier operations. Return the entire corrected plan; "
                         "no previous operation has been committed. The excerpts are suggestions only, never automatic writes."
                     )
@@ -1942,7 +1948,7 @@ class ABCDAgent(AbstractTodAgent):
 
         if not updated:
             if editable_action_cards:
-                raise RuntimeError("AWM workflow/card induction failed after 3 attempts; no update applied")
+                raise AWMInductionError("AWM workflow/card induction failed after 3 attempts; no update applied; last error: " + retry_error)
             print("  [ABCD induce] failed after 3 attempts; preserving resource contract")
             updated = _AWM_WORKFLOW_RESOURCE_SECTION.strip()
 
@@ -2014,6 +2020,10 @@ class ABCDAgent(AbstractTodAgent):
 
 
 # ── Output parsing helpers ────────────────────────────────────
+
+class AWMInductionError(RuntimeError):
+    """Recoverable failed batch update; no workflow/card proposal committed."""
+
 
 _AWM_CARD_START = "<<<AWM_CARD_UPDATES>>>"
 _AWM_CARD_END = "<<<END_AWM_CARD_UPDATES>>>"

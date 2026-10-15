@@ -4,7 +4,7 @@ from unittest.mock import patch
 import pytest
 from awm import WorkflowStore
 from eval_tod.abcd.agent import ABCDAgent
-from skill_mining.awm_edit_tools import apply_awm_edit_plan, AWMEditError
+from skill_mining.awm_edit_tools import apply_awm_edit_plan, AWMEditError, build_edit_catalog, render_edit_catalog
 
 
 def files():
@@ -16,6 +16,48 @@ def files():
 def operation(**changes):
     return {"file": "skill.md", "section": "## Route", "op": "replace",
             "match_text": "Old route.", "new_text": "New route.", "rationale": "Observed failure", **changes}
+
+
+def test_catalog_ids_disambiguate_duplicates_and_do_not_shift_within_plan():
+    source = files()
+    source["skill.md"] = "# Skill\n## Route\nSame.\nMiddle.\nSame.\n"
+    catalog = build_edit_catalog(source)
+    same = [key for key, row in catalog.items() if row["text"] == "Same."]
+    assert len(same) == 2 and same[0] != same[1]
+    ops = [{"file": "skill.md", "target_id": same[0], "op": "insert_before", "new_text": "New first line.\n"},
+           {"file": "skill.md", "target_id": same[1], "op": "replace", "new_text": "Changed second copy."}]
+    edited, logs = apply_awm_edit_plan(json.dumps({"operations": ops}), source, {"send-link"})
+    assert edited["skill.md"] == "# Skill\n## Route\nNew first line.\nSame.\nMiddle.\nChanged second copy.\n"
+    assert [log["target_id"] for log in logs] == same
+    assert render_edit_catalog(source).count("Same.") == 2
+    # Stale/wrong-file IDs and conflicting ranges cannot silently redirect.
+    for bad in ([{**ops[0], "file": "slot_policies.md"}], [ops[0], ops[0]],
+                [{**ops[0], "target_id": "bad-id"}]):
+        with pytest.raises(ValueError):
+            apply_awm_edit_plan(json.dumps({"operations": bad}), source, {"send-link"})
+    changed = {**source, "skill.md": source["skill.md"] + "Changed snapshot.\n"}
+    with pytest.raises(ValueError, match="stale"):
+        apply_awm_edit_plan(json.dumps({"operations": ops}), changed, {"send-link"})
+
+
+def test_native_id_induction_uses_the_same_addressed_prior_once():
+    source = files()
+    workflow = WorkflowStore()
+    workflow.replace(source["skill.md"])
+    calls = []
+    def chat(self, prompt, **kwargs):
+        calls.append(prompt)
+        target = next(k for k, row in build_edit_catalog({**source, "skill.md": workflow.text}).items()
+                      if row["text"] == "Old route.")
+        return json.dumps({"operations": [{"file": "skill.md", "target_id": target,
+                                           "op": "replace", "new_text": "Updated route."}]})
+    with patch("llm.resolve_config", return_value={"model": "test", "api_key": "", "base_url": ""}), \
+         patch.object(ABCDAgent, "_chat", chat):
+        agent = ABCDAgent(model="test", workflow=workflow)
+        updated = agent.induce([], [], [], editable_action_cards=True, edit_mode="tools", editable_resources=source)
+    assert "Updated route." in updated and len(calls) == 1
+    assert calls[0].count("Old route.") == 1
+    assert "Current Editable Snapshot" in calls[0]
 
 
 def test_atomic_shared_edits_across_files():
