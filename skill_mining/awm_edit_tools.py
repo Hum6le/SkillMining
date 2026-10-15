@@ -12,7 +12,7 @@ EDITABLE_FILES = ("skill.md", "action_rules.md", "slot_policies.md")
 
 
 def build_edit_catalog(files):
-    """Address actual snapshot lines; identical text gets different IDs."""
+    """Address every actual snapshot line, including delete-only blank lines."""
     catalog = {}
     for name in EDITABLE_FILES:
         source = files[name]
@@ -20,10 +20,13 @@ def build_edit_catalog(files):
         offset = 0
         for number, line in enumerate(source.splitlines(keepends=True), 1):
             body = line.rstrip("\r\n")
-            if body.strip():
-                target_id = f"{revision}:L{number}"
-                catalog[target_id] = {"file": name, "line": number, "start": offset,
-                                      "end": offset + len(body), "text": body}
+            blank = not body.strip()
+            target_id = f"{revision}:L{number}"
+            catalog[target_id] = {"file": name, "line": number, "start": offset,
+                                  # A blank-line deletion must remove its newline,
+                                  # not the previous line's newline or adjacent text.
+                                  "end": offset + (len(line) if blank else len(body)),
+                                  "text": body, "blank": blank}
             offset += len(line)
     return catalog
 
@@ -31,7 +34,8 @@ def build_edit_catalog(files):
 def render_edit_catalog(files):
     catalog = build_edit_catalog(files)
     return "\n\n".join("## " + name + "\n" + "\n".join(
-        f"[{target_id}] {row['text']}" for target_id, row in catalog.items() if row["file"] == name
+        f"[{target_id}] " + ("<BLANK_LINE_DELETE_ONLY>" if row["blank"] else row["text"])
+        for target_id, row in catalog.items() if row["file"] == name
     ) for name in EDITABLE_FILES)
 
 
@@ -55,6 +59,10 @@ One operation per target/span; merge overlapping changes into one operation.
 Replacement targets include the line body but not its trailing newline. Include
 newlines in new_text for inserted/new multiple lines. Preserve unrelated rules
 and canonical action headings; never hard-code private customer values.
+Exception: <BLANK_LINE_DELETE_ONLY> is display metadata for a real whitespace-only
+line, not file content. Its ID may be used for delete only; deletion removes that
+line including its line ending. To insert text use a neighboring nonblank ID.
+Never infer line IDs or invent an ID for a line beyond the supplied snapshot.
 For Action Cards, never replace a body line with a complete card containing its
 heading: that creates a duplicate heading. To replace a whole card, target its
 existing heading through its last body line using end_target_id, excluding the
@@ -138,6 +146,8 @@ def _resolve_id_plan(plan, files):
                  "address_checks": details,
                  "instruction": "Inspect the current snapshot content and explicitly reselect the intended start/end IDs. Candidates are NOT applied automatically. Copy the current revision and line; do not copy IDs from the rejected plan."})
         start, end = first["start"], last["end"]
+        if (first["blank"] or last["blank"]) and operation.get("op") != "delete":
+            raise AWMEditError(f"Edit {index}: blank-line endpoints are delete-only; select a nonblank target for other operations")
         if start >= end:
             raise AWMEditError(f"Edit {index}: reversed/empty target range")
         if any(n == name and start < e and end > s for n, s, e, _, _ in spans):
