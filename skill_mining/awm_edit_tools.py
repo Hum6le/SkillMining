@@ -368,6 +368,63 @@ def parse_edit_response(raw):
     return plan
 
 
+def can_continue_edit_response(raw):
+    """Recognize an open valid frame prefix, NOT proof of backend truncation.
+
+    Only append at EOF. An internal missing delimiter in a plan that already
+    contains END_PLAN needs regeneration, never automatic marker insertion.
+    """
+    if not isinstance(raw, str):
+        return False
+    lines = raw.lstrip().splitlines(keepends=True)
+    if not lines or lines[0].rstrip("\r\n") != "AWM_EDIT_PLAN_V1":
+        return False
+    if any(line.rstrip("\r\n") == "END_PLAN" for line in lines):
+        return False
+    cursor = 1
+    while cursor < len(lines):
+        header = lines[cursor].rstrip("\r\n")
+        if not header.startswith("EDIT "):
+            return (cursor == len(lines) - 1 and any(marker.startswith(header) for marker in ("EDIT ", "END_PLAN"))
+                    and not lines[cursor].endswith(("\n", "\r")))
+        try:
+            metadata = json.loads(header[5:])
+        except json.JSONDecodeError:
+            return cursor == len(lines) - 1 and not lines[cursor].endswith(("\n", "\r"))
+        if (not isinstance(metadata, dict) or set(metadata) - {"file", "target_id", "end_target_id", "op"}
+                or not isinstance(metadata.get("target_id"), str)
+                or not isinstance(metadata.get("op"), str)
+                or metadata["op"] not in ("replace", "insert_before", "insert_after", "delete")):
+            return False
+        cursor += 1
+        while cursor < len(lines) and lines[cursor].rstrip("\r\n") != "END_EDIT":
+            cursor += 1
+        if cursor == len(lines):
+            return True  # Open literal body, possibly cut in the middle of a line.
+        cursor += 1
+    return True  # Complete edits exist, but final END_PLAN has not arrived.
+
+
+def render_edit_continuation(prefix):
+    """Keep the exact generated prefix; request a suffix, never salvage a plan."""
+    return (
+        "\n\n## Continue an Unfinished Response (overrides full-plan output instructions)\n"
+        "Your previous response has an open AWM_EDIT_PLAN_V1 frame. It has NOT been applied. "
+        "Do NOT regenerate the whole plan or repeat its prefix. Return ONLY the remaining "
+        "suffix, continuing immediately after the LAST CHARACTER of the decoded prefix "
+        "below. Preserve needed initial whitespace/newlines: Python concatenates your "
+        "suffix verbatim, with NO separator or automatic delimiter insertion. If the "
+        "prefix ends in the middle of a line/token, finish that line/token first. "
+        "Complete any remaining necessary edits, close each edit with END_EDIT and the "
+        "plan with END_PLAN on their own lines. Do not omit required content just to "
+        "close the frame. Do not emit fences, commentary or a new plan header. "
+        "The JSON string below encodes the EXACT read-only prefix; decode its escapes "
+        "to see the existing text, but do NOT return a JSON string.\n"
+        "<existing_partial_plan_json>\n" + json.dumps(prefix, ensure_ascii=False)
+        + "\n</existing_partial_plan_json>\n"
+    )
+
+
 def validate_edit_plan_structure(plan):
     """Collect ALL required-field errors before sorting or simulating any edits.
 

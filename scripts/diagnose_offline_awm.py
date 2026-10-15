@@ -13,7 +13,7 @@ import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from skill_mining.awm_edit_tools import parse_edit_response, normalize_target_id, resolve_edit_file
+from skill_mining.awm_edit_tools import parse_edit_response, normalize_target_id, resolve_edit_file, can_continue_edit_response
 
 
 FILES = {"skill.md", "action_rules.md", "slot_policies.md"}
@@ -59,7 +59,16 @@ def inspect_plan(raw, catalog, other_ids):
     try:
         plan = parse_edit_response(text) if text.startswith("AWM_EDIT_PLAN_V1") else json.loads(text)
     except ValueError as exc:
-        return {"status": "invalid_json", "error": str(exc), "response_chars": len(raw)}
+        result = {"status": "invalid_json", "error": str(exc), "response_chars": len(raw)}
+        if text.startswith("AWM_EDIT_PLAN_V1"):
+            lines = text.splitlines()
+            result.update(status="invalid_framing", framing={
+                "exact_header": bool(lines and lines[0] == "AWM_EDIT_PLAN_V1"),
+                "final_end_plan": bool(lines and lines[-1] == "END_PLAN"),
+                "end_edit_markers": sum(line == "END_EDIT" for line in lines),
+                "end_plan_markers": sum(line == "END_PLAN" for line in lines),
+                "can_request_suffix": can_continue_edit_response(raw)})
+        return result
     if not isinstance(plan, dict) or not isinstance(plan.get("operations"), list):
         return {"status": "invalid_plan_shape", "response_chars": len(raw)}
     issues, legacy = [], 0
@@ -183,6 +192,11 @@ def diagnose(directory, examples=6, latest_run=False, recent=None):
             result["validator_address_feedback"] = {key: feedback[key] for key in (
                 "edit_index", "execution_index", "file", "target_id", "end_target_id",
                 "target_present", "end_target_present", "actual_file", "address_checks") if key in feedback}
+            result["response_recovery"] = {key: record.get("extra", {})[key] for key in (
+                "chunk_chars", "response_mode", "prefix_chars", "continuable_incomplete")
+                if key in record.get("extra", {})}
+            if feedback.get("error_kind"):
+                result["validator_error_kind"] = feedback["error_kind"]
             counts[result["status"]] += 1
             for issue in result.get("issues", []):
                 reasons[issue["reason"]] += 1

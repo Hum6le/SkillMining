@@ -1877,13 +1877,20 @@ class ABCDAgent(AbstractTodAgent):
         retry_error = ""
         rejected_edit_plan = ""
         edit_repair_context = {}
+        partial_edit_response = ""
         for attempt in range(3):
             raw_reply = ""
+            raw_chunk = ""
+            pending_prefix = partial_edit_response
+            response_mode = "continue" if pending_prefix else "regenerate"
             request_prompt = prompt
             if edit_mode == "tools":
                 from skill_mining.awm_edit_tools import edit_response_instructions
                 request_prompt += edit_response_instructions(attempt)
-            if editable_action_cards and retry_error:
+            if pending_prefix:
+                from skill_mining.awm_edit_tools import render_edit_continuation
+                request_prompt += render_edit_continuation(pending_prefix)
+            elif editable_action_cards and retry_error:
                 request_prompt += (
                     "\n\n## Previous Attempt Rejected\n" + retry_error + "\n"
                     + ("Regenerate one complete corrected AWM_EDIT_PLAN_V1 plan. "
@@ -1908,7 +1915,7 @@ class ABCDAgent(AbstractTodAgent):
                         "no previous operation has been committed. The excerpts are suggestions only, never automatic writes."
                     )
             try:
-                raw_reply = self._chat(
+                raw_chunk = self._chat(
                     request_prompt,
                     model=self.model,
                     api_key=self.api_key,
@@ -1916,13 +1923,27 @@ class ABCDAgent(AbstractTodAgent):
                     temperature=0.0,
                     response_logger=self._response_logger,
                     call_tag="skill_induction",
-                ).strip()
+                )
+                if pending_prefix:
+                    if not raw_chunk:
+                        raise ValueError("Empty continuation response; unfinished plan retained, no update applied")
+                    if raw_chunk.lstrip().startswith("AWM_EDIT_PLAN_V1"):
+                        # Some providers regenerate despite a continuation request.
+                        # Validate that standalone candidate, never concatenate plans.
+                        raw_reply = raw_chunk
+                        response_mode = "restart"
+                    else:
+                        raw_reply = pending_prefix + raw_chunk
+                else:
+                    raw_reply = raw_chunk if edit_mode == "tools" else raw_chunk.strip()
                 updated = raw_reply
                 if editable_action_cards and self._response_logger is not None:
                     self._response_logger.log(
                         messages=[{"role": "user", "content": request_prompt}],
                         response={"raw_response": raw_reply}, call_tag="awm_induction_output",
                         extra={"attempt": attempt + 1, "response_chars": len(raw_reply),
+                               "chunk_chars": len(raw_chunk), "response_mode": response_mode,
+                               "prefix_chars": len(pending_prefix),
                                "requested_edit_format": "AWM_EDIT_PLAN_V1" if edit_mode == "tools" else "rewrite"},
                     )
                 if updated:
@@ -1945,9 +1966,11 @@ class ABCDAgent(AbstractTodAgent):
                 updated = ""
                 retry_error = str(exc)
                 if edit_mode == "tools":
-                    from skill_mining.awm_edit_tools import AWMEditResponseError
+                    from skill_mining.awm_edit_tools import AWMEditResponseError, can_continue_edit_response
                     transport_error = isinstance(exc, (json.JSONDecodeError, AWMEditResponseError))
                     edit_repair_context = getattr(exc, "repair_context", {})
+                    partial_edit_response = (raw_reply if transport_error and can_continue_edit_response(raw_reply)
+                                             else pending_prefix if pending_prefix and not raw_chunk else "")
                     # Do not teach the model to repeat malformed/missing-field
                     # plans. Field-level feedback lists ALL errors in source order.
                     if transport_error:
@@ -1958,11 +1981,20 @@ class ABCDAgent(AbstractTodAgent):
                         rejected_edit_plan = "[Invalid structure omitted; repair ALL structure_issues below without guessing missing ops.]"
                     else:
                         rejected_edit_plan = raw_reply[:3000]
+                    if partial_edit_response:
+                        edit_repair_context = {"error_kind": "unfinished_response",
+                            "prefix_chars": len(partial_edit_response),
+                            "instruction": "Request only the missing suffix on the next attempt. No prefix edits have been applied; full structure/address/schema validation is still required after completion."}
+                        if attempt < 2:
+                            print(f"  [ABCD induce] retaining unfinished response ({len(partial_edit_response)} chars); next call requests continuation")
                 if self._response_logger is not None:
                     self._response_logger.log(
                         messages=[{"role": "user", "content": request_prompt}], response={"raw_response": raw_reply},
                         call_tag="awm_induction_validation_error",
                         extra={"attempt": attempt + 1, "error": retry_error, "response_chars": len(raw_reply),
+                               "chunk_chars": len(raw_chunk), "response_mode": response_mode,
+                               "prefix_chars": len(pending_prefix),
+                               "continuable_incomplete": bool(partial_edit_response),
                                "edit_repair_context": edit_repair_context},
                     )
                 print(f"  [ABCD induce] LLM error ({attempt + 1}/3): {exc}")
