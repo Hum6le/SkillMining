@@ -12,7 +12,7 @@ EDITABLE_FILES = ("skill.md", "action_rules.md", "slot_policies.md")
 
 
 def build_edit_catalog(files):
-    """Address every actual snapshot line, including delete-only blank lines."""
+    """Address every actual snapshot line, including whitespace-only lines."""
     catalog = {}
     for name in EDITABLE_FILES:
         source = files[name]
@@ -26,7 +26,8 @@ def build_edit_catalog(files):
                                   # A blank-line deletion must remove its newline,
                                   # not the previous line's newline or adjacent text.
                                   "end": offset + (len(line) if blank else len(body)),
-                                  "text": body, "blank": blank}
+                                  "text": body, "blank": blank,
+                                  "line_ending": line[len(body):]}
             offset += len(line)
     return catalog
 
@@ -34,7 +35,7 @@ def build_edit_catalog(files):
 def render_edit_catalog(files):
     catalog = build_edit_catalog(files)
     return "\n\n".join("## " + name + "\n" + "\n".join(
-        f"[{target_id}] " + ("<BLANK_LINE_DELETE_ONLY>" if row["blank"] else row["text"])
+        f"[{target_id}] " + ("<BLANK_LINE>" if row["blank"] else row["text"])
         for target_id, row in catalog.items() if row["file"] == name
     ) for name in EDITABLE_FILES)
 
@@ -59,9 +60,12 @@ One operation per target/span; merge overlapping changes into one operation.
 Replacement targets include the line body but not its trailing newline. Include
 newlines in new_text for inserted/new multiple lines. Preserve unrelated rules
 and canonical action headings; never hard-code private customer values.
-Exception: <BLANK_LINE_DELETE_ONLY> is display metadata for a real whitespace-only
-line, not file content. Its ID may be used for delete only; deletion removes that
-line including its line ending. To insert text use a neighboring nonblank ID.
+Exception: <BLANK_LINE> is display metadata, not file content. Blank lines support
+all four operations. delete removes the selected blank line and its line ending;
+replace fills it with new_text, preserving its final newline unless new_text
+already supplies one; insert_before/after adds text before/after the complete
+blank line, adding a line separator when needed to preserve adjacent lines.
+Ranges may start/end on blank lines. Unrelated neighboring text is never removed.
 Never infer line IDs or invent an ID for a line beyond the supplied snapshot.
 For Action Cards, never replace a body line with a complete card containing its
 heading: that creates a duplicate heading. To replace a whole card, target its
@@ -146,8 +150,6 @@ def _resolve_id_plan(plan, files):
                  "address_checks": details,
                  "instruction": "Inspect the current snapshot content and explicitly reselect the intended start/end IDs. Candidates are NOT applied automatically. Copy the current revision and line; do not copy IDs from the rejected plan."})
         start, end = first["start"], last["end"]
-        if (first["blank"] or last["blank"]) and operation.get("op") != "delete":
-            raise AWMEditError(f"Edit {index}: blank-line endpoints are delete-only; select a nonblank target for other operations")
         if start >= end:
             raise AWMEditError(f"Edit {index}: reversed/empty target range")
         if any(n == name and start < e and end > s for n, s, e, _, _ in spans):
@@ -158,6 +160,25 @@ def _resolve_id_plan(plan, files):
         if start not in positions:
             raise AWMEditError(f"Edit {index}: selected span cannot be represented as a nonoverlapping text anchor")
         converted = {k: v for k, v in operation.items() if k not in {"target_id", "end_target_id"}}
+        # Blank rows include their newline in the exact anchor (needed for a
+        # meaningful delete). For other operations retain that boundary instead
+        # of rejecting the row or silently joining neighboring prose.
+        op, replacement = operation.get("op"), operation.get("new_text")
+        boundary = (last if op in {"replace", "insert_after"} else first)
+        if op in {"replace", "insert_before", "insert_after"} and boundary["blank"]:
+            if not isinstance(replacement, str) or not replacement:
+                raise AWMEditError(f"Edit {index}: missing/non-text or empty new_text")
+            ending = boundary["line_ending"]
+            if op == "replace":
+                if ending and not replacement.endswith(("\n", "\r")):
+                    replacement += ending
+            else:
+                separator = ending or ("\r\n" if "\r\n" in source else "\n")
+                if not replacement.endswith(("\n", "\r")):
+                    replacement += separator
+                if op == "insert_after" and not ending:
+                    replacement = separator + replacement
+            converted["new_text"] = replacement
         converted.update(match_text=anchor, occurrence=positions.index(start) + 1)
         spans.append((name, start, end, converted, index - 1))
     # Reverse offsets preserve every original location despite earlier edits.
@@ -340,5 +361,8 @@ def apply_awm_edit_plan(raw, files, valid_actions):
     if id_mapping is not None:
         for record, (index, original) in zip(outcomes, id_mapping):
             record.update(target_id=original["target_id"], end_target_id=original.get("end_target_id"), plan_index=index)
+            if "new_text" in original and record.get("new_text") != original["new_text"]:
+                record["plan_new_text"] = original["new_text"]
+                record["warnings"].append("blank_line_boundary_normalized")
         outcomes.sort(key=lambda row: row["plan_index"])
     return current, outcomes
