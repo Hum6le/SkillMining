@@ -281,6 +281,11 @@ def run_offline_awm(args, subflow, flow_dir, workflow_ids):
     from scripts.run_subflow_eval import load_subflow_data, evaluate_agent_on_subflow
     from scripts.llm_usage_utils import get_usage, reset_usage, merge_usage_summaries, split_usage_summary
 
+    print("Offline-AWM induction failure policy: "
+          + ("stop immediately (--offline-awm-stop-on-error)" if getattr(args, "offline_awm_stop_on_error", False)
+             else "record failed batch, preserve resources, continue")
+          + f"; adapter={__file__}", flush=True)
+
     output, offline = flow_dir / "offline_awm", flow_dir / "offline_artifact"
     train, test = load_subflow_data(subflow)
     if args.max_train is not None:

@@ -10,6 +10,10 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from skill_mining.awm_edit_tools import parse_edit_response, normalize_target_id, resolve_edit_file
 
 
 FILES = {"skill.md", "action_rules.md", "slot_policies.md"}
@@ -53,7 +57,7 @@ def inspect_plan(raw, catalog, other_ids):
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.I | re.S).strip()
     try:
-        plan = json.loads(text)
+        plan = parse_edit_response(text) if text.startswith("AWM_EDIT_PLAN_V1") else json.loads(text)
     except ValueError as exc:
         return {"status": "invalid_json", "error": str(exc), "response_chars": len(raw)}
     if not isinstance(plan, dict) or not isinstance(plan.get("operations"), list):
@@ -66,10 +70,16 @@ def inspect_plan(raw, catalog, other_ids):
         if "target_id" not in op:
             legacy += 1
             continue
+        first_id = normalize_target_id(op.get("target_id"))
+        last_id = normalize_target_id(op.get("end_target_id") or op.get("target_id"))
+        first_file = catalog.get(first_id) if isinstance(first_id, str) else None
+        last_file = catalog.get(last_id) if isinstance(last_id, str) else None
+        name = resolve_edit_file(op.get("file"), {"file": first_file} if first_file else None,
+                                 {"file": last_file} if last_file else None)
         for field in ("target_id", "end_target_id"):
-            if field not in op:
+            if field not in op or field == "end_target_id" and op[field] is None:
                 continue
-            target, name = op[field], op.get("file")
+            target = op[field]
             if not isinstance(target, str):
                 reason = "non_text_id"
             elif (re.fullmatch(r"\[[0-9a-f]{16}:L[1-9][0-9]*\]", target)

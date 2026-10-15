@@ -44,8 +44,10 @@ ID_TOOL_INSTRUCTIONS = '''
 ## File Editing Tool: apply_text_edits (output override)
 Output ONLY {"operations":[...]} for the supplied edit catalog, not a full workflow.
 Writable: skill.md, action_rules.md, slot_policies.md. reference.md/schema are read-only.
-Each operation: file, target_id, op (replace/insert_before/insert_after/delete),
+Each operation: target_id, op (replace/insert_before/insert_after/delete),
 new_text (required for replace/insert; empty or omitted for delete).
+OMIT file: each current target_id already uniquely identifies its writable file.
+Legacy file metadata is optional; if supplied it must agree with the target ID.
 section/rationale are optional descriptions.
 Copy target_id from the catalog; NEVER copy or paraphrase old text as an anchor.
 Catalog brackets are display delimiters, not part of the ID. Copy the actual
@@ -96,7 +98,7 @@ def id_validation_feedback(catalog, name, target, field):
     row = catalog.get(target)
     rows = [(key, value) for key, value in catalog.items() if value["file"] == name]
     match = re.fullmatch(r"([0-9a-f]{16}):L([1-9][0-9]*)", target)
-    if name not in EDITABLE_FILES:
+    if name is not None and name not in EDITABLE_FILES:
         reason = "invalid_file"
     elif row is not None:
         reason = "valid" if row["file"] == name else "wrong_file"
@@ -108,6 +110,7 @@ def id_validation_feedback(catalog, name, target, field):
         reason = "unknown_revision"
     same_line = [key for key, value in rows if match and value["line"] == int(match[2])]
     return {"field": field, "requested_id": target, "reason": reason,
+            "supplied_file": name, "file_is_optional_with_current_id": True,
             "actual_file": row["file"] if row else None,
             "current_file_revision": rows[0][0].split(":", 1)[0] if rows else None,
             "same_line_number_candidates_not_auto_applied": same_line,
@@ -124,6 +127,23 @@ def normalize_target_id(value):
     return value
 
 
+def resolve_edit_file(supplied, first, last):
+    """Infer only from EXACT current IDs. Never guess a stale ID or wrong file."""
+    if supplied is None or isinstance(supplied, str) and not supplied.strip():
+        return first["file"] if first and last and first["file"] == last["file"] else None
+    if isinstance(supplied, str):
+        # Accept literal display quoting/spacing, not arbitrary path basenames,
+        # aliases, typo correction or redirection to another writable resource.
+        name = supplied.strip()
+        if len(name) >= 2 and name[0] == name[-1] == "`":
+            name = name[1:-1]
+        if name.startswith("./"):
+            name = name[2:]
+        if name in EDITABLE_FILES:
+            return name
+    return supplied
+
+
 def _resolve_id_plan(plan, files):
     catalog, spans = build_edit_catalog(files), []
     for index, operation in enumerate(plan["operations"], 1):
@@ -131,24 +151,25 @@ def _resolve_id_plan(plan, files):
             "file", "target_id", "end_target_id", "op", "new_text", "section", "rationale"}:
             raise AWMEditError(f"Edit {index}: do not mix ID addressing and old match_text fields")
         first_id = normalize_target_id(operation.get("target_id"))
-        last_id = normalize_target_id(operation.get("end_target_id", operation.get("target_id")))
+        end_id = operation.get("end_target_id")
+        last_id = normalize_target_id(operation.get("target_id") if end_id is None else end_id)
         if not isinstance(first_id, str) or not isinstance(last_id, str):
             raise AWMEditError(f"Edit {index}: target IDs must be strings")
         first, last = catalog.get(first_id), catalog.get(last_id)
-        name = operation.get("file")
+        name = resolve_edit_file(operation.get("file"), first, last)
         if first is None or last is None or first["file"] != name or last["file"] != name:
             details = [id_validation_feedback(catalog, name, first_id, "target_id")]
             if "end_target_id" in operation:
                 details.append(id_validation_feedback(catalog, name, last_id, "end_target_id"))
             summary = "; ".join(f"{item['field']}={item['requested_id']} ({item['reason']})"
                                 for item in details if item["reason"] != "valid")
-            raise AWMEditError(f"Edit {index}: unknown/stale target_id or wrong file: {summary}; explicitly reselect from current snapshot",
+            raise AWMEditError(f"Edit {index}: unknown/stale target_id or wrong file: {summary}; supplied_file={operation.get('file')!r}, actual_file={first['file'] if first else None!r}; explicitly reselect from current snapshot",
                 {"edit_index": index, "file": name, "target_id": first_id,
                  "end_target_id": last_id, "target_present": first is not None,
                  "end_target_present": last is not None,
                  "actual_file": first["file"] if first else None,
                  "address_checks": details,
-                 "instruction": "Inspect the current snapshot content and explicitly reselect the intended start/end IDs. Candidates are NOT applied automatically. Copy the current revision and line; do not copy IDs from the rejected plan."})
+                 "instruction": "Omit file metadata; valid current target_id/end_target_id uniquely determine the file. Inspect the current snapshot content and explicitly reselect intended start/end IDs. Never guess or reuse stale IDs. Explicit conflicting file metadata is not ignored."})
         start, end = first["start"], last["end"]
         if start >= end:
             raise AWMEditError(f"Edit {index}: reversed/empty target range")
@@ -179,7 +200,7 @@ def _resolve_id_plan(plan, files):
                 if op == "insert_after" and not ending:
                     replacement = separator + replacement
             converted["new_text"] = replacement
-        converted.update(match_text=anchor, occurrence=positions.index(start) + 1)
+        converted.update(file=name, match_text=anchor, occurrence=positions.index(start) + 1)
         spans.append((name, start, end, converted, index - 1))
     # Reverse offsets preserve every original location despite earlier edits.
     spans.sort(key=lambda item: (item[0], item[1]), reverse=True)
@@ -275,7 +296,7 @@ def edit_response_instructions(attempt, framed=False):
         message += (
             "JSON output failed. Use this RAW-TEXT transport instead of a JSON operations array.\n"
             "Start with AWM_EDIT_PLAN_V1 on its own line. Each edit starts with EDIT "
-            "followed by one single-line JSON metadata object containing file, target_id, op "
+            "followed by one single-line JSON metadata object containing target_id, op "
             "and optional end_target_id ONLY. Then write the literal new_text on following "
             "lines (no quoting/escaping), then END_EDIT on its own line. For delete the "
             "body is empty. End the entire response with END_PLAN on its own line. "
@@ -434,6 +455,9 @@ def apply_awm_edit_plan(raw, files, valid_actions):
     if id_mapping is not None:
         for record, (index, original) in zip(outcomes, id_mapping):
             record.update(target_id=original["target_id"], end_target_id=original.get("end_target_id"), plan_index=index)
+            if original.get("file") != record["file"]:
+                record["supplied_file"] = original.get("file")
+                record["warnings"].append("file_resolved_from_current_target_id")
             if "new_text" in original and record.get("new_text") != original["new_text"]:
                 record["plan_new_text"] = original["new_text"]
                 record["warnings"].append("blank_line_boundary_normalized")
