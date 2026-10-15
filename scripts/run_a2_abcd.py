@@ -243,10 +243,12 @@ def _aggregate(args: argparse.Namespace, subflows: list[str]) -> None:
                              "method_protocol": data.get("protocol"),
                              "induction_edit_mode": data.get("induction_edit_mode"),
                              "edit_interface_history": data.get("edit_interface_history"),
+                             "training_complete": data.get("training_complete", True),
+                             "failed_batches": data.get("failed_batches", []),
                              "training_lineage": data.get("training_lineage"), "migration": data.get("migration")})
     aggregate = {}
     for arm in args.arms:
-        group = [row for row in rows if row["arm"] == arm]
+        group = [row for row in rows if row["arm"] == arm and row.get("training_complete", True)]
         denom = sum(row["action_turns"] for row in group)
         aggregate[arm] = {
             "subflows": len(group), "action_turns": denom,
@@ -298,6 +300,8 @@ def main() -> int:
                         help="Explicit backed-up v2->v3 mixed continuation; preserves prior completed batches")
     parser.add_argument("--offline-awm-edit-mode", choices=("rewrite", "tools"), default=None,
                         help="AWM full rewrite or shared file-edit tools; resume inherits saved mode if omitted")
+    parser.add_argument("--offline-awm-stop-on-error", action="store_true",
+                        help="Stop immediately on exhausted AWM induction retries; default records failures and continues")
     parser.add_argument("--dry-run", action="store_true", help="Show workflow assignment without API calls")
     parser.add_argument("--worker-subflow", help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -331,6 +335,10 @@ def main() -> int:
     subflows = _subflows(args)
     if args.worker_subflow:
         _run_flow(args, args.worker_subflow, workflow_ids)
+        if "offline_awm" in _execution_arms(args):
+            result_path = Path(args.output_dir) / args.worker_subflow / "offline_awm" / "result.json"
+            if result_path.is_file() and not _read(result_path).get("training_complete", True):
+                return 2  # Only after all batches and diagnostic evaluation finish.
         return 0
     # The same workflow must never serve two concurrent subflow workers.
     buckets = {wid: [] for wid in workflow_ids} if len(subflows) > 1 and workflow_ids else {}
@@ -400,6 +408,8 @@ def main() -> int:
                 cmd += ["--migrate-offline-awm-v2"]
             if args.offline_awm_edit_mode is not None:
                 cmd += ["--offline-awm-edit-mode", args.offline_awm_edit_mode]
+            if args.offline_awm_stop_on_error:
+                cmd += ["--offline-awm-stop-on-error"]
             flow_dir = root / name
             flow_dir.mkdir(parents=True, exist_ok=True)
             with (flow_dir / "a2_worker.log").open("a", encoding="utf-8") as log:

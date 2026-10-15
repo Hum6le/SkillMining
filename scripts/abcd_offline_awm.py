@@ -209,7 +209,7 @@ def update_card_resources(cards, updates):
 
 def run_offline_awm(args, subflow, flow_dir, workflow_ids):
     from awm import MemoryStore, WorkflowStore
-    from eval_tod.abcd.agent import compute_ast_from_turn_results, _AWM_WORKFLOW_RESOURCE_SECTION
+    from eval_tod.abcd.agent import compute_ast_from_turn_results, _AWM_WORKFLOW_RESOURCE_SECTION, AWMInductionError
     from eval_tod.schemas import Prediction
     from eval_tod.response_logger import ResponseLogger
     from skill_mining.online_refinement import build_action_turn_samples
@@ -339,13 +339,13 @@ def run_offline_awm(args, subflow, flow_dir, workflow_ids):
             try:
                 options = {"resource_context": resource_context, "editable_action_cards": True}
                 if edit_mode == "tools":
-                    options.update(edit_mode="tools", editable_resources=state["cards"])
+                    options.update(edit_mode="tools", editable_resources={**state["cards"], "reference.md": live_resources["reference.md"]})
                 updated = updater.induce(views, predictions, metrics, turn_results=rows, **options)
             finally:
                 workflow.replace(before)
             if not updated.strip() or updated.strip() == _AWM_WORKFLOW_RESOURCE_SECTION.strip():
                 workflow.replace(before)
-                raise RuntimeError("AWM induction failed; retaining previous workflow and cached rollout for resume")
+                raise AWMInductionError("AWM induction failed; retaining previous workflow and cached rollout for resume")
             # Replace the legacy resource-only footer with this adapter's
             # accurate resource contract (hidden scenario labels, prefix memory).
             updated = updated.replace(_AWM_WORKFLOW_RESOURCE_SECTION.strip(), "")
@@ -361,12 +361,22 @@ def run_offline_awm(args, subflow, flow_dir, workflow_ids):
                 "cards_before_hash": _hash(before_state["cards"]), "cards_after_hash": _hash(cards)})
             _save(checkpoint_path, state)
             live_resources.update(cards)
-        except Exception:
+        except Exception as exc:
             state = before_state
             workflow.replace(state["workflow"])
             memory.exemplars = copy.deepcopy(state["exemplars"])
             live_resources.update(state["cards"])
             state["usage"] = merge_usage_summaries(previous_usage, get_usage())
+            if isinstance(exc, AWMInductionError) and not getattr(args, "offline_awm_stop_on_error", False):
+                failure = {"batch_index": index, "batch_number": index + 1, "error": str(exc),
+                           "phase": "induction", "identity": identity,
+                           "rollout_cache": str(batch_path), "action_turns": len(batch)}
+                state.setdefault("failed_batches", []).append(failure)
+                state["completed_batches"] = index + 1  # Processing cursor, NOT successful-update count.
+                _save(output / "failed_batches" / f"batch_{index + 1:04d}.json", failure)
+                _save(checkpoint_path, state)
+                print(f"FAILED offline_awm batch {index + 1}: no update applied; recorded and continuing", flush=True)
+                continue
             _save(checkpoint_path, state)
             raise
     generation = merge_usage_summaries(_read(offline / "mining_usage.json"), previous_usage, get_usage())
@@ -402,6 +412,8 @@ def run_offline_awm(args, subflow, flow_dir, workflow_ids):
                   training_protocol="sequential AWM updates on standard action-turn batches; sampled-prefix exemplars",
                   training_action_turns=sum(len(batch) for batch in batches), training_batches=len(batches),
                   protocol=PROTOCOL, writable_action_cards=True, cards_hash=_hash(state["cards"]),
+                  training_complete=not state.get("failed_batches"), failed_batches=state.get("failed_batches", []),
+                  successful_training_batches=state["completed_batches"] - len(state.get("failed_batches", [])),
                   training_lineage=("mixed-v2-to-v3" if state.get("migration") else
                       "mixed-edit-interface" if any(h["first_batch_index"] > 0 for h in state.get("edit_interface_history", [])) else
                       "v3-tools-from-start" if edit_mode == "tools" else "v3-from-start"),

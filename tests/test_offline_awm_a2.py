@@ -26,7 +26,8 @@ def _conversation(cid):
 
 def _args(root, **changes):
     values = dict(model="deepseek-chat", resume=False, max_train=None, max_test=None, max_batches=None,
-                  batch_size=1, refinement_mode="standard", skip_utterance_eval=True, **RUNTIME_DEFAULTS)
+                  batch_size=1, refinement_mode="standard", skip_utterance_eval=True,
+                  offline_awm_stop_on_error=True, **RUNTIME_DEFAULTS)
     values.update(changes)
     return argparse.Namespace(**values)
 
@@ -163,7 +164,7 @@ class OfflineAWMTest(unittest.TestCase):
                 self.assertEqual(experiment._with_resource_use(result), result)
                 self.assertNotIn("stale resource guide", result)
 
-    def _run_case(self, root, fail_once=False, card_updates=False, migrate_v2=False, legacy_completed=0, tools=False):
+    def _run_case(self, root, fail_once=False, card_updates=False, migrate_v2=False, legacy_completed=0, tools=False, continue_errors=False):
         offline = root / "offline_artifact"
         offline.mkdir()
         for name, content in (("skill.md", "OFFLINE K0"), ("reference.md", "BASE REFERENCE"),
@@ -227,10 +228,12 @@ class OfflineAWMTest(unittest.TestCase):
                 self.assertIn("EVOLVED SLOT POLICY", agent.kwargs["slot_policies_text"])
             else:
                 self.assertEqual(agent.kwargs["slot_policies_text"], "BASE SLOT POLICIES")
-            self.assertEqual(len(agent.memory.exemplars), 2)
+            self.assertEqual(len(agent.memory.exemplars), 1 if continue_errors else 2)
             return {"ast_cds": {"ast_joint": .5, "ast_action_name": .6, "ast_slot_value": .7, "num_action_turns": 2}}
 
         args = _args(root)
+        if continue_errors:
+            args.offline_awm_stop_on_error = False
         if tools:
             args.offline_awm_edit_mode = "tools"
         with patch("scripts.run_subflow_eval.load_subflow_data", return_value=(train, test)), \
@@ -238,7 +241,7 @@ class OfflineAWMTest(unittest.TestCase):
                 patch("scripts.run_subflow_eval.evaluate_agent_on_subflow", side_effect=evaluate), \
                 patch("scripts.llm_usage_utils.get_usage", side_effect=usage), \
                 patch("scripts.llm_usage_utils.reset_usage", side_effect=lambda: calls.__setitem__(0, 0)):
-            if fail_once:
+            if fail_once and not continue_errors:
                 with self.assertRaisesRegex(RuntimeError, "retaining previous workflow"):
                     experiment.run_offline_awm(args, "f", root, ["ID1", "ID2"])
                 state = experiment._read(root / "offline_awm" / "awm_state.json")
@@ -268,8 +271,9 @@ class OfflineAWMTest(unittest.TestCase):
         result = experiment._read(root / "offline_awm" / "result.json")
         self.assertEqual(result["training_action_turns"], 2)
         self.assertEqual(result["runtime_protocol"], abcd_runtime_options(args))
-        self.assertEqual(result["llm_usage"]["generation"]["total"]["calls"], 8 if fail_once else 7)
+        self.assertEqual(result["llm_usage"]["generation"]["total"]["calls"], 8 if fail_once and not continue_errors else 7)
         self.assertEqual(result["llm_usage"]["testing"]["total"]["calls"], 1)
+        self.assertEqual(result["training_complete"], not continue_errors)
         if migrate_v2:
             self.assertEqual(result["training_lineage"], "mixed-v2-to-v3")
             self.assertEqual(result["migration"]["completed_v2_batches"], legacy_completed)
@@ -280,6 +284,23 @@ class OfflineAWMTest(unittest.TestCase):
     def test_online_training_frozen_test_and_usage(self):
         with tempfile.TemporaryDirectory() as directory:
             self._run_case(Path(directory))
+
+    def test_failed_induction_continues_and_is_excluded_from_official_aggregate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            flow_dir = Path(directory) / "f"
+            flow_dir.mkdir()
+            self._run_case(flow_dir, fail_once=True, continue_errors=True)
+            state = experiment._read(flow_dir / "offline_awm" / "awm_state.json")
+            result = experiment._read(flow_dir / "offline_awm" / "result.json")
+            self.assertEqual(state["completed_batches"], 2)
+            self.assertEqual(result["successful_training_batches"], 1)
+            self.assertEqual(len(state["failed_batches"]), 1)
+            self.assertEqual(state["failed_batches"][0]["batch_number"], 1)
+            self.assertTrue((flow_dir / "offline_awm" / "failed_batches" / "batch_0001.json").is_file())
+            a2._aggregate(argparse.Namespace(output_dir=directory, arms=("offline_awm",)), ["f"])
+            aggregate = a2._read(Path(directory) / "a2_aggregate.json")
+            self.assertEqual(aggregate["aggregate"]["offline_awm"]["subflows"], 0)
+            self.assertFalse(aggregate["rows"][0]["training_complete"])
 
     def test_failed_induction_resumes_cached_rollout_without_losing_k0_or_usage(self):
         with tempfile.TemporaryDirectory() as directory:
