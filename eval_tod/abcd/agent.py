@@ -1877,9 +1877,13 @@ class ABCDAgent(AbstractTodAgent):
         retry_error = ""
         rejected_edit_plan = ""
         edit_repair_context = {}
+        framed_edit_response = False
         for attempt in range(3):
             raw_reply = ""
             request_prompt = prompt
+            if edit_mode == "tools":
+                from skill_mining.awm_edit_tools import edit_response_instructions
+                request_prompt += edit_response_instructions(attempt, framed_edit_response)
             if editable_action_cards and retry_error:
                 request_prompt += (
                     "\n\n## Previous Attempt Rejected\n" + retry_error + "\n"
@@ -1895,9 +1899,15 @@ class ABCDAgent(AbstractTodAgent):
                         "<edit_validation_feedback>\n" + json.dumps(edit_repair_context, ensure_ascii=False)
                         + "\n</edit_validation_feedback>\n"
                         "Select the correct snapshot target_id; do not generate match_text or guess an occurrence. "
-                        "Preserve the intended change and any still-valid earlier operations. Return the entire corrected plan; "
+                        "Prioritize the intended correction within the response budget; defer independent edits if necessary. "
+                        "Return a complete corrected plan; "
                         "no previous operation has been committed. The excerpts are suggestions only, never automatic writes."
                     )
+                    if framed_edit_response:
+                        request_prompt += (
+                            "\nIMPORTANT: the raw-text AWM_EDIT_PLAN_V1 format above overrides requests "
+                            "for a JSON edit plan. Do NOT return a JSON operations array.\n"
+                        )
             try:
                 raw_reply = self._chat(
                     request_prompt,
@@ -1917,9 +1927,11 @@ class ABCDAgent(AbstractTodAgent):
                     )
                 if updated:
                     if edit_mode == "tools":
-                        from skill_mining.awm_edit_tools import apply_awm_edit_plan
+                        from skill_mining.awm_edit_tools import apply_awm_edit_plan, parse_edit_response
                         files = {**editable_resources, "skill.md": existing}
-                        edited, operations = apply_awm_edit_plan(updated, files, self.action_schema.get("actions", set()))
+                        max_operations, max_chars = ((6, 8000), (3, 4500), (1, 2500))[attempt]
+                        plan = parse_edit_response(updated, max_operations=max_operations, max_chars=max_chars)
+                        edited, operations = apply_awm_edit_plan(json.dumps(plan), files, self.action_schema.get("actions", set()))
                         updated = edited["skill.md"]
                         self.last_awm_edited_resources = edited
                         self.last_awm_edit_operations = operations
@@ -1933,7 +1945,13 @@ class ABCDAgent(AbstractTodAgent):
                 updated = ""
                 retry_error = str(exc)
                 if edit_mode == "tools":
-                    rejected_edit_plan = raw_reply if len(raw_reply) <= 6000 else raw_reply[:4500] + "\n[rejected plan excerpt truncated]\n" + raw_reply[-1500:]
+                    from skill_mining.awm_edit_tools import AWMEditResponseError
+                    transport_error = isinstance(exc, (json.JSONDecodeError, AWMEditResponseError))
+                    framed_edit_response = framed_edit_response or transport_error
+                    # Broken/oversized JSON is not useful edit feedback. Do not
+                    # replay a huge unfinished response as the next demonstration.
+                    rejected_edit_plan = ("[Malformed/oversized response omitted; regenerate from the unchanged snapshot.]"
+                                          if transport_error else raw_reply[:3000])
                     edit_repair_context = getattr(exc, "repair_context", {})
                 if self._response_logger is not None:
                     self._response_logger.log(

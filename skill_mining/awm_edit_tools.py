@@ -255,15 +255,88 @@ Example:
 '''
 
 
+class AWMEditResponseError(ValueError):
+    """Incomplete/oversized transport, not a failed semantic edit validation."""
+
+
+def edit_response_instructions(attempt, framed=False):
+    """Bound the output, never the evidence or editable snapshot."""
+    operations, chars = ((6, 8000), (3, 4500), (1, 2500))[attempt]
+    message = (
+        f"\n## Response Budget (overrides earlier output instructions)\n"
+        f"Return at most {operations} operations and {chars} characters TOTAL. "
+        "Prioritize the highest-value correction; defer other independent changes. "
+        "Omit rationale/section and unchanged text. Do not rewrite whole files. "
+        "If a necessary replacement cannot fit, return a complete no-change plan, "
+        "never a shortened/cut-off replacement or half an operation. "
+        "The complete plan must still pass atomic snapshot validation.\n"
+    )
+    if framed:
+        message += (
+            "JSON output failed. Use this RAW-TEXT transport instead of a JSON operations array.\n"
+            "Start with AWM_EDIT_PLAN_V1 on its own line. Each edit starts with EDIT "
+            "followed by one single-line JSON metadata object containing file, target_id, op "
+            "and optional end_target_id ONLY. Then write the literal new_text on following "
+            "lines (no quoting/escaping), then END_EDIT on its own line. For delete the "
+            "body is empty. End the entire response with END_PLAN on its own line. "
+            "No fences or commentary. END_EDIT and END_PLAN are reserved standalone lines, "
+            "not body content. The newline immediately before END_EDIT is a delimiter, "
+            "not part of new_text; an extra empty body line preserves a trailing newline.\n"
+            "No-change response: AWM_EDIT_PLAN_V1 followed by END_PLAN on the next line.\n"
+        )
+    return message
+
+
+def parse_edit_response(raw, *, max_operations=None, max_chars=None):
+    """Decode only COMPLETE plans. Never repair JSON or salvage partial operations."""
+    text = raw.strip()
+    if max_chars is not None and len(text) > max_chars:
+        raise AWMEditResponseError(f"Edit response exceeds {max_chars} characters; regenerate fewer local edits")
+    if text.startswith("AWM_EDIT_PLAN_V1"):
+        lines = text.splitlines(keepends=True)
+        if lines[0].strip() != "AWM_EDIT_PLAN_V1" or lines[-1].strip() != "END_PLAN":
+            raise AWMEditResponseError("Incomplete raw-text edit plan: require header and final END_PLAN")
+        operations = []
+        cursor = 1
+        while cursor < len(lines) - 1:
+            header = lines[cursor].rstrip("\r\n")
+            if not header.startswith("EDIT "):
+                raise AWMEditResponseError("Expected EDIT metadata, not commentary or an unfinished body")
+            metadata = json.loads(header[5:])
+            if not isinstance(metadata, dict) or set(metadata) - {"file", "target_id", "end_target_id", "op"}:
+                raise AWMEditResponseError("Raw-text metadata accepts file, target_id, end_target_id, op only")
+            cursor += 1
+            body = []
+            while cursor < len(lines) - 1 and lines[cursor].rstrip("\r\n") != "END_EDIT":
+                if lines[cursor].rstrip("\r\n") == "END_PLAN":
+                    raise AWMEditResponseError("Missing END_EDIT before END_PLAN")
+                body.append(lines[cursor])
+                cursor += 1
+            if cursor >= len(lines) - 1:
+                raise AWMEditResponseError("Incomplete raw-text edit: missing END_EDIT; no edits applied")
+            value = "".join(body)
+            if value.endswith("\r\n"):
+                value = value[:-2]
+            elif value.endswith("\n") or value.endswith("\r"):
+                value = value[:-1]
+            operations.append({**metadata, "new_text": value})
+            cursor += 1
+        plan = {"operations": operations}
+    else:
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.I | re.S).strip()
+        plan = json.loads(text)
+    if not isinstance(plan, dict) or set(plan) != {"operations"} or not isinstance(plan["operations"], list):
+        raise ValueError('Expected {"operations":[...]} edit plan only')
+    if max_operations is not None and len(plan["operations"]) > max_operations:
+        raise AWMEditResponseError(f"Edit response exceeds {max_operations} operations; regenerate fewer local edits")
+    return plan
+
+
 def apply_awm_edit_plan(raw, files, valid_actions):
     """Parse/validate/apply atomically in memory; caller checkpoints the bundle."""
     from skill_mining.online_refinement import apply_dynamic_skill_operations
-    text = raw.strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.I | re.S).strip()
-    plan = json.loads(text)
-    if not isinstance(plan, dict) or set(plan) != {"operations"} or not isinstance(plan["operations"], list):
-        raise ValueError('Expected {"operations":[...]} edit plan only')
+    plan = parse_edit_response(raw)
     id_mapping = None
     if any(isinstance(op, dict) and "target_id" in op for op in plan["operations"]):
         plan, id_mapping = _resolve_id_plan(plan, files)
