@@ -1,4 +1,5 @@
 import json
+import os
 
 from scripts.diagnose_offline_awm import catalog_from_prompt, checkpoint_report, digest, inspect_plan, diagnose
 
@@ -53,3 +54,22 @@ def test_diagnose_is_read_only_and_does_not_echo_private_text(tmp_path):
     assert report["logged_rejected_attempts"] == 1
     assert "PRIVATE_TEXT" not in json.dumps(report)
     assert before == {str(p): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+
+
+def test_latest_run_and_recent_use_time_not_uuid_and_detect_prompt_revision(tmp_path):
+    (tmp_path / "awm_state.json").write_text('{"completed_batches":0}')
+    for run, timestamp, fixed in (("zz_old", 100, False), ("aa_new", 200, True)):
+        logs = tmp_path / "llm_responses" / run
+        logs.mkdir(parents=True)
+        for index in (1, 2):
+            prompt = logs / f"{index:04d}_awm_induction_validation_error_prompt.json"
+            prompt.write_text(json.dumps({"messages": [{"content": "Catalog brackets are display delimiters" if fixed else "old"}],
+                                          "extra": {"error": f"failure_{index}"}}))
+            prompt.with_name(prompt.name.replace("_prompt.json", "_response.json")).write_text('{"raw_response":"{}"}')
+            os.utime(prompt, (timestamp + index, timestamp + index))
+    report = diagnose(tmp_path, latest_run=True, recent=1)
+    assert report["selected_log_run"].endswith("aa_new")
+    assert report["available_rejected_attempts_in_selection"] == 2
+    assert report["logged_rejected_attempts"] == 1
+    assert report["examples"][0]["validator_error"] == "failure_2"
+    assert report["examples"][0]["prompt_has_bracket_fix_instructions"] is True

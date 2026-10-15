@@ -124,9 +124,24 @@ def checkpoint_report(directory, state):
     return result
 
 
-def diagnose(directory, examples=6):
+def diagnose(directory, examples=6, latest_run=False, recent=None):
     state = read_json(directory / "awm_state.json")
-    paths = sorted((directory / "llm_responses").rglob("*awm_induction_validation_error_prompt.json"))
+    log_root = directory / "llm_responses"
+    selected_run = None
+    if latest_run:
+        # UUID names do not encode chronology. Use the latest *induction*
+        # artifact, not evaluation/rollout logs or lexical UUID ordering.
+        induction_logs = list(log_root.rglob("*awm_induction_*_prompt.json"))
+        if induction_logs:
+            selected_run = max(induction_logs, key=lambda p: p.stat().st_mtime_ns).parent
+            log_root = selected_run
+        else:
+            raise ValueError("No induction logs found; cannot select latest run")
+    paths = sorted(log_root.rglob("*awm_induction_validation_error_prompt.json"),
+                   key=lambda p: (p.stat().st_mtime_ns, p.name), reverse=True)
+    available_attempts = len(paths)
+    if recent is not None:
+        paths = paths[:recent]
     counts, reasons, samples, errors = Counter(), Counter(), [], []
     # Collect ID metadata only, not full prompt bodies, across logged attempts.
     all_ids = set()
@@ -148,6 +163,8 @@ def diagnose(directory, examples=6):
                 continue
             result = inspect_plan(response_text(read_json(response_path)), catalog, all_ids)
             result.update(prompt_log=str(path), response_log=str(response_path),
+                          timestamp=record.get("timestamp"),
+                          prompt_has_bracket_fix_instructions="Catalog brackets are display delimiters" in prompt,
                           attempt=record.get("extra", {}).get("attempt"),
                           validator_error=record.get("extra", {}).get("error"),
                           catalog_lines=len(catalog),
@@ -162,6 +179,9 @@ def diagnose(directory, examples=6):
         except (OSError, ValueError, TypeError, AttributeError) as exc:
             errors.append({"path": str(path), "error": str(exc)})
     return {"directory": str(directory), "read_only": True,
+            "selected_log_run": str(selected_run) if selected_run else "all",
+            "available_rejected_attempts_in_selection": available_attempts,
+            "recent_limit": recent,
             "checkpoint": checkpoint_report(directory, state),
             "logged_rejected_attempts": len(paths), "attempt_status_counts": dict(counts),
             "address_issue_counts_first_8_per_attempt": dict(reasons),
@@ -173,9 +193,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", type=Path, help="offline_awm output directory")
     parser.add_argument("--examples", type=int, default=6)
+    parser.add_argument("--latest-run", action="store_true", help="Inspect only the most recently written induction run")
+    parser.add_argument("--recent", type=int, help="Inspect only the N most recent rejected attempts")
     args = parser.parse_args()
     try:
-        report = diagnose(args.directory, max(0, args.examples))
+        if args.recent is not None and args.recent <= 0:
+            parser.error("--recent must be positive")
+        report = diagnose(args.directory, max(0, args.examples), args.latest_run, args.recent)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         parser.exit(1, f"Diagnostic failed: {exc}\n")
     print(json.dumps(report, ensure_ascii=False, indent=2))
