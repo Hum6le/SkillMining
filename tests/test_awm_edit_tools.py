@@ -31,15 +31,52 @@ def test_atomic_shared_edits_across_files():
 
 
 @pytest.mark.parametrize("bad", [
-    {"file": "reference.md"}, {"file": "/etc/passwd"}, {"section": "## Other"},
+    {"file": "reference.md"}, {"file": "/etc/passwd"}, {"new_text": ""},
     {"match_text": "not present"}, {"op": "append"}, {"occurrence": True},
-    {"op": "delete", "new_text": "invalid"}, {"section": "unknown"},
+    {"op": "delete", "new_text": "invalid"}, {"match_text": ""},
 ])
 def test_failed_plan_never_changes_input(bad):
     source = files()
     with pytest.raises(ValueError):
         apply_awm_edit_plan(json.dumps({"operations": [operation(), operation(**bad)]}), source, {"send-link"})
     assert source == files()
+
+
+@pytest.mark.parametrize("metadata", [{}, {"rationale": None}, {"section": "Route"},
+    {"section": "## Other"}, {"section": "not an exact heading", "rationale": ""}])
+def test_metadata_does_not_block_exact_text_edits(metadata):
+    op = {k: v for k, v in operation().items() if k not in {"section", "rationale"}}
+    op.update(metadata)
+    edited, logs = apply_awm_edit_plan(json.dumps({"operations": [op]}), files(), {"send-link"})
+    assert "New route." in edited["skill.md"]
+    assert logs[0]["section"] == "## Route"
+    assert logs[0]["section_path"] == ["# Skill", "## Route"]
+    assert "rationale_missing" in logs[0]["warnings"]
+    if metadata.get("section") == "## Other":
+        assert "section_hint_mismatch_exact_anchor_used" in logs[0]["warnings"]
+
+
+def test_duplicate_headings_are_safe_with_unique_anchor_but_not_ambiguous_anchor():
+    source = files()
+    source["skill.md"] = "# Skill\n## Route\nOld route.\n## Route\nKeep.\n"
+    edited, _ = apply_awm_edit_plan(json.dumps({"operations": [operation()]}), source, {"send-link"})
+    assert "New route." in edited["skill.md"] and "Keep." in edited["skill.md"]
+    source["skill.md"] += "Old route.\n"
+    with pytest.raises(ValueError, match="ambiguous"):
+        apply_awm_edit_plan(json.dumps({"operations": [operation()]}), source, {"send-link"})
+    edited, _ = apply_awm_edit_plan(json.dumps({"operations": [operation(occurrence=2)]}), source, {"send-link"})
+    assert edited["skill.md"].count("Old route.") == 1
+
+
+def test_five_edit_case_keeps_missing_rationale_and_repeated_section_safe():
+    source = files()
+    source["skill.md"] = "# Skill\n## Route\n" + "\n".join(f"Rule {i}." for i in range(4)) + "\n"
+    ops = [operation(section="Route", match_text=f"Rule {i}.", new_text=f"Fixed {i}.") for i in range(4)]
+    last = operation(file="slot_policies.md", section="send-link", match_text="Old binding.", new_text="New binding.")
+    last.pop("rationale")
+    edited, logs = apply_awm_edit_plan(json.dumps({"operations": [*ops, last]}), source, {"send-link"})
+    assert len(logs) == 5 and "New binding." in edited["slot_policies.md"]
+    assert all(f"Fixed {i}." in edited["skill.md"] for i in range(4))
 
 
 def test_native_induction_retries_exact_anchor_error_without_partial_state():

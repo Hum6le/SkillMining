@@ -19,14 +19,15 @@ are READ-ONLY. Use only the current training feedback, not test examples.
 Tool arguments: return exactly one JSON object with an "operations" array.
 Each operation must specify:
 - file: exactly one writable filename, never an absolute path.
-- section: exact Markdown heading line containing the edit, e.g. "## Routing
-  Policies" or "#### `send-link`". Use "<document>" only for a whole-document
-  location or a file with no suitable heading.
+- section (recommended metadata): heading containing the edit, e.g. "## Routing
+  Policies" or "#### `send-link`". The exact anchor/occurrence determines the
+  location; the tool infers the actual heading. A section hint is not an anchor.
 - op: replace, insert_before, insert_after, or delete.
 - match_text: a nonempty EXACT excerpt copied from that file. Choose a small
   unique anchor; if repeated, include occurrence (1-based in the current file).
 - new_text: replacement/insertion text; MUST be empty for delete.
-- rationale: what evidence supports this specific change.
+- rationale (recommended metadata): what evidence supports this specific change.
+Missing section/rationale does not invalidate an otherwise exact safe edit.
 Edits execute in array order against the CURRENT modified file, not line numbers.
 Keep match_text/new_text local, preserve unrelated rules and canonical action
 headings, and keep workflow and binding cards consistent. Do not hard-code
@@ -58,15 +59,16 @@ def apply_awm_edit_plan(raw, files, valid_actions):
             if not isinstance(operation, dict) or set(operation) - {
                 "file", "section", "op", "match_text", "new_text", "rationale", "occurrence"}:
                 raise ValueError("unsupported edit fields")
-            for key in ("file", "section", "op", "match_text", "new_text", "rationale"):
+            for key in ("file", "op", "match_text", "new_text"):
                 if not isinstance(operation.get(key), str):
                     raise ValueError(f"missing/non-text {key}")
             name = operation["file"]
             if name not in EDITABLE_FILES:
                 raise ValueError("file is not writable")
-            section, anchor = operation["section"], operation["match_text"]
-            if not section.strip() or not anchor or not operation["rationale"].strip():
-                raise ValueError("section, match_text and rationale must be nonempty")
+            section_hint = operation.get("section")
+            anchor = operation["match_text"]
+            if not anchor:
+                raise ValueError("match_text must be nonempty")
             source = current[name]
             occurrences = [m.start() for m in re.finditer(re.escape(anchor), source)]
             occurrence = operation.get("occurrence", 1)
@@ -74,17 +76,30 @@ def apply_awm_edit_plan(raw, files, valid_actions):
                     or len(occurrences) > 1 and "occurrence" not in operation):
                 raise ValueError("anchor missing/ambiguous; copy an exact unique excerpt or valid occurrence")
             position = occurrences[occurrence - 1]
-            if section != "<document>":
-                headings = list(re.finditer(r"(?m)^" + re.escape(section) + r"\s*$", source))
-                heading = re.match(r"^(#{1,6})\s+", section)
-                if len(headings) != 1 or heading is None:
-                    raise ValueError("section must be a unique exact Markdown heading")
+            # Headings are descriptive, not a second fragile addressing scheme.
+            # Resolve the hierarchy from the EXACT selected anchor, never fuzzy
+            # match model-authored section names or guess a missing text anchor.
+            heading_path = []
+            for heading in re.finditer(r"(?m)^(#{1,6})[ \t]+[^\n]+", source):
+                if heading.start() > position:
+                    break
                 depth = len(heading[1])
-                following = re.search(r"(?m)^#{1," + str(depth) + r"}\s", source[headings[0].end():])
-                end = headings[0].end() + following.start() if following else len(source)
-                if not headings[0].start() <= position or position + len(anchor) > end:
-                    raise ValueError("match_text is outside the declared section")
-            updated, records = apply_dynamic_skill_operations(source, [operation])
+                while heading_path and heading_path[-1][0] >= depth:
+                    heading_path.pop()
+                heading_path.append((depth, heading[0].strip()))
+            section = heading_path[-1][1] if heading_path else "<document>"
+            warnings = []
+            if not isinstance(section_hint, str) or not section_hint.strip():
+                warnings.append("section_inferred")
+            elif section_hint != "<document>" and not any(
+                section_hint.strip() in {h, re.sub(r"^#{1,6}\s+", "", h)} for _, h in heading_path
+            ):
+                warnings.append("section_hint_mismatch_exact_anchor_used")
+            normalized = dict(operation)
+            if not isinstance(operation.get("rationale"), str) or not operation["rationale"].strip():
+                normalized["rationale"] = ""
+                warnings.append("rationale_missing")
+            updated, records = apply_dynamic_skill_operations(source, [normalized])
             if records[0].get("error") or not records[0].get("applied"):
                 raise ValueError(str(records[0].get("error") or "edit was not applied"))
             if name != "skill.md":
@@ -96,7 +111,9 @@ def apply_awm_edit_plan(raw, files, valid_actions):
                     if after.count(action) > max(1, before.count(action)):
                         raise ValueError("edit creates duplicate action cards")
             current[name] = updated
-            outcomes.append({**records[0], "file": name, "section": section})
+            outcomes.append({**records[0], "file": name, "section": section,
+                             "section_hint": section_hint, "section_path": [h for _, h in heading_path],
+                             "warnings": warnings})
         except Exception as exc:
             raise ValueError(f"Edit {index} ({operation.get('file', '?') if isinstance(operation, dict) else '?'}): {exc}") from exc
     if not current["skill.md"].strip():
