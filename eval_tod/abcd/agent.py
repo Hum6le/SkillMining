@@ -1878,10 +1878,21 @@ class ABCDAgent(AbstractTodAgent):
         rejected_edit_plan = ""
         edit_repair_context = {}
         partial_edit_response = ""
-        for attempt in range(3):
+        targeted_parent = None
+        targeted_targets = []
+        attempt = call_count = continuation_calls = 0
+        # Three candidate/repair attempts plus at most two continuation calls.
+        # An unfinished response must not consume the only semantic repair slot.
+        while attempt < 3:
             raw_reply = ""
             raw_chunk = ""
+            plan = None
             pending_prefix = partial_edit_response
+            if pending_prefix and continuation_calls >= 2:
+                break
+            if pending_prefix:
+                continuation_calls += 1
+            call_count += 1
             response_mode = "continue" if pending_prefix else "regenerate"
             request_prompt = prompt
             if edit_mode == "tools":
@@ -1914,6 +1925,10 @@ class ABCDAgent(AbstractTodAgent):
                         "Return a complete corrected plan; "
                         "no previous operation has been committed. The excerpts are suggestions only, never automatic writes."
                     )
+            if targeted_parent is not None and not pending_prefix:
+                from skill_mining.awm_edit_tools import render_targeted_edit_repair
+                request_prompt += render_targeted_edit_repair(targeted_targets)
+                response_mode = "targeted_repair"
             try:
                 raw_chunk = self._chat(
                     request_prompt,
@@ -1941,7 +1956,8 @@ class ABCDAgent(AbstractTodAgent):
                     self._response_logger.log(
                         messages=[{"role": "user", "content": request_prompt}],
                         response={"raw_response": raw_reply}, call_tag="awm_induction_output",
-                        extra={"attempt": attempt + 1, "response_chars": len(raw_reply),
+                        extra={"attempt": call_count, "plan_attempt": attempt + 1,
+                               "continuation_calls": continuation_calls, "response_chars": len(raw_reply),
                                "chunk_chars": len(raw_chunk), "response_mode": response_mode,
                                "prefix_chars": len(pending_prefix),
                                "requested_edit_format": "AWM_EDIT_PLAN_V1" if edit_mode == "tools" else "rewrite"},
@@ -1952,6 +1968,11 @@ class ABCDAgent(AbstractTodAgent):
                         files = {**editable_resources, "skill.md": existing}
                         plan = parse_edit_response(updated)
                         validate_edit_plan_structure(plan)
+                        if targeted_parent is not None:
+                            from skill_mining.awm_edit_tools import merge_targeted_edit_repair
+                            plan = merge_targeted_edit_repair(targeted_parent, targeted_targets, plan)
+                            validate_edit_plan_structure(plan)
+                            targeted_parent, targeted_targets = None, []
                         edited, operations = apply_awm_edit_plan(json.dumps(plan), files, self.action_schema.get("actions", set()))
                         updated = edited["skill.md"]
                         self.last_awm_edited_resources = edited
@@ -1960,8 +1981,9 @@ class ABCDAgent(AbstractTodAgent):
                         updated, card_updates = _parse_awm_card_update(updated, self.action_schema.get("actions", set()))
                         self.last_awm_card_updates = card_updates
                     break
-                print(f"  [ABCD induce] empty response, retry {attempt + 1}/3")
+                print(f"  [ABCD induce] empty response, plan attempt {attempt + 1}/3")
                 retry_error = "Empty response"
+                attempt += 1
             except Exception as exc:
                 updated = ""
                 retry_error = str(exc)
@@ -1979,31 +2001,41 @@ class ABCDAgent(AbstractTodAgent):
                             "instruction": "Return a COMPLETE AWM_EDIT_PLAN_V1 plan with explicit target_id and op on EVERY EDIT header, literal text bodies, END_EDIT for each edit and a final END_PLAN. Do not return a JSON operations array or partial continuation. Nothing has been applied."}
                     elif edit_repair_context.get("error_kind") == "edit_plan_structure":
                         rejected_edit_plan = "[Invalid structure omitted; repair ALL structure_issues below without guessing missing ops.]"
+                        if plan is not None and targeted_parent is None:
+                            from skill_mining.awm_edit_tools import empty_body_repair_targets
+                            targets = empty_body_repair_targets(plan, edit_repair_context, files)
+                            if targets:
+                                targeted_parent, targeted_targets = plan, targets
+                                print(f"  [ABCD induce] retaining completed plan; requesting explicit repair of {len(targets)} empty-body edit(s)")
                     else:
                         rejected_edit_plan = raw_reply[:3000]
                     if partial_edit_response:
                         edit_repair_context = {"error_kind": "unfinished_response",
                             "prefix_chars": len(partial_edit_response),
                             "instruction": "Request only the missing suffix on the next attempt. No prefix edits have been applied; full structure/address/schema validation is still required after completion."}
-                        if attempt < 2:
+                        if continuation_calls < 2:
                             print(f"  [ABCD induce] retaining unfinished response ({len(partial_edit_response)} chars); next call requests continuation")
                 if self._response_logger is not None:
                     self._response_logger.log(
                         messages=[{"role": "user", "content": request_prompt}], response={"raw_response": raw_reply},
                         call_tag="awm_induction_validation_error",
-                        extra={"attempt": attempt + 1, "error": retry_error, "response_chars": len(raw_reply),
+                        extra={"attempt": call_count, "plan_attempt": attempt + 1,
+                               "continuation_calls": continuation_calls,
+                               "error": retry_error, "response_chars": len(raw_reply),
                                "chunk_chars": len(raw_chunk), "response_mode": response_mode,
                                "prefix_chars": len(pending_prefix),
                                "continuable_incomplete": bool(partial_edit_response),
                                "edit_repair_context": edit_repair_context},
                     )
-                print(f"  [ABCD induce] LLM error ({attempt + 1}/3): {exc}")
-            if attempt < 2:
-                time.sleep(2 ** attempt)
+                print(f"  [ABCD induce] LLM error (call {call_count}; plan attempt {attempt + 1}/3; continuations {continuation_calls}/2): {exc}")
+                if not partial_edit_response:
+                    attempt += 1
+            if attempt < 3 and not (partial_edit_response and continuation_calls >= 2):
+                time.sleep(2 ** min(max(attempt - 1, 0), 1))
 
         if not updated:
             if editable_action_cards:
-                raise AWMInductionError("AWM workflow/card induction failed after 3 attempts; no update applied; last error: " + retry_error)
+                raise AWMInductionError(f"AWM workflow/card induction failed after {call_count} calls (3 plan attempts + at most 2 continuations); no update applied; last error: " + retry_error)
             print("  [ABCD induce] failed after 3 attempts; preserving resource contract")
             updated = _AWM_WORKFLOW_RESOURCE_SECTION.strip()
 

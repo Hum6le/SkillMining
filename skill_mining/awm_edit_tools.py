@@ -52,6 +52,8 @@ REQUIRED metadata fields: "target_id" (string), "op" (string).
 Optional metadata: "end_target_id" (string, same file as target_id).
 Then output the literal replacement/insertion text on following lines, WITHOUT
 JSON quoting or escaping, followed by END_EDIT on its own line. Delete has no body.
+Replace/insert MUST have a nonempty body. For removal explicitly choose delete;
+for no change omit the edit. Empty replace/insert is NOT shorthand for delete.
 Finish the entire response with END_PLAN on its own line. No Markdown fences,
 commentary, JSON operations array, or new_text field in the metadata object.
 The newline immediately before END_EDIT is a delimiter, not part of the body;
@@ -215,7 +217,11 @@ def _resolve_id_plan(plan, files):
         boundary = (last if op in {"replace", "insert_after"} else first)
         if op in {"replace", "insert_before", "insert_after"} and boundary["blank"]:
             if not isinstance(replacement, str) or not replacement:
-                raise AWMEditError(f"Edit {index}: missing/non-text or empty new_text")
+                raise AWMEditError(f"Edit {index}: missing/non-text or empty new_text", {
+                    "error_kind": "edit_plan_structure", "edit_index": index,
+                    "target_id": first_id, "end_target_id": last_id, "op": op,
+                    "file": name, "start_is_blank": first["blank"], "end_is_blank": last["blank"],
+                    "instruction": "Empty replace/insert is invalid, even on blank lines. If removal is intended explicitly choose delete; otherwise supply the complete nonempty body. Nothing has been applied."})
             ending = boundary["line_ending"]
             if op == "replace":
                 if ending and not replacement.endswith(("\n", "\r")):
@@ -476,6 +482,8 @@ def validate_edit_plan_structure(plan):
                 issue("new_text", "missing")
         elif not isinstance(edit["new_text"], str):
             issue("new_text", "non_text")
+        elif op in allowed_ops[:-1] and not edit["new_text"]:
+            issue("new_text", "empty_body", op=op)
         elif op == "delete" and edit["new_text"]:
             issue("new_text", "delete_body_must_be_empty")
     if issues:
@@ -483,8 +491,70 @@ def validate_edit_plan_structure(plan):
         raise AWMEditError("Invalid edit-plan structure: " + summary, {
             "error_kind": "edit_plan_structure", "structure_issues": issues,
             "operation_count": len(plan["operations"]), "validated_prefix_edits": 0,
-            "instruction": "Fix EVERY listed field error, not only the first. Each EDIT header MUST include an explicit string op chosen from replace/insert_before/insert_after/delete and a current target_id. Choose op according to your intended edit; never omit it, infer a default, or copy another edit's op blindly. Put literal text in the body, not a new_text metadata field. Return one COMPLETE corrected AWM_EDIT_PLAN_V1 plan. Nothing has been applied."})
+            "instruction": "Fix EVERY listed field error, not only the first. Each EDIT header MUST include an explicit string op chosen from replace/insert_before/insert_after/delete and a current target_id. Choose op according to your intended edit; never infer a default. Replace/insert requires a NONEMPTY body; if removal was intended explicitly choose delete with an empty body. Put literal text in the body, not a new_text metadata field. Return one COMPLETE corrected AWM_EDIT_PLAN_V1 plan. Nothing has been applied."})
     return plan
+
+
+def empty_body_repair_targets(plan, feedback, files):
+    """Select exact requested spans only; Python does not choose the repair op."""
+    issues = feedback.get("structure_issues", [])
+    if not issues or any(item.get("field") != "new_text" or item.get("reason") != "empty_body" for item in issues):
+        return []
+    catalog = build_edit_catalog(files)
+    targets = []
+    for index in sorted({item["edit_index"] for item in issues}):
+        edit = plan["operations"][index - 1]
+        start = normalize_target_id(edit.get("target_id"))
+        end = normalize_target_id(edit.get("end_target_id") or edit.get("target_id"))
+        if (start not in catalog or end not in catalog
+                or catalog[start]["file"] != catalog[end]["file"]
+                or catalog[start]["line"] > catalog[end]["line"]):
+            return []
+        key = (start, end)
+        # Ambiguous parent spans require full regeneration, not guessed mapping.
+        if sum((normalize_target_id(op.get("target_id")), normalize_target_id(op.get("end_target_id") or op.get("target_id"))) == key
+               for op in plan["operations"] if isinstance(op, dict)) != 1:
+            return []
+        targets.append({"edit_index": index, "target_id": start, "end_target_id": end,
+                        "file": catalog[start]["file"], "previous_op": edit["op"]})
+    return targets
+
+
+def render_targeted_edit_repair(targets):
+    return ("\n\n## Correct ONLY These Invalid Edits (overrides full-plan regeneration)\n"
+            + json.dumps(targets, ensure_ascii=False) + "\n"
+            "All other edits of the completed plan are retained UNAPPLIED in memory. "
+            "Return one complete AWM_EDIT_PLAN_V1 containing EXACTLY one corrected edit "
+            "for EACH listed target span, and NO other edits. Keep start/end IDs unchanged. "
+            "edit_index, file and previous_op above are diagnostic labels, NOT EDIT "
+            "metadata fields. Each returned EDIT header still needs target_id and op, "
+            "plus optional end_target_id, followed by its literal body and END_EDIT. "
+            "Choose op explicitly: if deletion was intended use delete and an empty body; "
+            "otherwise provide the full NONEMPTY replacement/insertion body. Do not invent "
+            "a deletion to satisfy validation. If the edit is unnecessary, explicitly "
+            "replace the selected span with its unchanged literal snapshot text, including "
+            "its newline for a blank line (use an extra empty body line before END_EDIT "
+            "to preserve that newline). "
+            "Do not repeat the other valid edits. Python will substitute only these exact "
+            "spans, then revalidate the ENTIRE combined plan before any write.\n")
+
+
+def merge_targeted_edit_repair(parent, targets, patch):
+    """Substitute explicit model repairs; no partial commit, ID guessing or dropping."""
+    expected = {(row["target_id"], row["end_target_id"]): row["edit_index"] - 1 for row in targets}
+    replacements = {}
+    for edit in patch["operations"]:
+        key = (normalize_target_id(edit.get("target_id")),
+               normalize_target_id(edit.get("end_target_id") or edit.get("target_id")))
+        if key not in expected or key in replacements:
+            raise AWMEditError("Targeted repair contains an unrequested/duplicate span; no update applied")
+        replacements[key] = edit
+    if set(replacements) != set(expected):
+        raise AWMEditError("Targeted repair omitted a required span; no update applied")
+    operations = [dict(edit) for edit in parent["operations"]]
+    for key, edit in replacements.items():
+        operations[expected[key]] = dict(edit)
+    return {"operations": operations}
 
 
 def apply_awm_edit_plan(raw, files, valid_actions):
