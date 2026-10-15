@@ -1877,18 +1877,19 @@ class ABCDAgent(AbstractTodAgent):
         retry_error = ""
         rejected_edit_plan = ""
         edit_repair_context = {}
-        framed_edit_response = False
         for attempt in range(3):
             raw_reply = ""
             request_prompt = prompt
             if edit_mode == "tools":
                 from skill_mining.awm_edit_tools import edit_response_instructions
-                request_prompt += edit_response_instructions(attempt, framed_edit_response)
+                request_prompt += edit_response_instructions(attempt)
             if editable_action_cards and retry_error:
                 request_prompt += (
                     "\n\n## Previous Attempt Rejected\n" + retry_error + "\n"
-                    + ("Regenerate a complete corrected JSON edit plan only, using target_id from the snapshot. "
-                     "The previous plan was not applied.\n" if edit_mode == "tools" else
+                    + ("Regenerate one complete corrected AWM_EDIT_PLAN_V1 plan. "
+                     "EVERY EDIT metadata header requires target_id AND an explicit string op "
+                     "(replace/insert_before/insert_after/delete). Write literal text in the body, "
+                     "then END_EDIT; finish with END_PLAN. The previous plan was not applied.\n" if edit_mode == "tools" else
                     "Regenerate a COMPLETE concise workflow as plain Markdown followed by the "
                     "delimited JSON array. Close both delimiters and all JSON strings/brackets. "
                     "Do not return a partial continuation or put workflow inside a JSON string.")
@@ -1898,16 +1899,14 @@ class ABCDAgent(AbstractTodAgent):
                         "\n<rejected_edit_plan>\n" + rejected_edit_plan + "\n</rejected_edit_plan>\n"
                         "<edit_validation_feedback>\n" + json.dumps(edit_repair_context, ensure_ascii=False)
                         + "\n</edit_validation_feedback>\n"
-                        "Select the correct snapshot target_id; do not generate match_text or guess an occurrence. "
-                        "Prioritize the intended correction and omit unrelated unchanged text. "
+                        "Fix every error listed in the validation feedback. "
+                        "Do not change an already-correct target_id just to fix a missing op. "
+                        "Reselect IDs only when address feedback requires it; never guess an ID or occurrence. "
+                        "Keep op explicit on ALL edits, not just the reported one. "
+                        "Preserve the intended correction and omit unrelated unchanged text. "
                         "Return a complete corrected plan; "
                         "no previous operation has been committed. The excerpts are suggestions only, never automatic writes."
                     )
-                    if framed_edit_response:
-                        request_prompt += (
-                            "\nIMPORTANT: the raw-text AWM_EDIT_PLAN_V1 format above overrides requests "
-                            "for a JSON edit plan. Do NOT return a JSON operations array.\n"
-                        )
             try:
                 raw_reply = self._chat(
                     request_prompt,
@@ -1923,13 +1922,15 @@ class ABCDAgent(AbstractTodAgent):
                     self._response_logger.log(
                         messages=[{"role": "user", "content": request_prompt}],
                         response={"raw_response": raw_reply}, call_tag="awm_induction_output",
-                        extra={"attempt": attempt + 1, "response_chars": len(raw_reply)},
+                        extra={"attempt": attempt + 1, "response_chars": len(raw_reply),
+                               "requested_edit_format": "AWM_EDIT_PLAN_V1" if edit_mode == "tools" else "rewrite"},
                     )
                 if updated:
                     if edit_mode == "tools":
-                        from skill_mining.awm_edit_tools import apply_awm_edit_plan, parse_edit_response
+                        from skill_mining.awm_edit_tools import apply_awm_edit_plan, parse_edit_response, validate_edit_plan_structure
                         files = {**editable_resources, "skill.md": existing}
                         plan = parse_edit_response(updated)
+                        validate_edit_plan_structure(plan)
                         edited, operations = apply_awm_edit_plan(json.dumps(plan), files, self.action_schema.get("actions", set()))
                         updated = edited["skill.md"]
                         self.last_awm_edited_resources = edited
@@ -1946,12 +1947,17 @@ class ABCDAgent(AbstractTodAgent):
                 if edit_mode == "tools":
                     from skill_mining.awm_edit_tools import AWMEditResponseError
                     transport_error = isinstance(exc, (json.JSONDecodeError, AWMEditResponseError))
-                    framed_edit_response = framed_edit_response or transport_error
-                    # Broken JSON is not useful edit feedback. Do not
-                    # replay a huge unfinished response as the next demonstration.
-                    rejected_edit_plan = ("[Malformed response omitted; regenerate from the unchanged snapshot.]"
-                                          if transport_error else raw_reply[:3000])
                     edit_repair_context = getattr(exc, "repair_context", {})
+                    # Do not teach the model to repeat malformed/missing-field
+                    # plans. Field-level feedback lists ALL errors in source order.
+                    if transport_error:
+                        rejected_edit_plan = "[Malformed response omitted; use the complete format examples above.]"
+                        edit_repair_context = {"error_kind": "response_format",
+                            "instruction": "Return a COMPLETE AWM_EDIT_PLAN_V1 plan with explicit target_id and op on EVERY EDIT header, literal text bodies, END_EDIT for each edit and a final END_PLAN. Do not return a JSON operations array or partial continuation. Nothing has been applied."}
+                    elif edit_repair_context.get("error_kind") == "edit_plan_structure":
+                        rejected_edit_plan = "[Invalid structure omitted; repair ALL structure_issues below without guessing missing ops.]"
+                    else:
+                        rejected_edit_plan = raw_reply[:3000]
                 if self._response_logger is not None:
                     self._response_logger.log(
                         messages=[{"role": "user", "content": request_prompt}], response={"raw_response": raw_reply},
