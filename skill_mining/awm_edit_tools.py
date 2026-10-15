@@ -43,8 +43,8 @@ Each operation: file, target_id, op (replace/insert_before/insert_after/delete),
 new_text (required for replace/insert; empty or omitted for delete).
 section/rationale are optional descriptions.
 Copy target_id from the catalog; NEVER copy or paraphrase old text as an anchor.
-Catalog brackets are display delimiters: [5d9cc6170bb3ef49:L135] means
-"target_id":"5d9cc6170bb3ef49:L135" (without brackets).
+Catalog brackets are display delimiters, not part of the ID. Copy the actual
+revision and line from THIS snapshot; do not reuse IDs from earlier calls.
 Return only necessary local edits, preferably at most 6 per batch. Do not rewrite
 whole files or repeat unchanged text; prioritize the most important corrections.
 target_id selects that exact line EVEN WHEN identical text appears elsewhere.
@@ -64,9 +64,43 @@ when removing a whole section.
 All operations are checked before any write. Invalid/stale IDs or overlaps reject
 the whole plan, never fuzzy-match. [] means no change. This is the same single
 AWM induction, not a multi-step graph/reflection procedure.
-Example: {"operations":[{"file":"skill.md","target_id":"COPY_ACTUAL_ID",
-"op":"replace","new_text":"The revised local rule.","rationale":"Observed feedback."}]}
+No-change example: {"operations":[]}.
 '''
+
+
+def render_id_instructions(files):
+    """Use only real current IDs in format examples; no stale literal hashes."""
+    catalog = build_edit_catalog(files)
+    examples = []
+    for name in EDITABLE_FILES:
+        first = next((key for key, row in catalog.items() if row["file"] == name), None)
+        if first:
+            examples.append(f'{name}: display [{first}] -> "target_id":"{first}"')
+    return ID_TOOL_INSTRUCTIONS + "\nCurrent snapshot ID syntax examples (NOT suggested edit targets):\n" + "\n".join(examples)
+
+
+def id_validation_feedback(catalog, name, target, field):
+    """Explicit reselection hints only. Never correct an ID automatically."""
+    row = catalog.get(target)
+    rows = [(key, value) for key, value in catalog.items() if value["file"] == name]
+    match = re.fullmatch(r"([0-9a-f]{16}):L([1-9][0-9]*)", target)
+    if name not in EDITABLE_FILES:
+        reason = "invalid_file"
+    elif row is not None:
+        reason = "valid" if row["file"] == name else "wrong_file"
+    elif match is None:
+        reason = "malformed_id"
+    elif any(key.startswith(match[1] + ":") for key, _ in rows):
+        reason = "line_not_addressable_in_current_file"
+    else:
+        reason = "unknown_revision"
+    same_line = [key for key, value in rows if match and value["line"] == int(match[2])]
+    return {"field": field, "requested_id": target, "reason": reason,
+            "actual_file": row["file"] if row else None,
+            "current_file_revision": rows[0][0].split(":", 1)[0] if rows else None,
+            "same_line_number_candidates_not_auto_applied": same_line,
+            "current_heading_ids": [key for key, value in rows
+                                    if re.match(r"^#{1,6}\s", value["text"])][:24]}
 
 
 def normalize_target_id(value):
@@ -91,12 +125,18 @@ def _resolve_id_plan(plan, files):
         first, last = catalog.get(first_id), catalog.get(last_id)
         name = operation.get("file")
         if first is None or last is None or first["file"] != name or last["file"] != name:
-            raise AWMEditError(f"Edit {index}: unknown/stale target_id or wrong file; copy an ID from the supplied snapshot",
+            details = [id_validation_feedback(catalog, name, first_id, "target_id")]
+            if "end_target_id" in operation:
+                details.append(id_validation_feedback(catalog, name, last_id, "end_target_id"))
+            summary = "; ".join(f"{item['field']}={item['requested_id']} ({item['reason']})"
+                                for item in details if item["reason"] != "valid")
+            raise AWMEditError(f"Edit {index}: unknown/stale target_id or wrong file: {summary}; explicitly reselect from current snapshot",
                 {"edit_index": index, "file": name, "target_id": first_id,
                  "end_target_id": last_id, "target_present": first is not None,
                  "end_target_present": last is not None,
                  "actual_file": first["file"] if first else None,
-                 "instruction": "Copy the current snapshot ID without display brackets; revision and line must both match."})
+                 "address_checks": details,
+                 "instruction": "Inspect the current snapshot content and explicitly reselect the intended start/end IDs. Candidates are NOT applied automatically. Copy the current revision and line; do not copy IDs from the rejected plan."})
         start, end = first["start"], last["end"]
         if start >= end:
             raise AWMEditError(f"Edit {index}: reversed/empty target range")

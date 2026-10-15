@@ -5,6 +5,7 @@ import pytest
 from awm import WorkflowStore
 from eval_tod.abcd.agent import ABCDAgent
 from skill_mining.awm_edit_tools import apply_awm_edit_plan, AWMEditError, build_edit_catalog, render_edit_catalog
+from skill_mining.awm_edit_tools import render_id_instructions
 
 
 def files():
@@ -34,6 +35,24 @@ def test_display_brackets_accept_exact_current_ids_and_ranges_only():
 def operation(**changes):
     return {"file": "skill.md", "section": "## Route", "op": "replace",
             "match_text": "Old route.", "new_text": "New route.", "rationale": "Observed failure", **changes}
+
+
+def test_id_examples_are_current_and_stale_end_id_gets_explicit_feedback():
+    source = files()
+    catalog = build_edit_catalog(source)
+    prompt = render_id_instructions(source)
+    assert "COPY_ACTUAL_ID" not in prompt and "5d9cc6170bb3ef49" not in prompt
+    import re
+    assert all(key in catalog for key in re.findall(r"[0-9a-f]{16}:L[1-9][0-9]*", prompt))
+    target = next(k for k, row in catalog.items() if row["text"] == "Old route.")
+    plan = {"operations": [{"file": "skill.md", "target_id": target,
+                            "end_target_id": "0000000000000000:L3", "op": "delete"}]}
+    with pytest.raises(AWMEditError, match="end_target_id=.*unknown_revision") as caught:
+        apply_awm_edit_plan(json.dumps(plan), source, {"send-link"})
+    checks = caught.value.repair_context["address_checks"]
+    assert checks[0]["reason"] == "valid" and checks[1]["reason"] == "unknown_revision"
+    assert checks[1]["same_line_number_candidates_not_auto_applied"] == [target]
+    assert source == files()
 
 
 @pytest.mark.parametrize("addressing", ["id", "legacy"])

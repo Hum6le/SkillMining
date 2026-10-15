@@ -1841,13 +1841,13 @@ class ABCDAgent(AbstractTodAgent):
         self.last_awm_edit_operations = []
         self.last_awm_edited_resources = None
         if edit_mode == "tools":
-            from skill_mining.awm_edit_tools import ID_TOOL_INSTRUCTIONS, render_edit_catalog
+            from skill_mining.awm_edit_tools import render_id_instructions, render_edit_catalog
             files = {**editable_resources, "skill.md": existing}
             # Replace the raw prior with the addressed view, not a second dump.
             prefix = prompt.split("\n\n## Existing Workflow\n", 1)[0]
             prompt = (prefix + "\n\n## Current Editable Snapshot\n" + render_edit_catalog(files)
                       + "\n\n## Read-only Reference\n" + editable_resources.get("reference.md", "")
-                      + ID_TOOL_INSTRUCTIONS + "\nAllowed canonical action names: "
+                      + render_id_instructions(files) + "\nAllowed canonical action names: "
                       + json.dumps(sorted(self.action_schema.get("actions", []))))
         elif editable_action_cards:
             prompt += (

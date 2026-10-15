@@ -169,6 +169,10 @@ def diagnose(directory, examples=6, latest_run=False, recent=None):
                           validator_error=record.get("extra", {}).get("error"),
                           catalog_lines=len(catalog),
                           catalog_lines_per_file=dict(Counter(catalog.values())))
+            feedback = record.get("extra", {}).get("edit_repair_context", {})
+            result["validator_address_feedback"] = {key: feedback[key] for key in (
+                "edit_index", "execution_index", "file", "target_id", "end_target_id",
+                "target_present", "end_target_present", "actual_file", "address_checks") if key in feedback}
             counts[result["status"]] += 1
             for issue in result.get("issues", []):
                 reasons[issue["reason"]] += 1
