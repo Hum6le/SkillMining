@@ -1869,6 +1869,8 @@ class ABCDAgent(AbstractTodAgent):
 
         updated = ""
         retry_error = ""
+        rejected_edit_plan = ""
+        edit_repair_context = {}
         for attempt in range(3):
             raw_reply = ""
             request_prompt = prompt
@@ -1881,6 +1883,15 @@ class ABCDAgent(AbstractTodAgent):
                     "delimited JSON array. Close both delimiters and all JSON strings/brackets. "
                     "Do not return a partial continuation or put workflow inside a JSON string.")
                 )
+                if edit_mode == "tools":
+                    request_prompt += (
+                        "\n<rejected_edit_plan>\n" + rejected_edit_plan + "\n</rejected_edit_plan>\n"
+                        "<edit_validation_feedback>\n" + json.dumps(edit_repair_context, ensure_ascii=False)
+                        + "\n</edit_validation_feedback>\n"
+                        "Use the literal candidate excerpts to repair the failed operation, not a paraphrase. "
+                        "Preserve the intended change and any still-valid earlier operations. Return the entire corrected plan; "
+                        "no previous operation has been committed. The excerpts are suggestions only, never automatic writes."
+                    )
             try:
                 raw_reply = self._chat(
                     request_prompt,
@@ -1915,11 +1926,15 @@ class ABCDAgent(AbstractTodAgent):
             except Exception as exc:
                 updated = ""
                 retry_error = str(exc)
+                if edit_mode == "tools":
+                    rejected_edit_plan = raw_reply if len(raw_reply) <= 6000 else raw_reply[:4500] + "\n[rejected plan excerpt truncated]\n" + raw_reply[-1500:]
+                    edit_repair_context = getattr(exc, "repair_context", {})
                 if self._response_logger is not None:
                     self._response_logger.log(
                         messages=[{"role": "user", "content": request_prompt}], response={"raw_response": raw_reply},
                         call_tag="awm_induction_validation_error",
-                        extra={"attempt": attempt + 1, "error": retry_error, "response_chars": len(raw_reply)},
+                        extra={"attempt": attempt + 1, "error": retry_error, "response_chars": len(raw_reply),
+                               "edit_repair_context": edit_repair_context},
                     )
                 print(f"  [ABCD induce] LLM error ({attempt + 1}/3): {exc}")
             if attempt < 2:

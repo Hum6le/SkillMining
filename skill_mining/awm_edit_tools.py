@@ -5,8 +5,40 @@ No graph diagnosis, reflection or routing semantics are used here.
 from __future__ import annotations
 import json
 import re
+from difflib import SequenceMatcher
 
 EDITABLE_FILES = ("skill.md", "action_rules.md", "slot_policies.md")
+
+
+class AWMEditError(ValueError):
+    def __init__(self, message, repair_context=None):
+        super().__init__(message)
+        self.repair_context = repair_context or {}
+
+
+def anchor_repair_context(source, anchor, positions, occurrence):
+    """Suggest literal current-file excerpts; NEVER use similarity for writing."""
+    candidates = []
+    if positions:
+        for number, position in enumerate(positions[:6], 1):
+            candidates.append({"occurrence": number,
+                "surrounding_text": source[max(0, position - 180):position + min(len(anchor), 400) + 180]})
+    else:
+        lines = [(m.start(), m.group(0)) for m in re.finditer(r"(?m)^.+$", source) if m.group(0).strip()]
+        ranked = sorted(lines, key=lambda item: SequenceMatcher(None, anchor[:1000], item[1][:1000], autojunk=False).ratio(), reverse=True)
+        seen = set()
+        for position, line in ranked:
+            snippet = line[:600]
+            if snippet in seen:
+                continue
+            seen.add(snippet)
+            candidates.append({"match_text": snippet, "exact_match_count": source.count(snippet),
+                               "line": source[:position].count("\n") + 1})
+            if len(candidates) == 4:
+                break
+    return {"exact_match_count": len(positions), "requested_occurrence": occurrence,
+            "anchor_preview": anchor[:300], "literal_candidates": candidates,
+            "instruction": "These are current-file excerpts for explicit reselection, not applied replacements. Copy exact text, preserve intent, and provide occurrence when repeated."}
 
 TOOL_INSTRUCTIONS = '''
 ## File Editing Tool: apply_text_edits (output override)
@@ -25,6 +57,9 @@ Each operation must specify:
 - op: replace, insert_before, insert_after, or delete.
 - match_text: a nonempty EXACT excerpt copied from that file. Choose a small
   unique anchor; if repeated, include occurrence (1-based in the current file).
+  Never paraphrase it or copy from the batch dialogue/examples. Prefer a small
+  verbatim paragraph/line, not a regenerated whole section. On error, inspect
+  exact_match_count and literal_candidates and explicitly select a valid anchor.
 - new_text: replacement/insertion text; MUST be empty for delete.
 - rationale (recommended metadata): what evidence supports this specific change.
 Missing section/rationale does not invalidate an otherwise exact safe edit.
@@ -72,9 +107,15 @@ def apply_awm_edit_plan(raw, files, valid_actions):
             source = current[name]
             occurrences = [m.start() for m in re.finditer(re.escape(anchor), source)]
             occurrence = operation.get("occurrence", 1)
-            if (type(occurrence) is not int or not 1 <= occurrence <= len(occurrences)
-                    or len(occurrences) > 1 and "occurrence" not in operation):
-                raise ValueError("anchor missing/ambiguous; copy an exact unique excerpt or valid occurrence")
+            if not occurrences:
+                raise AWMEditError("anchor missing: 0 exact matches; copy literal current-file text",
+                    anchor_repair_context(source, anchor, occurrences, operation.get("occurrence")))
+            if len(occurrences) > 1 and "occurrence" not in operation:
+                raise AWMEditError(f"anchor ambiguous: {len(occurrences)} exact matches; supply a 1-based occurrence or a longer unique excerpt",
+                    anchor_repair_context(source, anchor, occurrences, None))
+            if type(occurrence) is not int or not 1 <= occurrence <= len(occurrences):
+                raise AWMEditError(f"invalid occurrence: {occurrence!r}; expected 1..{len(occurrences)}",
+                    anchor_repair_context(source, anchor, occurrences, occurrence))
             position = occurrences[occurrence - 1]
             # Headings are descriptive, not a second fragile addressing scheme.
             # Resolve the hierarchy from the EXACT selected anchor, never fuzzy
@@ -115,7 +156,11 @@ def apply_awm_edit_plan(raw, files, valid_actions):
                              "section_hint": section_hint, "section_path": [h for _, h in heading_path],
                              "warnings": warnings})
         except Exception as exc:
-            raise ValueError(f"Edit {index} ({operation.get('file', '?') if isinstance(operation, dict) else '?'}): {exc}") from exc
+            context = {**getattr(exc, "repair_context", {}), "edit_index": index,
+                       "file": operation.get("file", "?") if isinstance(operation, dict) else "?",
+                       "validated_prefix_edits": index - 1,
+                       "note": "Earlier operations were simulated only; the whole rejected plan was NOT committed."}
+            raise AWMEditError(f"Edit {index} ({context['file']}): {exc}", context) from exc
     if not current["skill.md"].strip():
         raise ValueError("Edit plan erased the entire workflow")
     return current, outcomes

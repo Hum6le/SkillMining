@@ -4,7 +4,7 @@ from unittest.mock import patch
 import pytest
 from awm import WorkflowStore
 from eval_tod.abcd.agent import ABCDAgent
-from skill_mining.awm_edit_tools import apply_awm_edit_plan
+from skill_mining.awm_edit_tools import apply_awm_edit_plan, AWMEditError
 
 
 def files():
@@ -79,6 +79,32 @@ def test_five_edit_case_keeps_missing_rationale_and_repeated_section_safe():
     assert all(f"Fixed {i}." in edited["skill.md"] for i in range(4))
 
 
+def test_missing_anchor_feedback_supplies_real_text_without_fuzzy_applying():
+    source = files()
+    with pytest.raises(AWMEditError) as caught:
+        apply_awm_edit_plan(json.dumps({"operations": [operation(match_text="Old routing.")]}), source, {"send-link"})
+    context = caught.value.repair_context
+    assert context["exact_match_count"] == 0 and "0 exact matches" in str(caught.value)
+    assert context["file"] == "skill.md" and context["edit_index"] == 1
+    assert any(c["match_text"] == "Old route." for c in context["literal_candidates"])
+    assert all(c["match_text"] in source["skill.md"] for c in context["literal_candidates"])
+    assert source == files()
+
+
+def test_ambiguous_anchor_feedback_exposes_occurrences_and_preview_only_prefix():
+    source = files()
+    source["skill.md"] += "Old route.\n"
+    with pytest.raises(AWMEditError) as caught:
+        apply_awm_edit_plan(json.dumps({"operations": [operation()]}), source, {"send-link"})
+    assert caught.value.repair_context["exact_match_count"] == 2
+    assert [c["occurrence"] for c in caught.value.repair_context["literal_candidates"]] == [1, 2]
+    original = files()
+    with pytest.raises(AWMEditError) as caught:
+        apply_awm_edit_plan(json.dumps({"operations": [operation(), operation(match_text="absent")]}), original, {"send-link"})
+    assert caught.value.repair_context["validated_prefix_edits"] == 1
+    assert original == files()
+
+
 def test_native_induction_retries_exact_anchor_error_without_partial_state():
     source = files()
     workflow = WorkflowStore()
@@ -94,5 +120,9 @@ def test_native_induction_retries_exact_anchor_error_without_partial_state():
     assert chat.call_count == 2 and "New route." in result
     assert "apply_text_edits" in chat.call_args_list[0].args[0]
     assert "anchor missing" in chat.call_args_list[1].args[0]
+    assert "<rejected_edit_plan>" in chat.call_args_list[1].args[0]
+    assert bad in chat.call_args_list[1].args[0]
+    assert '"exact_match_count": 0' in chat.call_args_list[1].args[0]
+    assert "literal_candidates" in chat.call_args_list[1].args[0]
     assert "Use verified email." in agent.last_awm_edited_resources["slot_policies.md"]
     assert len(agent.last_awm_edit_operations) == 2
