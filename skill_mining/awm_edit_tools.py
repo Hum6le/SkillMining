@@ -277,21 +277,25 @@ Example:
 
 
 class AWMEditResponseError(ValueError):
-    """Incomplete/oversized transport, not a failed semantic edit validation."""
+    """Incomplete/malformed transport, not a failed semantic edit validation."""
 
 
 def edit_response_instructions(attempt, framed=False):
-    """Bound the output, never the evidence or editable snapshot."""
-    operations, chars = ((6, 8000), (3, 4500), (1, 2500))[attempt]
+    """Encourage concise generation without rejecting complete valid responses."""
     message = (
-        f"\n## Response Budget (overrides earlier output instructions)\n"
-        f"Return at most {operations} operations and {chars} characters TOTAL. "
-        "Prioritize the highest-value correction; defer other independent changes. "
+        "\n## Concise Edit Guidance\n"
+        "Prefer a few necessary local edits; prioritize the highest-value correction. "
         "Omit rationale/section and unchanged text. Do not rewrite whole files. "
-        "If a necessary replacement cannot fit, return a complete no-change plan, "
-        "never a shortened/cut-off replacement or half an operation. "
-        "The complete plan must still pass atomic snapshot validation.\n"
+        "Concision is guidance, NOT a character or operation-count acceptance limit. "
+        "Include the complete replacement text required for correctness, even if long; "
+        "never shorten a replacement by dropping necessary rules or return no-change "
+        "just to meet a size target. The complete plan must pass atomic snapshot validation.\n"
     )
+    if attempt:
+        message += (
+            "The previous plan was not committed. Focus on the correction described "
+            "in the validation feedback; do not repeat unrelated unchanged text.\n"
+        )
     if framed:
         message += (
             "JSON output failed. Use this RAW-TEXT transport instead of a JSON operations array.\n"
@@ -308,11 +312,9 @@ def edit_response_instructions(attempt, framed=False):
     return message
 
 
-def parse_edit_response(raw, *, max_operations=None, max_chars=None):
+def parse_edit_response(raw):
     """Decode only COMPLETE plans. Never repair JSON or salvage partial operations."""
     text = raw.strip()
-    if max_chars is not None and len(text) > max_chars:
-        raise AWMEditResponseError(f"Edit response exceeds {max_chars} characters; regenerate fewer local edits")
     if text.startswith("AWM_EDIT_PLAN_V1"):
         lines = text.splitlines(keepends=True)
         if lines[0].strip() != "AWM_EDIT_PLAN_V1" or lines[-1].strip() != "END_PLAN":
@@ -349,8 +351,6 @@ def parse_edit_response(raw, *, max_operations=None, max_chars=None):
         plan = json.loads(text)
     if not isinstance(plan, dict) or set(plan) != {"operations"} or not isinstance(plan["operations"], list):
         raise ValueError('Expected {"operations":[...]} edit plan only')
-    if max_operations is not None and len(plan["operations"]) > max_operations:
-        raise AWMEditResponseError(f"Edit response exceeds {max_operations} operations; regenerate fewer local edits")
     return plan
 
 

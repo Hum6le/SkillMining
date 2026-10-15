@@ -1899,7 +1899,7 @@ class ABCDAgent(AbstractTodAgent):
                         "<edit_validation_feedback>\n" + json.dumps(edit_repair_context, ensure_ascii=False)
                         + "\n</edit_validation_feedback>\n"
                         "Select the correct snapshot target_id; do not generate match_text or guess an occurrence. "
-                        "Prioritize the intended correction within the response budget; defer independent edits if necessary. "
+                        "Prioritize the intended correction and omit unrelated unchanged text. "
                         "Return a complete corrected plan; "
                         "no previous operation has been committed. The excerpts are suggestions only, never automatic writes."
                     )
@@ -1929,8 +1929,7 @@ class ABCDAgent(AbstractTodAgent):
                     if edit_mode == "tools":
                         from skill_mining.awm_edit_tools import apply_awm_edit_plan, parse_edit_response
                         files = {**editable_resources, "skill.md": existing}
-                        max_operations, max_chars = ((6, 8000), (3, 4500), (1, 2500))[attempt]
-                        plan = parse_edit_response(updated, max_operations=max_operations, max_chars=max_chars)
+                        plan = parse_edit_response(updated)
                         edited, operations = apply_awm_edit_plan(json.dumps(plan), files, self.action_schema.get("actions", set()))
                         updated = edited["skill.md"]
                         self.last_awm_edited_resources = edited
@@ -1948,9 +1947,9 @@ class ABCDAgent(AbstractTodAgent):
                     from skill_mining.awm_edit_tools import AWMEditResponseError
                     transport_error = isinstance(exc, (json.JSONDecodeError, AWMEditResponseError))
                     framed_edit_response = framed_edit_response or transport_error
-                    # Broken/oversized JSON is not useful edit feedback. Do not
+                    # Broken JSON is not useful edit feedback. Do not
                     # replay a huge unfinished response as the next demonstration.
-                    rejected_edit_plan = ("[Malformed/oversized response omitted; regenerate from the unchanged snapshot.]"
+                    rejected_edit_plan = ("[Malformed response omitted; regenerate from the unchanged snapshot.]"
                                           if transport_error else raw_reply[:3000])
                     edit_repair_context = getattr(exc, "repair_context", {})
                 if self._response_logger is not None:
