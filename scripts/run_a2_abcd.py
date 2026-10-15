@@ -302,6 +302,8 @@ def main() -> int:
                         help="AWM full rewrite or shared file-edit tools; resume inherits saved mode if omitted")
     parser.add_argument("--offline-awm-stop-on-error", action="store_true",
                         help="Stop immediately on exhausted AWM induction retries; default records failures and continues")
+    parser.add_argument("--offline-awm-recover-failed-tail", action="store_true",
+                        help="With --resume: validate, back up and rewind an unchanged contiguous failed induction tail")
     parser.add_argument("--dry-run", action="store_true", help="Show workflow assignment without API calls")
     parser.add_argument("--worker-subflow", help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -322,6 +324,8 @@ def main() -> int:
         parser.error("--skip-arms cannot skip every configured arm")
     if args.migrate_offline_awm_v2 and (not args.resume or "offline_awm" not in _execution_arms(args)):
         parser.error("--migrate-offline-awm-v2 requires --resume and an executing offline_awm arm")
+    if args.offline_awm_recover_failed_tail and (not args.resume or "offline_awm" not in _execution_arms(args)):
+        parser.error("--offline-awm-recover-failed-tail requires --resume and an executing offline_awm arm")
     if "offline_awm" in _execution_arms(args) and args.refinement_mode != "standard":
         parser.error("offline_awm currently matches the standard action-turn training schedule")
     for key in ("max_train", "max_test", "max_batches", "batch_size"):
@@ -410,6 +414,8 @@ def main() -> int:
                 cmd += ["--offline-awm-edit-mode", args.offline_awm_edit_mode]
             if args.offline_awm_stop_on_error:
                 cmd += ["--offline-awm-stop-on-error"]
+            if args.offline_awm_recover_failed_tail:
+                cmd += ["--offline-awm-recover-failed-tail"]
             flow_dir = root / name
             flow_dir.mkdir(parents=True, exist_ok=True)
             with (flow_dir / "a2_worker.log").open("a", encoding="utf-8") as log:

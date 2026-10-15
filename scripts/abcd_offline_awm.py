@@ -137,6 +137,70 @@ def cached_rollout_matches(cached, identity, state):
     return False
 
 
+def recover_failed_tail(state, checkpoint_path):
+    """Explicitly rewind ONLY an unchanged, contiguous induction-failure tail.
+
+    Preserve costs and resource state; archive old result before changing cursor.
+    Existing rollouts remain subject to normal per-state identity validation.
+    Caller must hold exclusive access to this experiment directory.
+    """
+    failures = state.get("failed_batches", [])
+    if not failures:
+        print("Offline-AWM tail recovery: no failed batches; nothing to rewind", flush=True)
+        return state
+    cursor = state.get("completed_batches")
+    indices = [row.get("batch_index") for row in failures]
+    if (type(cursor) is not int or any(type(i) is not int for i in indices)
+            or len(set(indices)) != len(indices) or min(indices) < 0
+            or sorted(indices) != list(range(min(indices), cursor))
+            or cursor > len(state["scope"]["schedule"])
+            or any(row.get("phase") != "induction" for row in failures)):
+        raise ValueError("Tail recovery requires unique contiguous induction failures ending at the processing cursor")
+    start = min(indices)
+    output = checkpoint_path.parent
+    expected = {"scope_hash": _hash(state["scope"]),
+                "workflow_hash": _hash(state["workflow"].strip()),
+                "cards_hash": _hash(state["cards"])}
+    # Every failed induction must have used the still-current state. In
+    # particular, never rewind across a later successful update.
+    for index in sorted(indices):
+        cache_path = output / "batches" / f"batch_{index + 1:04d}.json"
+        if not cache_path.is_file() or _read(cache_path).get("identity") != {**expected, "index": index}:
+            raise ValueError(f"Tail recovery refused: batch {index + 1} cache does not match current scope/workflow/cards")
+    result_path = output / "result.json"
+    if result_path.is_file() and _read(result_path).get("scope_hash") != expected["scope_hash"]:
+        raise ValueError("Tail recovery refused: existing result has incompatible scope")
+    # Finish all read-only preconditions before touching any artifact.
+    backup = output / "tail_recovery_backups" / (
+        datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "_" + uuid4().hex[:8])
+    backup.mkdir(parents=True, exist_ok=False)
+    for path in output.iterdir():
+        if path.is_file():
+            shutil.copy2(path, backup / path.name)
+    record = {"from_processed_batches": cursor, "restart_batch_number": start + 1,
+              "failed_batches": copy.deepcopy(failures), "state_hashes": expected,
+              "backup_dir": str(backup), "recovered_at_utc": datetime.now(timezone.utc).isoformat(),
+              "historical_usage_preserved": True,
+              "interpretation": "unchanged resource state; retry contiguous failed tail in original order"}
+    _save(backup / "recovery.json", record)
+    # No failed update is relabeled successful. Move its active failure record
+    # to the backup; newly failed retries create new active records as usual.
+    for index in sorted(indices):
+        path = output / "failed_batches" / f"batch_{index + 1:04d}.json"
+        if path.is_file():
+            target = backup / "failed_batches" / path.name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            path.replace(target)
+    if result_path.is_file():
+        result_path.replace(backup / "archived_result.json")
+    updated = copy.deepcopy(state)
+    updated.update(completed_batches=start, failed_batches=[])
+    updated.setdefault("tail_recovery_history", []).append(record)
+    _save(checkpoint_path, updated)
+    print(f"Offline-AWM recovered failed tail: restart batch {start + 1}/{len(state['scope']['schedule'])}; backup={backup}", flush=True)
+    return updated
+
+
 def _without_resource_use(text):
     """Remove adapter-owned scaffolding, not learned rules between bad markers.
 
@@ -253,6 +317,10 @@ def run_offline_awm(args, subflow, flow_dir, workflow_ids):
                  "cards": {name: resources[name] for name in ("action_rules.md", "slot_policies.md")}}
     if set(state.get("cards", {})) != {"action_rules.md", "slot_policies.md"}:
         raise ValueError("Offline-AWM checkpoint is missing its evolving Action Cards")
+    if getattr(args, "offline_awm_recover_failed_tail", False):
+        if not args.resume or not checkpoint_path.is_file():
+            raise ValueError("Failed-tail recovery requires --resume and an existing checkpoint")
+        state = recover_failed_tail(state, checkpoint_path)
     if args.resume and (output / "result.json").is_file():
         result_scope = _read(output / "result.json").get("scope_hash")
         if result_scope == _hash(scope):
@@ -418,6 +486,7 @@ def run_offline_awm(args, subflow, flow_dir, workflow_ids):
                       "mixed-edit-interface" if any(h["first_batch_index"] > 0 for h in state.get("edit_interface_history", [])) else
                       "v3-tools-from-start" if edit_mode == "tools" else "v3-from-start"),
                   induction_edit_mode=edit_mode, edit_interface_history=state.get("edit_interface_history", []),
+                  tail_recovery_history=state.get("tail_recovery_history", []),
                   migration=state.get("migration"),
                   exemplar_count=len(memory))
     _save(output / "result.json", result)
