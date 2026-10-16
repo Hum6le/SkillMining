@@ -30,7 +30,7 @@ from skill_mining.k1_flatten import (RESOURCE_NAMES, VERSION, digest, flatten_re
                                     graph_flat_progressive_resources)
 
 ARMS = ("flat_full_context", "flat_react", "ours")
-PROTOCOL = "abcd-k1-context-v2"
+PROTOCOL = "abcd-k1-context-v3"
 
 
 def read(path):
@@ -88,6 +88,11 @@ def runtime_args(args, source_config):
     for name, default in (("reference_top_k", 3), ("reference_max_chars", 1800),
                           ("action_selection_candidate_limit", 3), ("disable_competitive_action_cards", False)):
         values[name] = source_config.get(name, default)
+    # Frozen evaluation overrides, not modifications to source/training settings.
+    values["reference_top_k"] = getattr(args, "reference_top_k", 10)
+    values["action_selection_candidate_limit"] = getattr(args, "action_selection_candidate_limit", 8)
+    for key in ("action_card_max_chars", "reference_max_chars", "reference_section_max_chars"):
+        values[key] = getattr(args, key, 0) or None
     if values["disable_competitive_action_cards"]:
         raise ValueError("This experiment requires two-stage action/card inference; source disabled competitive cards")
     return SimpleNamespace(**values)
@@ -223,7 +228,8 @@ def run_flow(args, flow, workflow_ids):
     from scripts.llm_usage_utils import get_usage, reset_usage, merge_usage_summaries
     from eval_tod.response_logger import ResponseLogger
     _, test = load_subflow_data(flow)
-    maximum = args.max_test if args.max_test is not None else config.get("max_test")
+    maximum = (None if getattr(args, "full_test", False) else
+               args.max_test if args.max_test is not None else config.get("max_test"))
     if maximum is not None:
         test = test[:maximum]
     runtime = runtime_args(args, config)
@@ -280,6 +286,7 @@ def run_flow(args, flow, workflow_ids):
             result.update(protocol=PROTOCOL, subflow=flow, arm=arm, reused=False,
                 evaluation_test_hash=digest(test),
                 evaluation_artifacts=str(attempt_dir),
+                test_dialogues=len(test), full_test=getattr(args, "full_test", False),
                 source_manifest=provenance, runtime_protocol=abcd_runtime_options(runtime),
                 resource_access_mode=arm, online_refinement=False, initialization="frozen K1",
                 llm_usage={"testing": testing, "note": "New evaluation cost only; shared K1 training cost not charged again."},
@@ -367,6 +374,12 @@ def parser():
     p.add_argument("--workflow-ids", default=os.getenv("SKILLMINING_WORKFLOW_ID", ""))
     p.add_argument("--model", help="Default inherits the K1 source model")
     p.add_argument("--max-test", type=int)
+    p.add_argument("--full-test", action="store_true", help="Use the full test split, ignoring source smoke max_test")
+    p.add_argument("--reference-top-k", type=int, default=10)
+    p.add_argument("--action-selection-candidate-limit", type=int, default=8)
+    p.add_argument("--action-card-max-chars", type=int, default=0, help="0: no card character cap")
+    p.add_argument("--reference-max-chars", type=int, default=0, help="0: no total retrieved reference character cap")
+    p.add_argument("--reference-section-max-chars", type=int, default=0, help="0: no per-section reference character cap")
     p.add_argument("--skip-arms", default="ours", help="Default skips Ours inference; compatible existing result is reused")
     p.add_argument("--include-ours", action="store_true", help="Explicitly reevaluate organized Ours; no training")
     p.add_argument("--prepare-only", action="store_true", help="Flatten and audit only; no llm import or API calls")
@@ -390,6 +403,14 @@ def main(argv=None):
         p.error("--k1-dir requires a single --subflow")
     if args.max_test is not None and args.max_test < 1:
         p.error("--max-test must be positive")
+    if args.full_test and args.max_test is not None:
+        p.error("--full-test cannot be combined with --max-test")
+    for key, minimum in (("reference_top_k", 0), ("action_selection_candidate_limit", 1),
+                         ("action_card_max_chars", 0), ("reference_max_chars", 0), ("reference_section_max_chars", 0)):
+        if getattr(args, key) < minimum:
+            p.error(f"--{key.replace('_', '-')} must be >= {minimum}")
+    if 0 < args.reference_max_chars < 200:
+        p.error("--reference-max-chars must be 0 (unlimited) or >= 200")
     flows, ids = _subflows(args), _ids(args.workflow_ids)
     args.output_dir = str(Path(args.output_dir).resolve())
     for key in ("source_root", "k1_dir"):
@@ -424,10 +445,12 @@ def main(argv=None):
         command = [sys.executable, str(Path(__file__).resolve()), "--subflow", flow,
                    "--worker-subflow", flow, "--output-dir", str(output),
                    "--workflow-ids", ",".join(ids), "--skip-arms", ",".join(args.skip_arms)]
-        for key in ("source_root", "k1_dir", "model", "max_test"):
+        for key in ("source_root", "k1_dir", "model", "max_test", "reference_top_k",
+                    "action_selection_candidate_limit", "action_card_max_chars", "reference_max_chars",
+                    "reference_section_max_chars"):
             if getattr(args, key) is not None:
                 command += ["--" + key.replace("_", "-"), str(getattr(args, key))]
-        for key in ("prepare_only", "allow_unverified_source", "resume"):
+        for key in ("prepare_only", "allow_unverified_source", "resume", "full_test"):
             if getattr(args, key):
                 command.append("--" + key.replace("_", "-"))
         command.append("--skip-utterance-eval" if args.skip_utterance_eval else "--no-skip-utterance-eval")
