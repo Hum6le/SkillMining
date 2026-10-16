@@ -14,7 +14,7 @@ RUNTIME_DEFAULTS = {
 
 
 def abcd_runtime_options(args) -> dict:
-    return {
+    options = {
         "model": args.model,
         "max_turns": 1,
         "workflow_max_chars": None,
@@ -25,6 +25,11 @@ def abcd_runtime_options(args) -> dict:
         "action_selection_candidate_limit": getattr(args, "action_selection_candidate_limit", RUNTIME_DEFAULTS["action_selection_candidate_limit"]),
         "expose_scenario_labels": False,
     }
+    # Preserve historical runner defaults/metadata unless explicitly configured.
+    for key in ("action_card_max_chars", "reference_section_max_chars"):
+        if hasattr(args, key):
+            options[key] = getattr(args, key)
+    return options
 
 
 def build_abcd_runtime_agent(args, *, workflow, reference_text="", action_rules_text="",

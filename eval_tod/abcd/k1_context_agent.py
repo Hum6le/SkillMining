@@ -63,6 +63,9 @@ class K1FullContextAgent(ABCDAgent):
             row["resource_access_mode"] = "flat_full_context"
             row["client_resource_truncated"] = False
             row["provider_context_truncation"] = "unknown"
+            if row.get("action_selection", {}).get("two_stage_applied"):
+                # The selected card is in the full inline resource, not a tool result.
+                row["action_selection"]["selected_action_card_injected"] = True
             row["inference_trace"] = [step for step in row.get("react_trace", [])
                                       if step.get("action", "").startswith("llm_")
                                       and step.get("action") != "llm_plan_reference_query"]

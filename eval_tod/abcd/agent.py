@@ -192,7 +192,7 @@ Return ONLY valid JSON:
 ```json
 {{
   "thought": "why this reference lookup is useful",
-  "candidate_actions": ["one or two canonical action names that may be needed next"],
+  "candidate_actions": ["up to {candidate_limit} plausible canonical action names"],
   "action": "retrieve_reference",
   "action_input": {{
     "query": "...",
@@ -429,7 +429,7 @@ class ABCDAgent(AbstractTodAgent):
         workflow: WorkflowStore | None = None,
         reference_text: str | None = None,
         reference_top_k: int = 3,
-        reference_max_chars: int = 1800,
+        reference_max_chars: int | None = 1800,
         action_rules_text: str | None = None,
         slot_policies_text: str | None = None,
         workflow_max_chars: int | None = 8000,
@@ -443,6 +443,8 @@ class ABCDAgent(AbstractTodAgent):
         response_logger=None,
         expose_scenario_labels: bool = True,
         workflow_id: str | None = None,
+        action_card_max_chars: int | None = 2200,
+        reference_section_max_chars: int | None = 600,
     ):
         from llm import resolve_config
         cfg = resolve_config(api_key=api_key, base_url=base_url, model=model)
@@ -460,7 +462,10 @@ class ABCDAgent(AbstractTodAgent):
         self.slot_policy_sections = _parse_action_policy_sections(slot_policies_text or "")
         self.action_cards = self._build_action_cards()
         self.reference_top_k = max(0, reference_top_k)
-        self.reference_max_chars = max(200, reference_max_chars)
+        self.reference_max_chars = None if reference_max_chars is None else max(200, reference_max_chars)
+        self.reference_section_max_chars = (None if reference_section_max_chars is None
+                                            else max(1, reference_section_max_chars))
+        self.action_card_max_chars = None if action_card_max_chars is None else max(1, action_card_max_chars)
         self.workflow_max_chars = (
             None if workflow_max_chars is None else max(1000, workflow_max_chars)
         )
@@ -561,12 +566,15 @@ class ABCDAgent(AbstractTodAgent):
         return "\n".join(parts) if len(parts) > 2 else ""
 
     def _retrieve_action_cards(
-        self, candidate_actions: list[str], max_chars: int = 2200,
+        self, candidate_actions: list[str], max_chars: int | None = None,
     ) -> str:
-        """Retrieve bounded unified action cards, never independent slot resources."""
+        """Retrieve only requested unified cards; None configured budget means full cards."""
+        budget = getattr(self, "action_card_max_chars", 2200) if max_chars is None else max_chars
         self._last_action_card_lookup = {
             "tool": "retrieve_action_card", "executed": bool(self.action_cards),
             "query": list(candidate_actions), "selected_actions": [],
+            "max_chars": budget, "skipped_due_to_budget": [],
+            "missing_actions": [a for a in candidate_actions if a not in self.action_cards],
         }
         if not self.action_cards or not candidate_actions:
             return ""
@@ -583,7 +591,8 @@ class ABCDAgent(AbstractTodAgent):
             if card.get("slot_policy"):
                 blocks.extend(["Slot binding policy:", card["slot_policy"]])
             block = "\n".join(blocks)
-            if used + len(block) > max_chars:
+            if budget is not None and used + len(block) > budget:
+                self._last_action_card_lookup["skipped_due_to_budget"].append(action)
                 continue
             parts.append(block)
             used += len(block)
@@ -1181,6 +1190,9 @@ class ABCDAgent(AbstractTodAgent):
                 entry["action_selection"] = {
                     "attempted": action_selection_attempted,
                     "two_stage_applied": use_two_stage_grounding,
+                    "selected_action_card_injected": (
+                        bool(selected_action in getattr(self, "_last_action_card_lookup", {}).get("selected_actions", []))
+                        if use_two_stage_grounding else None),
                     "selected_action": selected_action,
                     "candidate_actions": action_selection_meta.get("candidate_actions", []),
                     "candidate_card_lookup": action_selection_meta.get("candidate_card_lookup", {}),
@@ -1266,7 +1278,7 @@ class ABCDAgent(AbstractTodAgent):
             action, _ = canonical_action_name(value, self.action_schema.get("actions"))
             if action in self.action_schema.get("actions", set()) and action not in candidate_actions:
                 candidate_actions.append(action)
-            if len(candidate_actions) >= 2:
+            if len(candidate_actions) >= self.action_selection_candidate_limit:
                 break
 
         return {
@@ -1275,7 +1287,7 @@ class ABCDAgent(AbstractTodAgent):
             "action_input": {
                 "query": query_text,
                 "subflow": str(action_input.get("subflow") or visible_subflow),
-                "top_k": max(0, top_k),
+                "top_k": min(self.reference_top_k, max(0, top_k)),
             },
             "fallback_used": fallback_used,
             "candidate_actions": candidate_actions,
@@ -1312,6 +1324,7 @@ class ABCDAgent(AbstractTodAgent):
             flow=flow,
             subflow=subflow,
             top_k=self.reference_top_k,
+            candidate_limit=self.action_selection_candidate_limit,
         )
         messages = [
             {"role": "system", "content": self._build_system_prompt(scenario, context)},
@@ -1371,6 +1384,7 @@ class ABCDAgent(AbstractTodAgent):
             "top_k": requested_top_k,
             "max_chars": self.reference_max_chars,
             "reference_available": bool(self.reference_sections),
+            "section_max_chars": self.reference_section_max_chars,
         }
         if not self.reference_sections or requested_top_k <= 0:
             return {
@@ -1417,7 +1431,8 @@ class ABCDAgent(AbstractTodAgent):
             )
             title_tokens = _tokenize_for_lookup(transition_title.replace("-", " "))
             canonical_tokens = _tokenize_for_lookup(canonical_title.replace("-", " "))
-            body_tokens = _tokenize_for_lookup(body[:1200])
+            lookup_body = body if self.reference_section_max_chars is None else body[:1200]
+            body_tokens = _tokenize_for_lookup(lookup_body)
             score = 0.0
             score += 4.0 * len(query_tokens & title_tokens)
             score += 5.0 * len(query_tokens & canonical_tokens)
@@ -1471,10 +1486,12 @@ class ABCDAgent(AbstractTodAgent):
             )
             display_transition = transition_title or display_title
             snippet = section["body"].strip()
-            if len(snippet) > 600:
-                snippet = snippet[:600].rstrip() + "\n..."
+            section_truncated = (self.reference_section_max_chars is not None
+                                 and len(snippet) > self.reference_section_max_chars)
+            if section_truncated:
+                snippet = snippet[:self.reference_section_max_chars].rstrip() + "\n..."
             block = f"\n### {display_transition}\n{snippet}"
-            if used_chars + len(block) > self.reference_max_chars:
+            if self.reference_max_chars is not None and used_chars + len(block) > self.reference_max_chars:
                 remaining = self.reference_max_chars - used_chars
                 if remaining > 120:
                     parts.append(block[:remaining].rstrip() + "\n...")
@@ -1508,7 +1525,7 @@ class ABCDAgent(AbstractTodAgent):
                         | _tokenize_for_lookup(section["body"][:1200])
                     )
                 ),
-                "truncated": False,
+                "truncated": section_truncated,
             })
             used_chars += len(block)
 
@@ -2229,6 +2246,7 @@ def summarize_action_selection_runtime(
                 gold_by_turn[(convo_id, turn_index)] = str(targets[2]).strip()
 
     attempted = applied = with_candidates = candidate_hits = 0
+    card_observed = card_missing = 0
     selected_correct = selected_nonempty = fallback_no_card = 0
     candidate_count = 0
     bucket_totals = {"hit": 0, "miss": 0, "empty": 0}
@@ -2254,6 +2272,9 @@ def summarize_action_selection_runtime(
 
         attempted += 1
         applied += int(bool(selection.get("two_stage_applied")))
+        if selection.get("two_stage_applied") and selection.get("selected_action_card_injected") is not None:
+            card_observed += 1
+            card_missing += int(not selection["selected_action_card_injected"])
         fallback_no_card += int(not bool(selection.get("two_stage_applied")))
         candidates = [
             str(action).strip()
@@ -2284,6 +2305,9 @@ def summarize_action_selection_runtime(
     return {
         "num_stage1_attempts": attempted,
         "num_two_stage_applied": applied,
+        "num_card_injection_observed": card_observed,
+        "num_two_stage_missing_injected_card": card_missing,
+        "two_stage_missing_card_rate": _rate(card_missing, card_observed),
         "num_fallback_no_selected_card": fallback_no_card,
         "num_nonempty_selections": selected_nonempty,
         "selection_coverage": _rate(selected_nonempty, attempted),
