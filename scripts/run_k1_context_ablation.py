@@ -12,6 +12,7 @@ import json
 import multiprocessing as mp
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import traceback
@@ -25,10 +26,11 @@ sys.path.insert(0, str(ROOT))
 
 from scripts.run_a2_abcd import _ids, _subflows
 from scripts.abcd_runtime_utils import abcd_runtime_options
-from skill_mining.k1_flatten import RESOURCE_NAMES, VERSION, digest, flatten_resources
+from skill_mining.k1_flatten import (RESOURCE_NAMES, VERSION, digest, flatten_resources,
+                                    graph_flat_progressive_resources)
 
 ARMS = ("flat_full_context", "flat_react", "ours")
-PROTOCOL = "abcd-k1-context-v1"
+PROTOCOL = "abcd-k1-context-v2"
 
 
 def read(path):
@@ -94,6 +96,7 @@ def runtime_args(args, source_config):
 def prepare(directory, output, flow):
     resources, state, config, provenance = load_source(directory, flow)
     flat = flatten_resources(resources, state)
+    progressive = graph_flat_progressive_resources(resources, flat)
     output.mkdir(parents=True, exist_ok=True)
     for name, text in flat["resources"].items():
         (output / ("flat_" + name)).write_text(text, encoding="utf-8")
@@ -101,6 +104,16 @@ def prepare(directory, output, flow):
     write(output / "flat_graph.json", flat["records"])
     write(output / "flatten_audit.json", flat["audit"])
     write(output / "source_manifest.json", provenance)
+    progressive_dir = output / "flat_react_resources"
+    progressive_dir.mkdir(parents=True, exist_ok=True)
+    for name, text in progressive["resources"].items():
+        if name == "skill.md":
+            (progressive_dir / name).write_text(text, encoding="utf-8")
+        else:
+            shutil.copyfile(directory / name, progressive_dir / name)
+    for name, text in progressive["inline_policies"].items():
+        (progressive_dir / ("inline_" + name)).write_text(text, encoding="utf-8")
+    write(progressive_dir / "projection_audit.json", progressive["audit"])
     counts = {key: len(value) for key, value in flat["records"].items()}
     print(f"{flow}: flattened {counts}; chars={len(flat['full_context'])}; "
           f"scoped-rule warnings={len(flat['audit']['warnings'])}", flush=True)
@@ -111,14 +124,26 @@ def create_agent(arm, runtime, original, flat, workflow_id=None, logger=None):
     from awm import MemoryStore, WorkflowStore
     from eval_tod.abcd.agent import ABCDAgent
     from eval_tod.abcd.k1_context_agent import K1FullContextAgent
-    selected = original if arm == "ours" else flat["resources"]
+    progressive = graph_flat_progressive_resources(original, flat) if arm == "flat_react" else None
+    selected = (original if arm == "ours" else progressive["resources"] if progressive else flat["resources"])
     workflow = WorkflowStore()
     workflow.replace(flat["full_context"] if arm == "flat_full_context" else selected["skill.md"])
     constructor = K1FullContextAgent if arm == "flat_full_context" else ABCDAgent
-    return constructor(**abcd_runtime_options(runtime), workflow=workflow, memory=MemoryStore(),
+    agent = constructor(**abcd_runtime_options(runtime), workflow=workflow, memory=MemoryStore(),
         reference_text="" if arm == "flat_full_context" else selected["reference.md"],
         action_rules_text=selected["action_rules.md"], slot_policies_text=selected["slot_policies.md"],
         workflow_id=workflow_id, response_logger=logger)
+    if progressive:
+        from eval_tod.abcd.agent import _parse_action_policy_sections
+        # Retain rules unique to original skill.md, but expose them only through
+        # the exact same bounded action-card mechanism, not as flattened cards.
+        for role, name in (("action_rule", "action_rules.md"), ("slot_policy", "slot_policies.md")):
+            for row in _parse_action_policy_sections(progressive["inline_policies"][name]):
+                card = agent.action_cards.setdefault(row["action"], {})
+                previous = card.get(role, "")
+                if row["body"] not in previous:
+                    card[role] = (previous + "\n\n" + row["body"]).strip()
+    return agent
 
 
 def target_keys(test):
@@ -202,6 +227,7 @@ def run_flow(args, flow, workflow_ids):
     if maximum is not None:
         test = test[:maximum]
     runtime = runtime_args(args, config)
+    progressive = graph_flat_progressive_resources(original, flat)
     write(output / "evaluation_scope.json", {"test_hash": digest(test), "source_manifest": provenance,
           "runtime": abcd_runtime_options(runtime), "skip_utterance_eval": args.skip_utterance_eval})
     failures = []
@@ -223,6 +249,8 @@ def run_flow(args, flow, workflow_ids):
                     "source_manifest": provenance, "test_hash": digest(test),
                     "runtime": abcd_runtime_options(runtime), "skip_utterance_eval": args.skip_utterance_eval,
                     "flat_records_hash": flat["audit"]["records_hash"]}
+        if arm == "flat_react":
+            manifest["progressive_projection_hash"] = digest(progressive["audit"])
         if (arm_dir / "result.json").is_file():
             previous = read(arm_dir / "result.json")
             replace_reused = arm == "ours" and previous.get("reused")
@@ -258,6 +286,8 @@ def run_flow(args, flow, workflow_ids):
                 flatten_records_hash=flat["audit"]["records_hash"],
                 projected_knowledge_counts={key: len(value) for key, value in flat["records"].items()},
                 flat_full_context_chars=len(flat["full_context"]) if arm == "flat_full_context" else None)
+            if arm == "flat_react":
+                result["progressive_projection"] = progressive["audit"]
             write(arm_dir / "result.json", result)
             write(arm_dir / "status.json", {"status": "complete", "manifest": manifest})
             ast = result["ast_cds"]
@@ -284,6 +314,9 @@ def aggregate(output, flows):
             path = output / flow / arm / "result.json"
             if path.is_file():
                 row = read(path)
+                if row.get("protocol") and row["protocol"] != PROTOCOL:
+                    print(f"Old protocol excluded: {path}", flush=True)
+                    continue
                 status_path = path.parent / "status.json"
                 if status_path.is_file() and read(status_path).get("status") != "complete":
                     print(f"Incomplete current attempt excluded: {path}", flush=True)

@@ -12,6 +12,7 @@ import json
 import re
 
 VERSION = "k1-flat-visible-v1"
+GRAPH_PROGRESSIVE_VERSION = "k1-graph-flat-original-resources-v1"
 RESOURCE_NAMES = ("skill.md", "reference.md", "action_rules.md", "slot_policies.md")
 FLAT_INSTRUCTION = (
     "Records below are an unordered decision graph, not a mandatory execution sequence. "
@@ -21,6 +22,91 @@ FLAT_INSTRUCTION = (
     "rules against the current dialogue. Evidence examples never supply current slot values. "
     "Record order and IDs imply no priority."
 )
+
+
+def inline_policy_resources(skill: str) -> dict[str, str]:
+    """Copy original inline policy sections, without rewording their bodies.
+
+    K1 writers may update an inline card without changing the companion file.
+    Moving it out of the always-visible skill must not erase that knowledge.
+    These sidecars supplement, rather than replace, the original resource files.
+    """
+    lines = skill.splitlines(keepends=True)
+    headings = []
+    blocks = {"action_rules.md": [], "slot_policies.md": []}
+    for index, line in enumerate(lines):
+        heading = re.match(r"^(#{1,6})\s+(.+?)\s*$", line)
+        if not heading:
+            continue
+        level, title = len(heading[1]), heading[2]
+        headings = [(n, h) for n, h in headings if n < level]
+        card = re.fullmatch(r"`([^`]+)`", title)
+        scope = " / ".join(h.lower() for _, h in headings)
+        role = "slot_policies.md" if "slot polic" in scope else "action_rules.md" if "action rules" in scope else None
+        if card and role:
+            end = index + 1
+            while end < len(lines):
+                following = re.match(r"^(#{1,6})\s+", lines[end])
+                if following and len(following[1]) <= level:
+                    break
+                if re.fullmatch(r"\s*<!--\s*(?:ACTION_RULES|SLOT_POLICIES)_END\s*-->\s*", lines[end]):
+                    break
+                end += 1
+            # Normalize only the outer heading depth for the native card parser.
+            blocks[role].append(f"#### `{card[1]}`\n" + "".join(lines[index + 1:end]))
+        headings.append((level, title))
+    return {name: "\n\n".join(parts) for name, parts in blocks.items()}
+
+
+def graph_flat_progressive_resources(original: dict[str, str], flat: dict) -> dict:
+    """Flatten the visible graph, NOT the companion action/slot/reference files.
+
+    All edge endpoints are visible. Only rules already in skill.md are copied
+    inline; reference evidence and its conditions stay in the original reference
+    resource. Inline skill cards become unrewritten supplemental card sidecars.
+    """
+    records = flat["records"]
+    lines = ["# Flat transition graph", "",
+        "Edges have no backbone/residual designation or preferred order. They describe possible "
+        "transitions, not unconditional permissions or a mandatory sequence. Apply all relevant "
+        "conditions against the current dialogue. If a condition is not shown, retrieve the "
+        "original reference resource rather than inventing one. Action definitions and ordered "
+        "slot policies remain separate resources: use the native candidate/action-card lookup "
+        "before choosing an action and binding slots. Evidence never supplies current instance values.", "",
+        "Available actions: " + ", ".join(f"`{n['action']}`" for n in records["actions"]), ""]
+    inline_edges = []
+    for edge in records["edges"]:
+        rules = [r for r in edge["rules"] if r["origin"]["file"] == "skill.md"]
+        inline_edges.append({"id": edge["id"], "source": edge["source"], "target": edge["target"], "rules": rules})
+        lines.extend([f"## EDGE {edge['id']}: {edge['source']} -> {edge['target']}", ""])
+        for rule in rules:
+            if rule.get("scope"):
+                lines.append("Scope: " + rule["scope"])
+            lines.extend([rule["text"], ""])
+        if not rules:
+            lines.extend(["No inline trigger was present in the original skill; consult reference evidence if needed.", ""])
+    inline_globals = [r for r in records["global_rules"] if r["origin"]["file"] == "skill.md"]
+    for rule in inline_globals:
+        lines.extend([f"## GLOBAL_RULE {rule['id']}", "Scope: " + rule["scope"]])
+        if rule.get("source_scope"):
+            lines.append("Source scope: " + rule["source_scope"])
+        lines.extend([rule["text"], ""])
+    resources = {**original, "skill.md": "\n".join(lines).rstrip() + "\n"}
+    inline = inline_policy_resources(original["skill.md"])
+    # DSL node attributes are visible knowledge too, even when no inline card
+    # section exists. Keep their already-projected contract in a card sidecar.
+    for node in records["actions"]:
+        contracts = [r["text"] for r in node["action_rule"]
+                     if r["origin"]["file"] == "skill.md" and r.get("scope") == "slot contract"]
+        if contracts:
+            inline["action_rules.md"] += f"\n\n#### `{node['action']}`\n" + "\n".join(contracts) + "\n"
+    return {"version": GRAPH_PROGRESSIVE_VERSION, "resources": resources, "inline_policies": inline,
+            "audit": {"version": GRAPH_PROGRESSIVE_VERSION,
+                "preserved_resource_hashes": {n: digest(original[n]) for n in RESOURCE_NAMES if n != "skill.md"},
+                "runtime_resource_hashes": {n: digest(t) for n, t in resources.items()},
+                "inline_policy_hashes": {n: digest(t) for n, t in inline.items()},
+                "inline_edge_rules": inline_edges, "inline_globals": inline_globals,
+                "note": "Only graph/skill layout is flattened. Original resource files are unchanged. Original inline policy bodies are copied into supplemental progressive-disclosure cards, not the main graph context."}}
 
 
 def digest(value) -> str:
