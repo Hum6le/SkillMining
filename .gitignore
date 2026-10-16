@@ -49,6 +49,7 @@ parse_failures/
 # External repos (clone/configure manually per README)
 /ExpeL/
 /workdoc/
+/third_party/
 
 # Papers / PDFs (local only)
 *.pdf
