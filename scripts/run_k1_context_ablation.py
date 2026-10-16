@@ -8,6 +8,7 @@ in its own process; multiple workflows shard evaluation *within* a subflow.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import multiprocessing as mp
 import os
@@ -28,9 +29,10 @@ from scripts.run_a2_abcd import _ids, _subflows
 from scripts.abcd_runtime_utils import abcd_runtime_options
 from skill_mining.k1_flatten import (RESOURCE_NAMES, VERSION, digest, flatten_resources,
                                     graph_flat_progressive_resources)
+from skill_mining.k1_resource_pool import build_resource_pool
 
 ARMS = ("flat_full_context", "flat_react", "ours")
-PROTOCOL = "abcd-k1-context-v3"
+PROTOCOL = "abcd-k1-context-v4"
 
 
 def read(path):
@@ -101,11 +103,21 @@ def runtime_args(args, source_config):
 def prepare(directory, output, flow):
     resources, state, config, provenance = load_source(directory, flow)
     flat = flatten_resources(resources, state)
-    progressive = graph_flat_progressive_resources(resources, flat)
+    pool = build_resource_pool(resources, flat)
+    flat["shared_pool"] = pool
+    progressive = pool["progressive"]
     output.mkdir(parents=True, exist_ok=True)
     for name, text in flat["resources"].items():
         (output / ("flat_" + name)).write_text(text, encoding="utf-8")
-    (output / "flat_graph.txt").write_text(flat["full_context"], encoding="utf-8")
+    (output / "flat_graph.txt").write_text(pool["full_context"], encoding="utf-8")
+    pool_dir = output / "shared_pool"
+    pool_dir.mkdir(parents=True, exist_ok=True)
+    write(pool_dir / "pool.json", pool["canonical"])
+    write(pool_dir / "manifest.json", pool["manifest"])
+    for name, key in (("main_context.md", "main_context"), ("global_constraints.md", "global_context"),
+                      ("action_cards.md", "cards_text"), ("reference_sections.md", "references_text"),
+                      ("full_context.txt", "full_context")):
+        (pool_dir / name).write_text(pool[key], encoding="utf-8")
     write(output / "flat_graph.json", flat["records"])
     write(output / "flatten_audit.json", flat["audit"])
     write(output / "source_manifest.json", provenance)
@@ -113,14 +125,14 @@ def prepare(directory, output, flow):
     progressive_dir.mkdir(parents=True, exist_ok=True)
     for name, text in progressive["resources"].items():
         if name == "skill.md":
-            (progressive_dir / name).write_text(text, encoding="utf-8")
+            (progressive_dir / name).write_text(pool["main_context"], encoding="utf-8")
         else:
             shutil.copyfile(directory / name, progressive_dir / name)
     for name, text in progressive["inline_policies"].items():
         (progressive_dir / ("inline_" + name)).write_text(text, encoding="utf-8")
     write(progressive_dir / "projection_audit.json", progressive["audit"])
     counts = {key: len(value) for key, value in flat["records"].items()}
-    print(f"{flow}: flattened {counts}; chars={len(flat['full_context'])}; "
+    print(f"{flow}: flattened {counts}; shared-pool chars={len(pool['full_context'])}; "
           f"scoped-rule warnings={len(flat['audit']['warnings'])}", flush=True)
     return resources, flat, config, provenance
 
@@ -129,25 +141,22 @@ def create_agent(arm, runtime, original, flat, workflow_id=None, logger=None):
     from awm import MemoryStore, WorkflowStore
     from eval_tod.abcd.agent import ABCDAgent
     from eval_tod.abcd.k1_context_agent import K1FullContextAgent
-    progressive = graph_flat_progressive_resources(original, flat) if arm == "flat_react" else None
-    selected = (original if arm == "ours" else progressive["resources"] if progressive else flat["resources"])
+    pool = (flat.get("shared_pool") or build_resource_pool(original, flat)) if arm != "ours" else None
+    selected = original if arm == "ours" else pool["progressive"]["resources"]
     workflow = WorkflowStore()
-    workflow.replace(flat["full_context"] if arm == "flat_full_context" else selected["skill.md"])
+    workflow.replace(pool["full_context"] if arm == "flat_full_context" else
+                     pool["main_context"] if arm == "flat_react" else original["skill.md"])
     constructor = K1FullContextAgent if arm == "flat_full_context" else ABCDAgent
     agent = constructor(**abcd_runtime_options(runtime), workflow=workflow, memory=MemoryStore(),
-        reference_text="" if arm == "flat_full_context" else selected["reference.md"],
+        reference_text=selected["reference.md"],
         action_rules_text=selected["action_rules.md"], slot_policies_text=selected["slot_policies.md"],
         workflow_id=workflow_id, response_logger=logger)
-    if progressive:
-        from eval_tod.abcd.agent import _parse_action_policy_sections
-        # Retain rules unique to original skill.md, but expose them only through
-        # the exact same bounded action-card mechanism, not as flattened cards.
-        for role, name in (("action_rule", "action_rules.md"), ("slot_policy", "slot_policies.md")):
-            for row in _parse_action_policy_sections(progressive["inline_policies"][name]):
-                card = agent.action_cards.setdefault(row["action"], {})
-                previous = card.get(role, "")
-                if row["body"] not in previous:
-                    card[role] = (previous + "\n\n" + row["body"]).strip()
+    if pool:
+        agent.action_cards = copy.deepcopy(pool["action_cards"])
+        agent.reference_sections = copy.deepcopy(pool["reference_sections"])
+        agent.resource_pool_card_ids = dict(pool["action_card_ids"])
+        agent.resource_pool_hash = pool["manifest"]["pool_hash"]
+        agent.resource_pool_manifest = copy.deepcopy(pool["manifest"])
     return agent
 
 
@@ -234,6 +243,7 @@ def run_flow(args, flow, workflow_ids):
         test = test[:maximum]
     runtime = runtime_args(args, config)
     progressive = graph_flat_progressive_resources(original, flat)
+    pool = flat["shared_pool"]
     write(output / "evaluation_scope.json", {"test_hash": digest(test), "source_manifest": provenance,
           "runtime": abcd_runtime_options(runtime), "skip_utterance_eval": args.skip_utterance_eval})
     failures = []
@@ -257,6 +267,8 @@ def run_flow(args, flow, workflow_ids):
                     "flat_records_hash": flat["audit"]["records_hash"]}
         if arm == "flat_react":
             manifest["progressive_projection_hash"] = digest(progressive["audit"])
+        if arm != "ours":
+            manifest["shared_resource_pool_hash"] = pool["manifest"]["pool_hash"]
         if (arm_dir / "result.json").is_file():
             previous = read(arm_dir / "result.json")
             replace_reused = arm == "ours" and previous.get("reused")
@@ -292,7 +304,8 @@ def run_flow(args, flow, workflow_ids):
                 llm_usage={"testing": testing, "note": "New evaluation cost only; shared K1 training cost not charged again."},
                 flatten_records_hash=flat["audit"]["records_hash"],
                 projected_knowledge_counts={key: len(value) for key, value in flat["records"].items()},
-                flat_full_context_chars=len(flat["full_context"]) if arm == "flat_full_context" else None)
+                flat_full_context_chars=len(pool["full_context"]) if arm == "flat_full_context" else None,
+                shared_resource_pool=(pool["manifest"] if arm != "ours" else None))
             if arm == "flat_react":
                 result["progressive_projection"] = progressive["audit"]
             write(arm_dir / "result.json", result)
@@ -323,6 +336,11 @@ def aggregate(output, flows):
                 row = read(path)
                 if row.get("protocol") and row["protocol"] != PROTOCOL:
                     print(f"Old protocol excluded: {path}", flush=True)
+                    continue
+                pool_path = output / flow / "shared_pool" / "manifest.json"
+                if arm != "ours" and pool_path.is_file() and (
+                        (row.get("shared_resource_pool") or {}).get("pool_hash") != read(pool_path)["pool_hash"]):
+                    print(f"Different shared pool excluded: {path}", flush=True)
                     continue
                 status_path = path.parent / "status.json"
                 if status_path.is_file() and read(status_path).get("status") != "complete":
@@ -382,7 +400,7 @@ def parser():
     p.add_argument("--reference-section-max-chars", type=int, default=0, help="0: no per-section reference character cap")
     p.add_argument("--skip-arms", default="ours", help="Default skips Ours inference; compatible existing result is reused")
     p.add_argument("--include-ours", action="store_true", help="Explicitly reevaluate organized Ours; no training")
-    p.add_argument("--prepare-only", action="store_true", help="Flatten and audit only; no llm import or API calls")
+    p.add_argument("--prepare-only", action="store_true", help="Parse, flatten and audit only; no model/API calls")
     p.add_argument("--allow-unverified-source", action="store_true")
     p.add_argument("--skip-utterance-eval", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--resume", action="store_true")
