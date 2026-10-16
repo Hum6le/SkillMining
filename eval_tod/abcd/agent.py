@@ -33,6 +33,7 @@ from .action_schema import (
     canonicalize_prediction,
     load_action_schema,
 )
+from .resource_rendering import render_action_card, render_reference_unit
 
 
 # ── Prompt templates ──────────────────────────────────────────
@@ -575,6 +576,7 @@ class ABCDAgent(AbstractTodAgent):
             "query": list(candidate_actions), "selected_actions": [],
             "max_chars": budget, "skipped_due_to_budget": [],
             "missing_actions": [a for a in candidate_actions if a not in self.action_cards],
+            "selected_unit_ids": [],
         }
         if not self.action_cards or not candidate_actions:
             return ""
@@ -585,18 +587,16 @@ class ABCDAgent(AbstractTodAgent):
         parts = ['<retrieved_action_card tool="retrieve_action_card">']
         used = len(parts[0])
         for action, card in selected:
-            blocks = [f"\n#### `{action}`"]
-            if card.get("action_rule"):
-                blocks.extend(["Action rule:", card["action_rule"]])
-            if card.get("slot_policy"):
-                blocks.extend(["Slot binding policy:", card["slot_policy"]])
-            block = "\n".join(blocks)
+            block = render_action_card(action, card)
             if budget is not None and used + len(block) > budget:
                 self._last_action_card_lookup["skipped_due_to_budget"].append(action)
                 continue
             parts.append(block)
             used += len(block)
             self._last_action_card_lookup["selected_actions"].append(action)
+            unit_id = getattr(self, "resource_pool_card_ids", {}).get(action)
+            if unit_id:
+                self._last_action_card_lookup["selected_unit_ids"].append(unit_id)
         parts.append("</retrieved_action_card>")
         return "\n".join(parts) if self._last_action_card_lookup["selected_actions"] else ""
 
@@ -1490,7 +1490,7 @@ class ABCDAgent(AbstractTodAgent):
                                  and len(snippet) > self.reference_section_max_chars)
             if section_truncated:
                 snippet = snippet[:self.reference_section_max_chars].rstrip() + "\n..."
-            block = f"\n### {display_transition}\n{snippet}"
+            block = render_reference_unit(display_transition, snippet)
             if self.reference_max_chars is not None and used_chars + len(block) > self.reference_max_chars:
                 remaining = self.reference_max_chars - used_chars
                 if remaining > 120:
@@ -1509,6 +1509,8 @@ class ABCDAgent(AbstractTodAgent):
                             )
                         ),
                         "truncated": True,
+                        "unit_id": section.get("unit_id"),
+                        "body_hash": section.get("body_hash"),
                     })
                 break
             parts.append(block)
@@ -1526,6 +1528,8 @@ class ABCDAgent(AbstractTodAgent):
                     )
                 ),
                 "truncated": section_truncated,
+                "unit_id": section.get("unit_id"),
+                "body_hash": section.get("body_hash"),
             })
             used_chars += len(block)
 
