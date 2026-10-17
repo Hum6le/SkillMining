@@ -338,6 +338,34 @@ def compute_ast_aggregate(
     return agg
 
 
+def summarize_ast_diagnostics(all_ground_truths, all_predictions):
+    """Count-based diagnostics; strict headline AST semantics are unchanged."""
+    def summarize(truths):
+        aggregate = compute_ast_aggregate(truths, all_predictions)
+        counts = {
+            "action_turns": aggregate.total_action_turns,
+            "action_correct": sum(row.action_name_correct for row in aggregate.per_dialogue),
+            "slot_correct": sum(row.slot_values_correct for row in aggregate.per_dialogue),
+            "joint_correct": sum(row.joint_correct for row in aggregate.per_dialogue),
+        }
+        return ast_diagnostic_rates(counts)
+
+    return {"all": summarize(all_ground_truths), "nonempty_gold_slots": summarize([
+        [turn for turn in dialogue if turn.turn_type == "action" and turn.slot_values]
+        for dialogue in all_ground_truths
+    ])}
+
+
+def ast_diagnostic_rates(counts):
+    """Recompute rates from summed counts, never average conditional rates."""
+    total, action = counts["action_turns"], counts["action_correct"]
+    return {**counts,
+            "joint_ast": counts["joint_correct"] / total if total else None,
+            "action_accuracy": action / total if total else None,
+            "slot_accuracy": counts["slot_correct"] / total if total else None,
+            "slot_accuracy_given_action": counts["joint_correct"] / action if action else None}
+
+
 # ══════════════════════════════════════════════════════════════════
 # CDS
 # ══════════════════════════════════════════════════════════════════

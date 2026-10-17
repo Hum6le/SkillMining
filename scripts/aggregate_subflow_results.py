@@ -267,6 +267,8 @@ def _record_from_eval(
             **{name: float(ast[name]) for name in AST_METRICS if name in ast},
         },
         "skill_usage": payload.get("skill_usage"),
+        "ast_diagnostics": payload.get("ast_diagnostics"),
+        "inference_errors": payload.get("inference_errors"),
         "llm_usage": payload.get("llm_usage"),
     }
 
@@ -389,8 +391,9 @@ def _weighted_average(records: list[dict[str, Any]]) -> dict[str, Any]:
             if values:
                 metric_values[metric] = sum(value * weight for value, weight in values) / sum(weight for _, weight in values)
         values = [
-            (r["metrics"]["ast_slot_value_given_action"], max(r.get("action_correct_turns", 0), 1))
+            (r["metrics"]["ast_slot_value_given_action"], r.get("action_correct_turns", 0))
             for r in group if "ast_slot_value_given_action" in r["metrics"]
+            and r.get("action_correct_turns", 0) > 0
         ]
         if values:
             metric_values["ast_slot_value_given_action"] = sum(
@@ -405,6 +408,20 @@ def _weighted_average(records: list[dict[str, Any]]) -> dict[str, Any]:
             "weights": weights,
             "metrics": {key: round(value, 6) for key, value in metric_values.items()},
         }
+        diagnostics = [r["ast_diagnostics"] for r in group if isinstance(r.get("ast_diagnostics"), dict)]
+        if diagnostics:
+            from eval_tod.abcd.metrics import ast_diagnostic_rates
+            result[f"{method}:{phase}"]["ast_diagnostics"] = {
+                "subflows_with_diagnostics": len(diagnostics),
+                **{subset: ast_diagnostic_rates({key: sum(d.get(subset, {}).get(key, 0) for d in diagnostics)
+                   for key in ("action_turns", "action_correct", "slot_correct", "joint_correct")})
+                   for subset in ("all", "nonempty_gold_slots")},
+            }
+        errors = [r["inference_errors"] for r in group if isinstance(r.get("inference_errors"), dict)]
+        if errors:
+            result[f"{method}:{phase}"]["inference_errors"] = {
+                key: sum(row.get(key, 0) for row in errors)
+                for key in ("target_turns_with_errors", "error_records")}
         skill_usage = [row["skill_usage"] for row in group if isinstance(row.get("skill_usage"), dict)]
         if skill_usage:
             action_turns = sum(int(item.get("action_target_turns", 0)) for item in skill_usage)

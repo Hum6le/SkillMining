@@ -702,7 +702,7 @@ def evaluate_agent_on_subflow(
         turn_results_to_abcd_predictions,
     )
     from eval_tod.abcd.data import extract_ground_truth
-    from eval_tod.abcd.metrics import evaluate_abcd
+    from eval_tod.abcd.metrics import evaluate_abcd, summarize_ast_diagnostics
 
     ast_scores = compute_ast_from_turn_results(test_convs, turn_results)
     ast_mean = sum(s["ast_score"] for s in ast_scores) / max(len(ast_scores), 1)
@@ -775,6 +775,11 @@ def evaluate_agent_on_subflow(
             "num_action_correct_turns": abcd_eval.ast.action_correct_turns,
         },
         "runtime_action_selection": runtime_action_selection,
+        "ast_diagnostics": summarize_ast_diagnostics(all_gt, abcd_preds),
+        "inference_errors": {
+            "target_turns_with_errors": sum(bool(row.get("errors")) for row in turn_results),
+            "error_records": sum(len(row.get("errors", [])) for row in turn_results),
+        },
     }
     if workflow_ids:
         output["_evaluation_worker_usage"] = worker_usage

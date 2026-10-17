@@ -1575,11 +1575,8 @@ class ABCDAgent(AbstractTodAgent):
 
         return all_results
 
-    def _build_system_prompt(
-        self, scenario: dict[str, Any], context: str = "",
-        candidate_actions: list[str] | None = None,
-    ) -> str:
-        """Build system prompt with scenario context + workflow + memory."""
+    def _build_task_system_prompt(self, scenario: dict[str, Any]) -> str:
+        """Common role, task and observable scenario facts; no learned resources."""
         flow = scenario.get("flow", "unknown")
         subflow = scenario.get("subflow", "unknown")
         personal = scenario.get("personal", {})
@@ -1619,11 +1616,20 @@ class ABCDAgent(AbstractTodAgent):
                 pass
         order_info = ", ".join(ord_parts) if ord_parts else "Not available"
 
-        base = _SYSTEM_PROMPT.format(
+        return _SYSTEM_PROMPT.format(
             subflow_description=subflow_desc,
             customer_info=customer_info,
             order_info=order_info,
         )
+
+    def _build_system_prompt(
+        self, scenario: dict[str, Any], context: str = "",
+        candidate_actions: list[str] | None = None,
+    ) -> str:
+        """Build system prompt with scenario context + workflow + memory."""
+        flow = scenario.get("flow", "unknown")
+        subflow = scenario.get("subflow", "unknown")
+        base = self._build_task_system_prompt(scenario)
 
         # Keep learned resources in explicit, non-dialogue boundaries. This
         # applies equally to graph-mined skills, AWM workflows, and Trace2Skill.

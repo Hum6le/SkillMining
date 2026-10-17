@@ -15,6 +15,8 @@ cd "$ROOT_DIR"
 CONDA_ENV="skillmining310"
 HF_MIRROR="https://hf-mirror.com"
 METHOD="all"
+REACT_MAX_TEST=""
+REACT_SKIP_UTTERANCE_EVAL=0
 ONE_SUBFLOW=""
 OFFLINE_SKILL=""
 GRAPH_SEED_DIR=""
@@ -110,7 +112,9 @@ usage() {
 Usage: bash scripts/run_full_abcd_experiments.sh [options]
 
 Options:
-  --method NAME              all, awm, expel, reflexion, trace2skill, asi, skill_disco, or graph (default: all)
+  --method NAME              all, react, awm, expel, reflexion, trace2skill, asi, skill_disco, or graph (default: all)
+  --react-max-test N         ReAct smoke-test conversation cap per subflow; omitted = full test
+  --react-skip-utterance-eval ReAct: evaluate action turns only (no text metrics)
   --subflow NAME             Run one subflow instead of all complete split directories
   --offline-skill PATH       Trace2Skill seed skill file, or a directory containing
                              SKILL.md/skill.md. Only affects Trace2Skill.
@@ -190,6 +194,8 @@ EOF
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --method) METHOD="$2"; shift 2 ;;
+        --react-max-test) REACT_MAX_TEST="$2"; shift 2 ;;
+        --react-skip-utterance-eval) REACT_SKIP_UTTERANCE_EVAL=1; shift ;;
         --subflow) ONE_SUBFLOW="$2"; shift 2 ;;
         --offline-skill) OFFLINE_SKILL="$2"; shift 2 ;;
         --graph-seed-dir) GRAPH_SEED_DIR="$2"; shift 2 ;;
@@ -256,7 +262,10 @@ if [[ -n "${EVAL_WORKFLOW_IDS_RAW:-}" && -z "$ONE_SUBFLOW" ]]; then
     exit 2
 fi
 
-case "$METHOD" in all|awm|expel|reflexion|trace2skill|asi|skill_disco|graph) ;; *) echo "Invalid --method: $METHOD" >&2; exit 2 ;; esac
+case "$METHOD" in all|react|awm|expel|reflexion|trace2skill|asi|skill_disco|graph) ;; *) echo "Invalid --method: $METHOD" >&2; exit 2 ;; esac
+if [[ -n "$REACT_MAX_TEST" && ! "$REACT_MAX_TEST" =~ ^[1-9][0-9]*$ ]]; then
+    echo "--react-max-test must be positive" >&2; exit 2
+fi
 case "$AWM_INDUCTION_MODE" in online|offline) ;; *) echo "Invalid --awm-induction-mode: $AWM_INDUCTION_MODE" >&2; exit 2 ;; esac
 case "$GRAPH_MINING_METHOD" in legacy|sequence|backbone|backbone_coverage|trace_cover|observable_trace_cover|structural_trace_cover|motif_trace_cover|heuristics|semantic_router) ;; *) echo "Invalid --graph-mining-method: $GRAPH_MINING_METHOD" >&2; exit 2 ;; esac
 case "$BACKBONE_COMPILER" in organized|unordered|compare) ;; *) echo "Invalid --backbone-compiler: $BACKBONE_COMPILER" >&2; exit 2 ;; esac
@@ -550,7 +559,9 @@ PY
 run_or_resume_task() {
     local worker_index="$1" workflow_id="$2" method_name="$3" subflow="$4"
     shift 4
-    if [[ -n "$RESUME_RUN" ]] && task_is_complete "$method_name" "$subflow"; then
+    # ReAct validates its own prompt/schema/test-scope manifest before skipping.
+    # Summary existence alone must not reuse a smoke run as a full evaluation.
+    if [[ "$method_name" != "react" && -n "$RESUME_RUN" ]] && task_is_complete "$method_name" "$subflow"; then
         echo "SKIP completed: worker=$worker_index method=$method_name subflow=$subflow"
         return 0
     fi
@@ -579,6 +590,15 @@ run_worker() {
     mapfile -t assigned < <(worker_subflows "$worker_index")
     for subflow in "${assigned[@]}"; do
         [[ -n "$subflow" ]] || continue
+        if [[ "$METHOD" == "all" || "$METHOD" == "react" ]]; then
+            react_args=(scripts/run_react_abcd.py --subflow "$subflow")
+            [[ -n "$REACT_MAX_TEST" ]] && react_args+=(--max-test "$REACT_MAX_TEST")
+            [[ "$REACT_SKIP_UTTERANCE_EVAL" -eq 1 ]] && react_args+=(--skip-utterance-eval)
+            [[ -n "$EVAL_WORKFLOW_IDS_RAW" ]] && react_args+=(--eval-workflow-ids "$EVAL_WORKFLOW_IDS_RAW")
+            [[ -n "$RESUME_RUN" ]] && react_args+=(--resume)
+            run_or_resume_task "$worker_index" "$workflow_id" react "$subflow" "${react_args[@]}" || {
+                echo "react:$subflow" >> "$failed_path"; [[ "$CONTINUE_ON_ERROR" -eq 0 ]] && return 1; }
+        fi
         if [[ "$METHOD" == "all" || "$METHOD" == "awm" ]]; then
             awm_extra_args=()
             [[ -n "$EVAL_WORKFLOW_IDS_RAW" ]] && awm_extra_args+=(--skip-final-test)
@@ -783,6 +803,7 @@ aggregate_method() {
     fi
 }
 [[ "$METHOD" == "all" || "$METHOD" == "awm" ]] && aggregate_method awm
+[[ "$METHOD" == "all" || "$METHOD" == "react" ]] && aggregate_method react
 [[ "$METHOD" == "all" || "$METHOD" == "expel" ]] && aggregate_method expel
 [[ "$METHOD" == "all" || "$METHOD" == "reflexion" ]] && aggregate_method reflexion
 [[ "$METHOD" == "all" || "$METHOD" == "trace2skill" ]] && aggregate_method trace2skill
