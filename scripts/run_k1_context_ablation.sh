@@ -26,4 +26,4 @@ if [[ -n "$CONDA_ENV" ]]; then
     conda activate "$CONDA_ENV"
 fi
 export PYTHONUNBUFFERED=1
-exec "$PYTHON_BIN" "$SCRIPT_DIR/run_k1_context_ablation.py" "$@"
+exec "$PYTHON_BIN" "$SCRIPT_DIR/${K1_ENTRYPOINT-run_k1_context_ablation.py}" "$@"

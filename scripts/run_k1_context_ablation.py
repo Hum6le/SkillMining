@@ -218,7 +218,12 @@ def reuse_ours(directory, test, runtime, provenance, skip_utterance_eval=True):
     return reused, "source result reused; no Ours inference calls (historical resource hashes unverified)"
 
 
-def run_flow(args, flow, workflow_ids):
+# Optional profiles reuse this runner without changing the historical K1
+# context defaults. The profile supplies renderers, arm names and its own
+# subprocess entrypoint; no global monkeypatching or duplicated evaluator.
+def run_flow(args, flow, workflow_ids, profile=None):
+    arms = profile.arms(args) if profile else ARMS
+    protocol = profile.protocol if profile else PROTOCOL
     directory = source_directory(args, flow)
     output = Path(args.output_dir) / flow
     # Protect user/source artifacts, including ancestor/descendant overlap.
@@ -227,7 +232,8 @@ def run_flow(args, flow, workflow_ids):
     os.environ["ABCD_OUTPUT_DIR"] = str(output / "eval_aux")
     if workflow_ids:
         os.environ["SKILLMINING_WORKFLOW_ID"] = workflow_ids[0]
-    original, flat, config, provenance = prepare(directory, output, flow)
+    original, flat, config, provenance = (profile.prepare(args, directory, output, flow) if profile else
+                                          prepare(directory, output, flow))
     if args.prepare_only:
         return
     if not provenance["completion_verified"] and not args.allow_unverified_source:
@@ -247,7 +253,7 @@ def run_flow(args, flow, workflow_ids):
     write(output / "evaluation_scope.json", {"test_hash": digest(test), "source_manifest": provenance,
           "runtime": abcd_runtime_options(runtime), "skip_utterance_eval": args.skip_utterance_eval})
     failures = []
-    for arm in ARMS:
+    for arm in arms:
         arm_dir = output / arm
         if arm in args.skip_arms:
             if arm == "ours":
@@ -261,7 +267,7 @@ def run_flow(args, flow, workflow_ids):
                     write(arm_dir / "status.json", {"status": "complete", "reused": True})
                 print(f"{flow}/ours: {reason}", flush=True)
             continue
-        manifest = {"protocol": PROTOCOL, "flatten_version": VERSION, "arm": arm,
+        manifest = {"protocol": protocol, "flatten_version": VERSION, "arm": arm,
                     "source_manifest": provenance, "test_hash": digest(test),
                     "runtime": abcd_runtime_options(runtime), "skip_utterance_eval": args.skip_utterance_eval,
                     "flat_records_hash": flat["audit"]["records_hash"]}
@@ -269,14 +275,20 @@ def run_flow(args, flow, workflow_ids):
             manifest["progressive_projection_hash"] = digest(progressive["audit"])
         if arm != "ours":
             manifest["shared_resource_pool_hash"] = pool["manifest"]["pool_hash"]
+        if profile:
+            manifest["organization"] = flat["organization_variants"][arm]["metadata"]
         if (arm_dir / "result.json").is_file():
             previous = read(arm_dir / "result.json")
             replace_reused = arm == "ours" and previous.get("reused")
             if replace_reused:
                 write(arm_dir / "source_reused_result.json", previous)
-            elif args.resume and (arm_dir / "manifest.json").is_file() and read(arm_dir / "manifest.json") == manifest:
-                print(f"{flow}/{arm}: completed result reused", flush=True)
-                continue
+            elif (args.resume and (arm_dir / "manifest.json").is_file()
+                  and read(arm_dir / "manifest.json") == manifest):
+                if (not (arm_dir / "status.json").is_file()
+                        or read(arm_dir / "status.json").get("status") == "complete"):
+                    print(f"{flow}/{arm}: completed result reused", flush=True)
+                    continue
+                print(f"{flow}/{arm}: incomplete current attempt; reevaluating", flush=True)
             else:
                 raise ValueError(f"Result already exists with missing/different manifest: {arm_dir}; use a fresh output directory")
         arm_dir.mkdir(parents=True, exist_ok=True)
@@ -285,17 +297,18 @@ def run_flow(args, flow, workflow_ids):
         attempt_dir = arm_dir / "attempts" / uuid4().hex
         attempt_dir.mkdir(parents=True)
         reset_usage()
-        agent = create_agent(arm, runtime, original, flat, workflow_ids[0] if workflow_ids else None,
-                             ResponseLogger(attempt_dir / "llm_responses"))
         parallel = workflow_ids if len(workflow_ids) > 1 and "fork" in mp.get_all_start_methods() else None
         if len(workflow_ids) > 1 and parallel is None:
             print("WARNING: no fork support; evaluation uses the first workflow serially", flush=True)
         try:
+            factory = profile.create_agent if profile else create_agent
+            agent = factory(arm, runtime, original, flat, workflow_ids[0] if workflow_ids else None,
+                            ResponseLogger(attempt_dir / "llm_responses"))
             print(f"{flow}/{arm}: frozen evaluation ({len(test)} dialogues)", flush=True)
             result = evaluate_agent_on_subflow(agent, test, arm, flow, save_dir=attempt_dir,
                 eval_workflow_ids=parallel, skip_utterance_eval=args.skip_utterance_eval)
             testing = merge_usage_summaries(get_usage(), *result.pop("_evaluation_worker_usage", []))
-            result.update(protocol=PROTOCOL, subflow=flow, arm=arm, reused=False,
+            result.update(protocol=protocol, subflow=flow, arm=arm, reused=False,
                 evaluation_test_hash=digest(test),
                 evaluation_artifacts=str(attempt_dir),
                 test_dialogues=len(test), full_test=getattr(args, "full_test", False),
@@ -308,6 +321,8 @@ def run_flow(args, flow, workflow_ids):
                 shared_resource_pool=(pool["manifest"] if arm != "ours" else None))
             if arm == "flat_react":
                 result["progressive_projection"] = progressive["audit"]
+            if profile:
+                result["organization"] = manifest["organization"]
             write(arm_dir / "result.json", result)
             write(arm_dir / "status.json", {"status": "complete", "manifest": manifest})
             ast = result["ast_cds"]
@@ -326,15 +341,17 @@ def run_flow(args, flow, workflow_ids):
         raise RuntimeError("Some evaluations failed; saved results remain available: " + ", ".join(failures))
 
 
-def aggregate(output, flows):
+def aggregate(output, flows, profile=None, args=None):
+    arms = profile.arms(args) if profile else ARMS
+    protocol = profile.protocol if profile else PROTOCOL
     rows, summary = [], {}
-    for arm in ARMS:
+    for arm in arms:
         group = []
         for flow in flows:
             path = output / flow / arm / "result.json"
             if path.is_file():
                 row = read(path)
-                if row.get("protocol") and row["protocol"] != PROTOCOL:
+                if row.get("protocol") and row["protocol"] != protocol:
                     print(f"Old protocol excluded: {path}", flush=True)
                     continue
                 pool_path = output / flow / "shared_pool" / "manifest.json"
@@ -342,6 +359,11 @@ def aggregate(output, flows):
                         (row.get("shared_resource_pool") or {}).get("pool_hash") != read(pool_path)["pool_hash"]):
                     print(f"Different shared pool excluded: {path}", flush=True)
                     continue
+                if profile:
+                    layout_path = path.parent / "resources" / "organization_manifest.json"
+                    if not layout_path.is_file() or row.get("organization") != read(layout_path):
+                        print(f"Different organization excluded: {path}", flush=True)
+                        continue
                 status_path = path.parent / "status.json"
                 if status_path.is_file() and read(status_path).get("status") != "complete":
                     print(f"Incomplete current attempt excluded: {path}", flush=True)
@@ -357,7 +379,8 @@ def aggregate(output, flows):
                 group.append(row)
                 rows.append({"subflow": flow, "arm": arm, "result": str(path), **row["ast_cds"],
                              "reused": row.get("reused", False), "reuse_audit": row.get("reuse_audit"),
-                             "source_completion_verified": row.get("source_manifest", {}).get("completion_verified")})
+                             "source_completion_verified": row.get("source_manifest", {}).get("completion_verified"),
+                             "organization": row.get("organization")})
         denom = sum(r["ast_cds"]["num_action_turns"] for r in group)
         entry = {"completed_subflows": len(group), "expected_subflows": len(flows),
                  "complete": len(group) == len(flows), "action_turns": denom}
@@ -373,7 +396,9 @@ def aggregate(output, flows):
         entry["usage_sources"] = sorted({b.get("usage_source", "unavailable") for b in buckets})
         entry["cost_note"] = "Reused Ours cost is historical, not newly incurred; missing usage is null. Text evaluation, if enabled, adds calls."
         summary[arm] = entry
-    payload = {"protocol": PROTOCOL, "aggregate": summary, "rows": rows}
+    payload = {"protocol": protocol, "aggregate": summary, "rows": rows}
+    if profile:
+        profile.finalize_aggregate(payload, output, args)
     write(output / "k1_context_aggregate.json", payload)
     print(json.dumps(summary, ensure_ascii=False, indent=2), flush=True)
     return payload
@@ -409,13 +434,19 @@ def parser():
     return p
 
 
-def main(argv=None):
+def main(argv=None, profile=None):
     p = parser()
+    if profile:
+        profile.configure_parser(p)
     args = p.parse_args(argv)
     args.skip_arms = tuple(s.strip() for s in args.skip_arms.split(",") if s.strip())
+    if profile:
+        profile.normalize_args(args, p)
+    arms = profile.arms(args) if profile else ARMS
+    protocol = profile.protocol if profile else PROTOCOL
     if args.include_ours:
         args.skip_arms = tuple(s for s in args.skip_arms if s != "ours")
-    if set(args.skip_arms) - set(ARMS) or len(set(args.skip_arms)) != len(args.skip_arms) or len(args.skip_arms) == len(ARMS):
+    if set(args.skip_arms) - set(arms) or len(set(args.skip_arms)) != len(args.skip_arms) or len(args.skip_arms) == len(arms):
         p.error("--skip-arms must be a unique subset leaving at least one arm")
     if args.k1_dir and not args.subflow:
         p.error("--k1-dir requires a single --subflow")
@@ -435,9 +466,9 @@ def main(argv=None):
         if getattr(args, key):
             setattr(args, key, str(Path(getattr(args, key)).resolve()))
     if args.worker_subflow:
-        run_flow(args, args.worker_subflow, ids)
+        run_flow(args, args.worker_subflow, ids, profile=profile)
         return 0
-    print(json.dumps({"subflows": flows, "run_arms": [a for a in ARMS if a not in args.skip_arms],
+    print(json.dumps({"subflows": flows, "run_arms": [a for a in arms if a not in args.skip_arms],
                       "prepare_only": args.prepare_only, "workflows_within_subflow": ids,
                       "online_training": False, "subflows_run_sequentially": True}, indent=2), flush=True)
     if args.dry_run:
@@ -449,7 +480,7 @@ def main(argv=None):
             p.error("Source and output roots must not overlap")
     settings = {k: v for k, v in vars(args).items() if k not in
                 {"workflow_ids", "resume", "dry_run", "worker_subflow", "prepare_only", "skip_arms", "include_ours"}}
-    settings.update(protocol=PROTOCOL)  # skip/include arms are invocation choices.
+    settings.update(protocol=protocol)  # skip/include arms are invocation choices.
     config = output / "k1_context_config.json"
     if config.is_file() and read(config) != settings:
         p.error("Output config differs; choose a new directory")
@@ -460,12 +491,12 @@ def main(argv=None):
     write(config, settings)
     failures = []
     for flow in flows:
-        command = [sys.executable, str(Path(__file__).resolve()), "--subflow", flow,
+        command = [sys.executable, str(profile.entrypoint if profile else Path(__file__).resolve()), "--subflow", flow,
                    "--worker-subflow", flow, "--output-dir", str(output),
                    "--workflow-ids", ",".join(ids), "--skip-arms", ",".join(args.skip_arms)]
         for key in ("source_root", "k1_dir", "model", "max_test", "reference_top_k",
                     "action_selection_candidate_limit", "action_card_max_chars", "reference_max_chars",
-                    "reference_section_max_chars"):
+                    "reference_section_max_chars") + (profile.extra_arguments if profile else ()):
             if getattr(args, key) is not None:
                 command += ["--" + key.replace("_", "-"), str(getattr(args, key))]
         for key in ("prepare_only", "allow_unverified_source", "resume", "full_test"):
@@ -486,7 +517,7 @@ def main(argv=None):
         else:
             print(f"DONE {flow}", flush=True)
         if not args.prepare_only:
-            aggregate(output, flows)
+            aggregate(output, flows, profile=profile, args=args)
     if args.prepare_only:
         print(f"Flat resources prepared under {output}; no model calls made", flush=True)
     else:
