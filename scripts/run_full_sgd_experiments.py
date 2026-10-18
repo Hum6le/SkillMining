@@ -26,14 +26,21 @@ from scripts.llm_usage_utils import merge_usage_summaries
 
 def _arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--method", choices=("all", "oracle", "standard", "frequency_graph", "awm", "ours"), default="all")
-    parser.add_argument("--domain", help="Run only one train-seen domain family")
+    parser.add_argument("--method", choices=("all", "oracle", "standard", "frequency_graph", "awm", "ours", "trace2skill"), default="all")
+    domain_options = parser.add_mutually_exclusive_group()
+    domain_options.add_argument("--domain", help="Run only one train-seen domain family")
+    domain_options.add_argument("--domains", help="Comma-separated train-seen domain families")
     parser.add_argument("--split", choices=("validation", "test"), default="validation")
     parser.add_argument("--splits-dir", type=Path, default=ROOT / "data/eval/sgd/splits_by_domain")
     parser.add_argument("--archive", type=Path, default=ROOT / "data/eval/sgd/data.zip")
     parser.add_argument("--output-dir", type=Path, help="New run directory")
     parser.add_argument("--resume-run", type=Path, help="Reuse a run directory and skip completed tasks")
     parser.add_argument("--model", default="deepseek-chat")
+    parser.add_argument('--execution-protocol', choices=('legacy', 'aligned'), default='legacy')
+    parser.add_argument('--eval-targets', choices=('policy', 'call'), default='policy')
+    parser.add_argument('--trace2skill-batch-dialogues', type=int, default=20)
+    parser.add_argument('--trace2skill-max-train', type=int)
+    parser.add_argument('--trace2skill-resource-root', type=Path)
     parser.add_argument("--max-dialogues", type=int)
     parser.add_argument("--awm-resource-root", type=Path,
                         help="Frozen AWM resources, with one directory per domain")
@@ -45,18 +52,22 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--parallelism", choices=("within-domain", "across-domains"), default="within-domain",
                         help="Default: serial domains with parallel cases; across-domains retains the old scheduling")
+    parser.add_argument('--domain-workers', type=int, default=1,
+                        help='Independent family jobs in within-domain mode; each has its own case pool')
     parser.add_argument("--workflow-ids", default="", help="Comma-separated API workflow IDs, one per worker")
     parser.add_argument("--stop-on-error", action="store_true")
     parser.add_argument("--dry-run", action="store_true", help="Write a load plan without model calls")
     parser.add_argument("--aggregate-only", action="store_true", help="Rebuild metric/usage totals from an existing --resume-run, without calls")
     add_ours_arguments(parser, resource_option="--ours-resource-root")
     args = parser.parse_args()
+    if args.trace2skill_batch_dialogues < 1 or (args.trace2skill_max_train is not None and args.trace2skill_max_train < 1):
+        parser.error('Trace2Skill batch and TRAIN limits must be positive')
     validate_ours_arguments(parser, args)
     if args.resume_run and args.output_dir:
         parser.error("--resume-run and --output-dir are mutually exclusive")
     if args.aggregate_only and not args.resume_run:
         parser.error("--aggregate-only requires --resume-run")
-    if args.workers < 1 or (args.max_dialogues is not None and args.max_dialogues < 1):
+    if args.workers < 1 or args.domain_workers < 1 or (args.max_dialogues is not None and args.max_dialogues < 1):
         parser.error("--workers and --max-dialogues must be positive")
     if any(value is not None and value < 1 for value in (
         args.awm_batch_size, args.awm_max_train, args.awm_max_batches,
@@ -156,14 +167,28 @@ def _aggregate(run_root: Path, tasks: list[dict]) -> dict:
 
 def _domain_command(args, task: dict, output: Path) -> list[str]:
     """Invoke the standalone runner, forwarding every method option verbatim."""
-    command = [sys.executable, str(ROOT / "scripts/run_sgd_domain_eval.py"),
-               "--domain", task["domain"], "--method", task["method"],
+    trace2skill = task['method'] == 'trace2skill'
+    entry = 'run_sgd_trace2skill_pilot.py' if trace2skill else 'run_sgd_domain_eval.py'
+    command = [sys.executable, str(ROOT / 'scripts' / entry),
+               "--domain", task["domain"],
                "--split", args.split, "--splits-dir", str(args.splits_dir.resolve()),
                "--archive", str(args.archive.resolve()), "--output-dir", str(output), "--model", args.model]
+    command += ['--execution-protocol', getattr(args, 'execution_protocol', 'legacy'),
+                '--eval-targets', getattr(args, 'eval_targets', 'policy')]
+    if not trace2skill:
+        command += ['--method', task['method']]
     if args.max_dialogues is not None:
         command += ["--max-dialogues", str(args.max_dialogues)]
     if args.parallelism == "within-domain":
-        command += ["--workers", str(args.workers), "--workflow-ids", args.workflow_ids]
+        command += ["--workers", str(args.workers)]
+        if not trace2skill or getattr(args, 'workflow_ids', ''):
+            command += ['--workflow-ids', args.workflow_ids]
+    if trace2skill:
+        command += ['--batch-dialogues', str(getattr(args, 'trace2skill_batch_dialogues', 20))]
+        if getattr(args, 'trace2skill_max_train', None):
+            command += ['--max-train-dialogues', str(args.trace2skill_max_train)]
+        if getattr(args, 'trace2skill_resource_root', None):
+            command += ['--skill-resource-dir', str(args.trace2skill_resource_root.resolve()/task['domain']/'evolved_skill')]
     if task["method"] == "awm":
         for key in ("awm_batch_size", "awm_workflow_max_chars", "awm_exemplar_max_chars", "awm_max_train", "awm_max_batches"):
             value = getattr(args, key)
@@ -199,12 +224,22 @@ def main() -> None:
         raise SystemExit(f"Missing SGD split index: {index_path}; run scripts/split_sgd_by_domain.py")
     index = json.loads(index_path.read_text(encoding="utf-8"))
     eligible = index["train_families"]
-    if args.domain and args.domain not in eligible:
-        raise SystemExit(f"Domain {args.domain!r} was not present in SGD train")
-    domains = [args.domain] if args.domain else [
-        family for family in eligible
-        if index["families"][family][args.split].get("policy_turns", 0) > 0
-    ]
+    selected = ([args.domain] if args.domain else
+                [item.strip() for item in args.domains.split(",")] if args.domains else None)
+    if selected is not None:
+        if not selected or any(not item for item in selected) or len(selected) != len(set(selected)):
+            raise SystemExit("--domains needs unique, nonempty family names")
+        unknown = [item for item in selected if item not in eligible]
+        if unknown:
+            raise SystemExit(f"Domains absent from SGD train: {unknown}")
+        unavailable = [item for item in selected
+                       if not index["families"][item][args.split].get("policy_turns", 0)]
+        if unavailable:
+            raise SystemExit(f"Domains have no {args.split} policy turns: {unavailable}")
+        domains = selected
+    else:
+        domains = [family for family in eligible
+                   if index["families"][family][args.split].get("policy_turns", 0) > 0]
     methods = ("standard", "frequency_graph") if args.method == "all" else (args.method,)
     tasks = [
         {"method": method, "domain": domain,
@@ -219,16 +254,17 @@ def main() -> None:
     ids = [part.strip() for part in args.workflow_ids.split(",") if part.strip()]
     if len(ids) != len(set(ids)):
         raise SystemExit("Workflow IDs must be unique")
-    if ids and args.workers != 1 and args.workers != len(ids):
+    from eval_tod.sgd_parallel import threaded_execution
+    if ids and not threaded_execution() and args.workers != 1 and args.workers != len(ids):
         raise SystemExit("--workers must equal the number of --workflow-ids")
-    worker_count = len(ids) if ids else args.workers
+    worker_count = args.workers if threaded_execution() else len(ids) if ids else args.workers
     args.workers = worker_count
     run_root = (args.resume_run or args.output_dir or
                 ROOT / "outputs" / f"full_sgd_{datetime.now():%Y-%m-%d_%H-%M-%S}").resolve()
     if not args.resume_run and run_root.exists() and any(run_root.iterdir()):
         raise SystemExit("Output directory is nonempty; use a new directory or --resume-run")
     run_root.mkdir(parents=True, exist_ok=True)
-    coordinator_workers = 1 if args.parallelism == "within-domain" else worker_count
+    coordinator_workers = min(args.domain_workers, max(1, len(tasks))) if args.parallelism == "within-domain" else worker_count
     assignments: list[list[dict]] = [[] for _ in range(coordinator_workers)]
     loads = [0] * coordinator_workers
     for task in sorted(tasks, key=lambda item: item["estimated_policy_turns"], reverse=True):
@@ -236,9 +272,14 @@ def main() -> None:
         assignments[worker].append(task)
         loads[worker] += task["estimated_policy_turns"]
     plan = {
-        "parallelism": args.parallelism, "case_workers": worker_count if args.parallelism == "within-domain" else 1,
+        "parallelism": args.parallelism, "domain_workers": coordinator_workers,
+        "case_workers": worker_count if args.parallelism == "within-domain" else 1,
         "run_root": str(run_root), "split": args.split, "model": args.model,
         "max_dialogues": args.max_dialogues, "tasks": tasks,
+        'execution_protocol': args.execution_protocol, 'eval_targets': args.eval_targets,
+        'trace2skill': {'batch_dialogues': args.trace2skill_batch_dialogues,
+            'max_train': args.trace2skill_max_train,
+            'resource_root': str(args.trace2skill_resource_root.resolve()) if args.trace2skill_resource_root else None},
         "awm": {
             "resource_root": str(args.awm_resource_root.resolve()) if args.awm_resource_root else None,
             "batch_size": args.awm_batch_size, "max_train": args.awm_max_train,
@@ -250,7 +291,7 @@ def main() -> None:
                  for key, value in vars(args).items() if key.startswith("ours_") or key == "seed"},
         "archive": str(args.archive.resolve()), "splits_dir": str(args.splits_dir.resolve()),
         "workers": [
-            {"worker": index, "workflow_id": ids[index] if ids else None,
+            {"worker": index, "workflow_id": ids[index % len(ids)] if ids else None,
              "case_workflow_ids": ids if args.parallelism == "within-domain" else [],
              "estimated_policy_turns": loads[index], "tasks": assigned}
             for index, assigned in enumerate(assignments)
@@ -265,6 +306,11 @@ def main() -> None:
         for key in ("split", "model", "max_dialogues", "awm", "ours", "archive", "splits_dir"):
             if previous.get(key) != plan[key]:
                 raise SystemExit(f"Resume configuration differs for {key}; use the original settings or a new output directory")
+        for key, default in [('execution_protocol', 'legacy'), ('eval_targets', 'policy')]:
+            if previous.get(key, default) != plan[key]:
+                raise SystemExit(f'Resume configuration differs for {key}')
+        if args.method == 'trace2skill' and previous.get('trace2skill') != plan['trace2skill']:
+            raise SystemExit('Resume Trace2Skill configuration differs')
         strip_commands = lambda rows: [{k: v for k, v in row.items() if k != "command"} for row in rows]
         if strip_commands(previous.get("tasks", [])) != strip_commands(plan["tasks"]):
             raise SystemExit("Resume task/data configuration differs; use original settings or a new output directory")
@@ -288,7 +334,7 @@ def main() -> None:
             command = _domain_command(args, task, output)
             env = os.environ.copy()
             if ids:
-                env["SKILLMINING_WORKFLOW_ID"] = ids[worker_index]
+                env["SKILLMINING_WORKFLOW_ID"] = ids[worker_index % len(ids)]
             env["PYTHONUNBUFFERED"] = "1"
             (output / "invocation.json").write_text(json.dumps({"command": command,
                 "workflow_id": env.get("SKILLMINING_WORKFLOW_ID"),

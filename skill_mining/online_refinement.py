@@ -2457,6 +2457,7 @@ def diagnose_rollout_batch(
     chat_fn: Any = None,
     graph_context: dict[str, Any] | None = None,
     available_resources_override: list[dict[str, Any]] | None = None,
+    trajectory_exemplar_selector: Any = None,
 ) -> dict[str, Any]:
     nodes = sorted({str(record.get("sample", {}).get(key, ""))
                     for record in records for key in ("source_action", "target_action") if record.get("sample", {}).get(key)})
@@ -2535,7 +2536,7 @@ def diagnose_rollout_batch(
                    "local_graph": local_graph, "raw_response": raw,
                    "status": "error" if error else "ok", "error": error,
                    "attempts": attempts,
-                   "trajectory_exemplars": (
+                   "trajectory_exemplars": trajectory_exemplar_selector(prompt_records) if trajectory_exemplar_selector else (
                        [item for item in prompt_records if item["action_correct"] and item["slot_exact_correct"]][:2]
                        + [item for item in prompt_records if not (
                            item["action_correct"] and item["slot_exact_correct"]
@@ -2579,6 +2580,8 @@ def reflect_batch_report_group(
     max_retries: int = 3, retry_base_delay: float = 2.0,
     prompt_template: str | None = None, chat_fn: Any = None,
     graph_context: dict[str, Any] | None = None,
+    include_trajectory_exemplars: bool = False,
+    evidence_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     reports = reports[:16]
     nodes = sorted({node for report in reports for node in
@@ -2593,9 +2596,15 @@ def reflect_batch_report_group(
         "batch_id", "summary", "root_causes", "graph_footprint", "candidate_updates",
         "candidate_skill_operations", "unresolved_questions")}
         for report in reports]
+    if include_trajectory_exemplars:
+        for item, report in zip(compact, reports):
+            item['trajectory_exemplars'] = report.get('trajectory_exemplars', [])
     prompt = (prompt_template or _GROUP_REFLECTION_PROMPT).format(skill=skill,
         local_graph=json.dumps(local_graph, ensure_ascii=False),
         batch_reports=json.dumps(compact, ensure_ascii=False, indent=2))
+    if evidence_context is not None:
+        prompt += ('\nAuthoritative TRAIN field evidence and current resources:\n'
+                   + json.dumps(evidence_context, ensure_ascii=False))
     result, raw, error, attempts = _chat_for_json_with_retries(
         [{"role": "user", "content": prompt}], model=model,
         response_logger=response_logger, call_tag="online_group_reflection",

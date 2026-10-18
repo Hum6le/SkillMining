@@ -208,11 +208,13 @@ def run_domain(args: argparse.Namespace) -> dict:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     configure_usage(args.output_dir)
     workflow_ids = [item.strip() for item in getattr(args, "workflow_ids", "").split(",") if item.strip()]
-    workers = len(workflow_ids) if workflow_ids else getattr(args, "workers", 1)
-    if workers > 1:
+    from eval_tod.sgd_parallel import threaded_execution
+    workers = (getattr(args, 'workers', 1) if threaded_execution() else
+               len(workflow_ids) if workflow_ids else getattr(args, "workers", 1))
+    if workers > 1 and not threaded_execution():
         import multiprocessing as mp
         if "fork" not in mp.get_all_start_methods():
-            raise RuntimeError("SGD within-domain workers require Linux/fork; use --workers 1 on this platform")
+            import cloudpickle  # ordered_cases already supports Windows spawn.
     if workflow_ids:
         os.environ["SKILLMINING_WORKFLOW_ID"] = workflow_ids[0]
     if args.method != "oracle":
@@ -224,16 +226,25 @@ def run_domain(args: argparse.Namespace) -> dict:
         graph = None
     with ZipFile(args.archive) as zipped:
         ontology = json.load(zipped.open("data/ontology.json"))
+    active_predictor = predict_policy
+    aligned = getattr(args, 'execution_protocol', 'legacy') == 'aligned'
+    if aligned:
+        from eval_tod.sgd_aligned import predict_policy as active_predictor, training_contract
+        ontology['_sgd_training_contract'] = training_contract(list(
+            iter_family_dialogues(args.splits_dir, args.domain, 'train')))
     awm_agent = None
     skill_agent = None
     if args.method == "awm":
         from eval_tod.sgd_agent import SGDAWMAgent
         awm_agent = SGDAWMAgent(
             family=args.domain, model=args.model, ontology=ontology,
-            predictor=predict_policy,
+            predictor=active_predictor,
             workflow_max_chars=args.awm_workflow_max_chars,
             exemplar_max_chars=args.awm_exemplar_max_chars,
         )
+        if aligned:
+            from eval_tod.sgd_aligned import TASK
+            awm_agent.induction_task_contract += '\n' + TASK
         awm_agent.parallel_workers, awm_agent.workflow_ids = workers, workflow_ids
         if args.awm_resource_dir:
             awm_agent.load(args.awm_resource_dir)
@@ -272,8 +283,13 @@ def run_domain(args: argparse.Namespace) -> dict:
         from eval_tod.sgd_skill_agent import SGDSkillAgent
         from eval_tod.sgd_standard_skill_agent import SGDStandardSkillAgent
         agent_class = SGDStandardSkillAgent if args.ours_refinement_mode == "standard" else SGDSkillAgent
+        if aligned:
+            if args.ours_refinement_mode != 'standard':
+                raise ValueError('Aligned SGD reuses the standard refinement protocol')
+            from eval_tod.sgd_aligned import SGDAlignedSkillAgent
+            agent_class = SGDAlignedSkillAgent
         skill_agent = agent_class(
-            family=args.domain, model=args.model, ontology=ontology, predictor=predict_policy,
+            family=args.domain, model=args.model, ontology=ontology, predictor=active_predictor,
             candidate_limit=args.ours_candidate_limit,
             reference_max_chars=args.ours_reference_max_chars,
             max_outgoing_edges=args.ours_max_outgoing_edges,
@@ -328,7 +344,7 @@ def run_domain(args: argparse.Namespace) -> dict:
             return awm_agent.predict(dialogue, turn_index)
         if skill_agent is not None:
             return skill_agent.predict(dialogue, turn_index)
-        return predict_policy(dialogue, turn_index, model=args.model, ontology=ontology, frequency_graph=graph)
+        return active_predictor(dialogue, turn_index, model=args.model, ontology=ontology, frequency_graph=graph)
 
     test_dialogues = []
     for dialogue in iter_family_dialogues(args.splits_dir, args.domain, args.split):
@@ -336,7 +352,9 @@ def run_domain(args: argparse.Namespace) -> dict:
             break
         test_dialogues.append(dialogue)
     dialogue_count = len(test_dialogues)
-    cases = [(d, index) for d in test_dialogues for index in d["target_indices"]["policy_turn_indices"]]
+    from eval_tod.sgd_adapter import evaluation_turn_indices, score_api_calls
+    eval_targets = getattr(args, 'eval_targets', 'policy')
+    cases = [(d, index) for d in test_dialogues for index in evaluation_turn_indices(d, eval_targets)]
     predictions = ordered_cases(predict_case, cases, workers=workers, workflow_ids=workflow_ids,
         directory=args.output_dir, phase="testing")
     with (args.output_dir / "predictions.jsonl").open("w", encoding="utf-8") as output:
@@ -369,6 +387,19 @@ def run_domain(args: argparse.Namespace) -> dict:
         "num_dialogues": dialogue_count,
         **score_policies(gold_rows, pred_rows),
     }
+    summary['evaluation_targets'] = eval_targets
+    from eval_tod.sgd_adapter import score_slot_items
+    summary['slot_item_metrics'] = score_slot_items(gold_rows, pred_rows)
+    if aligned:
+        from eval_tod.sgd_aligned import PROTOCOL
+        summary['execution_protocol'] = PROTOCOL
+        resource = args.ours_resource_dir if skill_agent is not None else getattr(args, 'awm_resource_dir', None)
+        summary['resource_training_alignment'] = ('legacy_frozen_resources_diagnostic'
+            if resource and not (resource / 'aligned_runtime_contract.json').exists()
+            else 'aligned_runtime')
+    summary['evaluation_case_ids'] = [[d['dialogue_id'], i] for d, i in cases]
+    if eval_targets == 'call':
+        summary['backend_call_metrics'] = score_api_calls(gold_rows, pred_rows)
     usage = persist_usage()
     summary["llm_usage"] = usage
     summary["usage"] = usage["testing"]["total"]
@@ -414,6 +445,10 @@ def main() -> None:
     parser.add_argument("--domain", required=True)
     parser.add_argument("--method", choices=("oracle", "standard", "frequency_graph", "awm", "ours"), required=True)
     parser.add_argument("--split", choices=("validation", "test"), default="validation")
+    parser.add_argument('--eval-targets', choices=('policy', 'call'), default='policy',
+                        help='call selects only labeled backend action turns; prior context is retained')
+    parser.add_argument('--execution-protocol', choices=('legacy', 'aligned'), default='legacy',
+                        help='aligned shares causal logged API history, schema, head selection and payload binding')
     parser.add_argument("--splits-dir", type=Path, default=Path("data/eval/sgd/splits_by_domain"))
     parser.add_argument("--archive", type=Path, default=Path("data/eval/sgd/data.zip"))
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -434,7 +469,8 @@ def main() -> None:
     workflow_ids = [item.strip() for item in args.workflow_ids.split(",") if item.strip()]
     if args.workers < 1 or len(workflow_ids) != len(set(workflow_ids)):
         parser.error("Workers must be positive and workflow IDs unique")
-    if workflow_ids and args.workers not in (1, len(workflow_ids)):
+    from eval_tod.sgd_parallel import threaded_execution
+    if workflow_ids and not threaded_execution() and args.workers not in (1, len(workflow_ids)):
         parser.error("--workers must match the number of workflow IDs")
     if args.max_dialogues is not None and args.max_dialogues < 1:
         parser.error("--max-dialogues must be positive")
@@ -469,7 +505,7 @@ def add_ours_arguments(parser, *, resource_option="--ours-resource-dir") -> None
     parser.add_argument("--ours-selection-rate", type=float, default=.30,
                         help="Prototype only; standard uses every training policy turn")
     parser.add_argument("--ours-per-transition-cap", type=int, default=3)
-    parser.add_argument("--ours-cases-per-node", type=int, default=3)
+    parser.add_argument("--ours-cases-per-node", type=int, default=4)
     parser.add_argument("--ours-compile-batch-size", type=int, default=8)
     parser.add_argument("--ours-candidate-limit", type=int, default=3)
     parser.add_argument("--ours-reference-max-chars", type=int, default=1800)

@@ -14,7 +14,7 @@ from collections import Counter
 from pathlib import Path
 
 from eval_tod.sgd_adapter import gold_policy, score_policies, slot_signature, visible_context
-from eval_tod.sgd_llm import sgd_chat_with_retry
+from eval_tod.sgd_llm import sgd_chat_with_retry, selected_payload_heads, skipped_payload_requests
 from eval_tod.sgd_skill_agent import SGDSkillAgent, policy_token, previous_node, _json_object
 from eval_tod.sgd_usage import set_phase
 from eval_tod.sgd_errors import record_error, error_summary
@@ -23,6 +23,7 @@ from skill_mining.online_refinement import (
     initialize_skill_dag, build_post_rollout_batches, group_batch_reports,
     diagnose_rollout_batch, reflect_batch_report_group,
     apply_reflection_updates_to_state, apply_dynamic_skill_operations,
+    apply_working_skill_operations,
     merge_online_skill_additions, render_online_resources,
     render_online_action_rules, render_online_slot_policies, save_skill_dag,
 )
@@ -75,6 +76,10 @@ Resource updates: {{"resource":"transition_guard|action_node|action_rule|slot_po
 "op":"upsert|delete","content":"reusable rule","status":"resolved|uncertain","rationale":"..."}}.
 Skill operations: {{"operation_id":"stable unique ID","op":"replace|insert_before|insert_after|delete",
 "match_text":"exact unique excerpt of CURRENT skill","new_text":"replacement; empty for delete","rationale":"..."}}.
+Copy match_text verbatim from current_skill, never from candidate proposals or
+external Action Cards. Prefer an action_rule/slot_policy resource upsert when
+the rule is not already inline. Preserve each ACTION_RULES and ROUTING_SECTION
+start/end marker exactly once and in order. Never insert copies of markers.
 """
 _TASK = """
 SGD actions are UNORDERED turn-level sets of (dialogue-act type, service family),
@@ -122,6 +127,13 @@ Top-level object: {{"decision":"update|no_update","summary":"synthesis",
 class SGDStandardSkillAgent(SGDSkillAgent):
     """Same standard scheduling/refinement machinery, SGD-specific targets."""
     protocol = "sgd_backbone_online_standard_v2"
+    task_prompt = _TASK
+    diagnosis_prompt = DIAGNOSIS_PROMPT
+    reflection_prompt = REFLECTION_PROMPT
+    dataset_name = "SGD"
+    selection_intents = "call, request, confirm, inform, inform_count, offer, offer_intent, notify_success, notify_failure, req_more, goodbye"
+    selection_call_rule = "At most one distinct CALL. "
+    selection_target_label = "actual service ID"
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -156,7 +168,7 @@ class SGDStandardSkillAgent(SGDSkillAgent):
 
     def _seed_skill(self):
         from skill_mining.skill_writer import _render_backbone_tree, _render_backbone_edge_table
-        rows = ["# SGD backbone skill", _TASK.strip(),
+        rows = [f"# {self.dataset_name} backbone skill", self.task_prompt.strip(),
                 "Graph order organizes knowledge; it does not constrain legal actions.",
                 "## Workflow structure", "### Backbone Tree", _render_backbone_tree(self.graph),
                 "### Backbone Edges", _render_backbone_edge_table(self.graph),
@@ -198,6 +210,10 @@ class SGDStandardSkillAgent(SGDSkillAgent):
                  "slot_policies": self.base_slot_policies}
         return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
+    def runtime_skill_text(self):
+        """Skill text presented to the policy model; subclasses may compact it."""
+        return self.working_skill
+
     def _chat(self, messages, **kwargs):
         # Explicit dependency injection: no global monkeypatch, thread leakage
         # or modification of the server's workflow-aware llm.py.
@@ -208,12 +224,12 @@ class SGDStandardSkillAgent(SGDSkillAgent):
         context = visible_context(dialogue, turn_index)[-12000:]
         resources = self.runtime_resources(dialogue, turn_index)
         nodes = {node["label"]: node for node in self.graph["nodes"]}
-        plan_prompt = ("Plan one read-only resource lookup before SGD policy selection. "
+        plan_prompt = (f"Plan one read-only resource lookup before {self.dataset_name} policy selection. "
             "Return JSON {\"query_text\":\"...\",\"candidate_actions\":[\"known node labels\"]}. "
             "Candidates are advisory, not an output constraint. No payload values yet. "
             "Keep query_text short (at most 300 characters), return at most 3 candidate labels. "
             "Do not reproduce skill text or give explanations; return only the JSON object.\n"
-            + self.working_skill + "\nDialogue so far:\n" + context)
+            + self.runtime_skill_text() + "\nDialogue so far:\n" + context)
         plan, plan_meta = self._request_validated_json(plan_prompt, dialogue, turn_index,
             stage="reference_plan", validator=self._validate_reference_plan)
         from skill_mining.online_refinement import _resource_lookup_sections
@@ -226,35 +242,46 @@ class SGDStandardSkillAgent(SGDSkillAgent):
         candidate_ids = list(dict.fromkeys([nodes[label]["id"] for label in candidates if isinstance(label, str) and label in nodes]
                                           + resources["candidate_ids"]))[:self.candidate_limit]
         by_id = {node["id"]: node for node in self.graph["nodes"]}
-        cards = []
-        for key in candidate_ids:
-            label = by_id[key]["label"]
-            rule = self.state["action_rules"].get(label, {})
-            policy = self.state["slot_policies"].get(label, {})
-            cards.append({"label": label, "heads": by_id[key]["action_heads"],
-                "rule": rule.get("rule", "") if rule.get("status") == "resolved" else self.resources["action_rules"][key],
-                "payload_policy": policy.get("policy", "") if policy.get("status") == "resolved" else self.resources["slot_policies"][key]})
+        cards = [self.action_card(by_id[key]) for key in candidate_ids]
         reference_text = json.dumps(reference, ensure_ascii=False)[:self.reference_max_chars]
-        selection_prompt = ("Select the next SGD system turn's UNORDERED action-head set. "
-            "Return JSON {\"action_heads\":[[\"intent\",\"actual service ID or empty for global act\"]]}. "
-            "Allowed intents: call, request, confirm, inform, inform_count, offer, offer_intent, "
-            "notify_success, notify_failure, req_more, goodbye. Do not bind function/slots/values yet. "
+        selection_prompt = (f"Select the next {self.dataset_name} system turn's UNORDERED action-head set. "
+            "Return JSON {\"action_heads\":[[\"intent\",\"" + self.selection_target_label
+            + " or empty for global act\"]]}. "
+            "Allowed intents: " + self.selection_intents + ". Do not bind function/slots/values yet. "
             "Compare candidate action cards by context and rules, not by ease of slot filling. "
-            "You may choose valid unlisted combinations. At most one distinct CALL. "
-            "Use lower-case intents and EXACT actual service IDs from Services below, "
-            "not the family names shown in mined cards. Global acts use an empty string.\nServices: "
+            "You may choose valid unlisted combinations. " + self.selection_call_rule +
+            "Use lower-case intents and EXACT " + self.selection_target_label + "s from Services below. "
+            "Global acts use an empty string.\nServices: "
             + json.dumps(dialogue["services"]) + "\nSkill:\n" + resources["skill_text"]
             + "\nCandidate cards:\n" + json.dumps(cards, ensure_ascii=False)
             + "\nRetrieved reference:\n" + reference_text + "\nDialogue so far:\n" + context)
         heads, selection_meta = self._select_heads(selection_prompt, dialogue, turn_index)
-        prediction, diagnostic = self.predictor(dialogue, turn_index, model=self.model,
-            ontology=self.ontology, frequency_graph=None,
-            skill_text=resources["skill_text"] + "\nRetrieved Action Cards:\n" + json.dumps(cards, ensure_ascii=False),
-            reference_text=reference_text, selected_action_heads=heads)
+        payload_skill, payload_reference, payload_metadata = self.payload_resources(
+            heads, cards, resources, reference_text)
+        with selected_payload_heads(heads):
+            prediction, diagnostic = self.predictor(dialogue, turn_index, model=self.model,
+                ontology=self.ontology, frequency_graph=None,
+                skill_text=payload_skill,
+                reference_text=payload_reference, selected_action_heads=heads)
+        diagnostic['skipped_payload_requests'] = skipped_payload_requests(heads)
         diagnostic.update(source_node=resources["source"], candidate_ids=candidate_ids,
             resource_sha256=self.resource_hash(), reference_plan=plan, retrieved_reference=reference,
             selected_action_heads=heads, action_selection=selection_meta, reference_plan_diagnostic=plan_meta)
+        diagnostic.update(payload_metadata)
         return prediction, diagnostic
+
+    def action_card(self, node):
+        key, label = node["id"], node["label"]
+        rule = self.state["action_rules"].get(label, {})
+        policy = self.state["slot_policies"].get(label, {})
+        return {"label": label, "heads": node["action_heads"],
+            "rule": rule.get("rule", "") if rule.get("status") == "resolved" else self.resources["action_rules"][key],
+            "payload_policy": policy.get("policy", "") if policy.get("status") == "resolved" else self.resources["slot_policies"][key]}
+
+    def payload_resources(self, heads, cards, resources, reference_text):
+        """Dataset hook; retain the existing SGD executor's prompt by default."""
+        return (resources["skill_text"] + "\nRetrieved Action Cards:\n" + json.dumps(cards, ensure_ascii=False),
+                reference_text, {})
 
     def _select_heads(self, prompt, dialogue, turn_index):
         return self._request_validated_json(prompt, dialogue, turn_index, stage="action_selection",
@@ -304,6 +331,18 @@ class SGDStandardSkillAgent(SGDSkillAgent):
 
     def _project_record(self, record):
         return record["sgd_evidence"]
+
+    def diagnosis_skill_text(self):
+        return self.working_skill
+
+    def diagnosis_options(self, records):
+        return {}
+
+    def reflection_options(self, reports):
+        return {}
+
+    def normalize_diagnosis(self, report):
+        return report
 
     def refine(self, dialogues, directory, *, batch_size=8, max_batches=None,
                analysis_batch_size=8, selection_rate=.30, per_transition_cap=3):
@@ -366,15 +405,15 @@ class SGDStandardSkillAgent(SGDSkillAgent):
         batches = list(enumerate(build_post_rollout_batches(records, max_batch_size=analysis_batch_size), 1))
         def diagnose(item):
             batch_index, batch = item
-            return diagnose_rollout_batch(str(batch_index), batch, self.state, self.working_skill,
+            return diagnose_rollout_batch(str(batch_index), batch, self.state, self.diagnosis_skill_text(),
                 self.model, reference=self.base_reference, action_rules=self.base_action_rules,
                 slot_policies=self.base_slot_policies, record_projector=self._project_record,
-                prompt_template=DIAGNOSIS_PROMPT, chat_fn=self._chat)
+                prompt_template=self.diagnosis_prompt, chat_fn=self._chat, **self.diagnosis_options(batch))
         diagnoses = ordered_cases(diagnose, batches, workers=self.parallel_workers,
             workflow_ids=self.workflow_ids, directory=directory, phase="online_diagnosis")
         for outcome, (batch_index, batch) in zip(diagnoses, batches):
             try:
-                report = require_value(outcome)
+                report = self.normalize_diagnosis(require_value(outcome))
                 self._write(directory / f"diagnosis_{batch_index:04d}.json", report)
                 if report["status"] == "error":
                     raise RuntimeError(f"SGD diagnosis failed: {report['error']}")
@@ -384,46 +423,7 @@ class SGDStandardSkillAgent(SGDSkillAgent):
                 continue
             reports.append(report)
         groups = group_batch_reports(reports, max_reports=16)
-        applied_ids = set(self.state.get("applied_skill_operation_ids", []))
-        set_phase("online_reflection")
-        for group_index, group in enumerate(groups, 1):
-            # Reflection groups consume earlier writes, so only independent
-            # rollout/diagnosis cases run in parallel.
-            if self.workflow_ids:
-                import os
-                os.environ["SKILLMINING_WORKFLOW_ID"] = self.workflow_ids[(group_index - 1) % len(self.workflow_ids)]
-            before = (copy.deepcopy(self.state), self.working_skill, copy.deepcopy(self.ledger), set(applied_ids))
-            try:
-                reflection = reflect_batch_report_group(group, self.state, self.working_skill,
-                    self.model, prompt_template=REFLECTION_PROMPT, chat_fn=self._chat)
-                if reflection["status"] == "error":
-                    self._write(directory / f"reflection_{group_index:04d}.json", reflection)
-                    raise RuntimeError(f"SGD reflection failed: {reflection['error']}")
-                accepted, rejected = apply_reflection_updates_to_state(self.state, reflection.get("updates", []))
-                self.working_skill, operations = apply_dynamic_skill_operations(
-                    self.working_skill, reflection.get("skill_operations", []), applied_ids)
-                failed_operations = [op for op in operations if op.get("error")]
-                if failed_operations:
-                    raise RuntimeError("SGD skill text edits failed: " + json.dumps(failed_operations, ensure_ascii=False))
-                self.state["applied_skill_operation_ids"] = sorted(applied_ids)
-                reflection.update(accepted_updates=accepted, rejected_updates=rejected,
-                                  applied_skill_operations=operations)
-                self.ledger.append({"phase": "online_reflection", "group_index": group_index,
-                                    "accepted_updates": accepted, "rejected_updates": rejected,
-                                    "skill_operations": operations})
-                self.save(directory)  # Validate/materialize before committing proposal diagnostics.
-                self._write(directory / f"reflection_{group_index:04d}.json", reflection)
-            except Exception as exc:
-                self.state, self.working_skill, self.ledger, applied_ids = before
-                failure = record_error(directory, "online_reflection", exc, group_index=group_index,
-                                       batch_ids=[r.get("batch_id") for r in group], rolled_back=True)
-                self._write(directory / f"reflection_{group_index:04d}_error.json", failure)
-                # A structural edit error cannot poison the next group. Disk
-                # write failures are also recorded; in-memory K1 stays valid.
-                try:
-                    self.save(directory)
-                except Exception as rollback_exc:
-                    record_error(directory, "checkpoint_rollback", rollback_exc, group_index=group_index)
+        self.reflect_groups(groups, directory)
         failures = error_summary(directory)
         self.state["refinement_errors"] = failures
         self.stage = "refined_with_errors" if failures["total"] else "refined"
@@ -437,6 +437,178 @@ class SGDStandardSkillAgent(SGDSkillAgent):
                    "snapshot_sha256": initial_hash, "final_sha256": self.resource_hash()}
         self._write(directory / "ours_training.json", summary)
         return summary
+
+    def reflect_groups(self, groups, directory, *, edit_attempts=3, group_indices=None):
+        """Apply sequential groups transactionally, rebasing invalid edits with feedback."""
+        indices = list(range(1, len(groups) + 1)) if group_indices is None else list(group_indices)
+        if len(indices) != len(groups) or len(set(indices)) != len(indices) or any(i < 1 for i in indices):
+            raise ValueError("Reflection group indices must be positive, unique and match groups")
+        applied_ids = set(self.state.get("applied_skill_operation_ids", []))
+        set_phase("online_reflection")
+        for group_index, group in zip(indices, groups):
+            # Reflection groups consume earlier writes, so only independent
+            # rollout/diagnosis cases run in parallel.
+            if self.workflow_ids:
+                import os
+                os.environ["SKILLMINING_WORKFLOW_ID"] = self.workflow_ids[(group_index - 1) % len(self.workflow_ids)]
+            before = (copy.deepcopy(self.state), self.working_skill, copy.deepcopy(self.ledger), set(applied_ids))
+            feedback = ""
+            for attempt in range(1, edit_attempts + 1):
+                reflection = {}
+                try:
+                    template = self.reflection_prompt
+                    if feedback:
+                        # Escape JSON braces for the template's later .format().
+                        repair = ("\nThe previous proposal was rolled back in full. Rebase on CURRENT skill. "
+                                  "Fix the edit target/marker error; preserve the intended semantic decision. "
+                                  "Use resource upserts for rules absent from current_skill. "
+                                  "Validation feedback (data):\n" + feedback)
+                        template += repair.replace("{", "{{").replace("}", "}}")
+                    reflection_group, reflection_skill = group, self.working_skill
+                    if getattr(self, "structured_reflection", False):
+                        import re
+                        template += ("\nThis runtime applies semantic resource updates only. "
+                            "Return skill_operations as an EMPTY array. Do not use the legacy "
+                            "text-edit schema (insert_after/replace, match_text, HTML markers, "
+                            "or Markdown splices). Resource op=upsert/delete remains allowed. "
+                            "Put the intended reusable prose in updates with an existing resource "
+                            "action/edge target. The compiler owns its placement in skill/card/reference. "
+                            "Unsupported new graph edges belong in reference or rejected_candidates. "
+                            "This requirement also applies when rebasing a previous rejected proposal.\n")
+                        reflection_skill = self.runtime_skill_text()
+                        reflection_group = copy.deepcopy(group)
+                        for report in reflection_group:
+                            # Retain proposed prose/rationale but remove the obsolete
+                            # editor syntax that otherwise dominates model imitation.
+                            report["unresolved_questions"] = list(report.get("unresolved_questions") or []) + [
+                                "Prior proposed rule: " + re.sub(r"<!--.*?-->", "", str(op.get("new_text", "")), flags=re.S)
+                                + " Rationale: " + str(op.get("rationale", ""))
+                                for op in report.get("candidate_skill_operations", []) if isinstance(op, dict)]
+                            report["candidate_skill_operations"] = []
+                    reflection = reflect_batch_report_group(reflection_group, self.state, reflection_skill,
+                        self.model, prompt_template=template, chat_fn=self._chat,
+                        **self.reflection_options(reflection_group))
+                    if reflection["status"] == "error":
+                        raise RuntimeError(f"SGD reflection failed: {reflection['error']}")
+                    if getattr(self, "structured_reflection", False):
+                        self._validate_structured_reflection(reflection)
+                    # Both free-text and structured reflection use the same
+                    # semantic resource writer, whose action keys are labels.
+                    # Resolve exact, unique node-ID aliases in either mode.
+                    self._canonicalize_reflection_targets(reflection)
+                    accepted, rejected = apply_reflection_updates_to_state(self.state, reflection.get("updates", []))
+                    if getattr(self, "structured_reflection", False) and rejected:
+                        raise ValueError("Invalid resource targets: " + json.dumps(rejected)
+                            + ". Unknown edges do not exist in the observed graph. Do not invent them. "
+                            "Put unsupported topology proposals in reference or rejected_candidates; "
+                            "express action-level advice as an action_rule on an existing node. "
+                            "Use exact local_graph edge_id values for routing changes.")
+                    self.working_skill, operations = apply_dynamic_skill_operations(
+                        self.working_skill, reflection.get("skill_operations", []), applied_ids)
+                    failed = [op for op in operations if op.get("error")]
+                    if failed:
+                        raise RuntimeError("SGD skill text edits failed: " + json.dumps(failed, ensure_ascii=False))
+                    visible_guards = [update for update in accepted
+                                      if update.get("resource") == "transition_guard"
+                                      and (update.get("op") == "delete" or self.state["edges"][
+                                          update["edge_id"]].get("visibility") == "skill")]
+                    if getattr(self, "structured_reflection", False):
+                        visible_guards += [dict(update, resource="action_rule") for update in accepted
+                            if update.get("resource") in {"action_rule", "action_node"}
+                            and (update.get("op") == "delete" or update.get("status") == "resolved")]
+                    self.working_skill, materialized = apply_working_skill_operations(
+                        self.working_skill, self.state, visible_guards)
+                    if any(op.get("error") for op in materialized):
+                        raise RuntimeError("Transition guard materialization failed: " + json.dumps(materialized))
+                    self.state["applied_skill_operation_ids"] = sorted(applied_ids)
+                    reflection.update(accepted_updates=accepted, rejected_updates=rejected,
+                                      applied_skill_operations=operations, materialized_guards=materialized,
+                                      edit_attempts=attempt)
+                    self.ledger.append({"phase": "online_reflection", "group_index": group_index,
+                                        "accepted_updates": accepted, "rejected_updates": rejected,
+                                        "skill_operations": operations})
+                    self.save(directory)
+
+                    self._write(directory / f"reflection_{group_index:04d}.json", reflection)
+                    print(f"Reflection group {group_index}: applied {len(accepted)} resource updates "
+                          f"after {attempt} attempt(s)", flush=True)
+                    break
+                except Exception as exc:
+                    self.state, self.working_skill, self.ledger, applied_ids = copy.deepcopy(before)
+                    feedback = str(exc)[:10000] + "\nPrevious proposal:\n" + json.dumps(
+                        {k: reflection.get(k) for k in ("updates", "skill_operations")}, ensure_ascii=False)[:12000]
+                    self._write(directory / f"reflection_{group_index:04d}_attempt_{attempt}.json",
+                                {"error": str(exc), "rolled_back": True, "proposal": reflection})
+                    if attempt < edit_attempts:
+                        continue
+                    failure = record_error(directory, "online_reflection", exc, group_index=group_index,
+                                           batch_ids=[r.get("batch_id") for r in group], rolled_back=True)
+                    self._write(directory / f"reflection_{group_index:04d}_error.json", failure)
+                    self.save(directory)
+
+    def _canonicalize_reflection_targets(self, reflection):
+        """Normalize only unique aliases of existing nodes; never create an edge."""
+        aliases = {}
+        labels = {}
+        for node in self.state.get("nodes", []):
+            node_id, label = str(node["id"]), str(node["label"])
+            labels[node_id] = label
+            variants = {node_id, label}
+            for value in list(variants):
+                prefix, sep, suffix = value.rpartition(":")
+                if suffix.startswith("policy-"):
+                    variants.add((prefix + sep if sep else "") + suffix[len("policy-"):])
+            for alias in variants:
+                aliases.setdefault(alias, set()).add(node_id)
+
+        def resolve(value):
+            value = str(value).strip()
+            matches = aliases.get(value, set())
+            return next(iter(matches)) if len(matches) == 1 else None
+
+        changes = []
+        for update in reflection.get("updates", []):
+            resource = update.get("resource")
+            if resource in {"action_rule", "slot_policy", "action_node"}:
+                original = update.get("action", "")
+                node_id = resolve(original)
+                if node_id is not None and original != labels[node_id]:
+                    update["action"] = labels[node_id]
+                    changes.append({"field": "action", "from": original, "to": labels[node_id]})
+            elif resource == "transition_guard":
+                original = str(update.get("edge_id", ""))
+                if original in self.state.get("edges", {}):
+                    continue
+                parts = original.split("=>")
+                if len(parts) != 2:
+                    continue
+                # Root sources are not action nodes, so preserve their literal ID.
+                endpoints = [resolve(value) or value.strip() for value in parts]
+                canonical = "=>".join(endpoints)
+                if canonical in self.state.get("edges", {}):
+                    update["edge_id"] = canonical
+                    changes.append({"field": "edge_id", "from": original, "to": canonical})
+        reflection["canonicalized_targets"] = changes
+
+    def _validate_structured_reflection(self, reflection):
+        """Validate semantic edits before the shared compiler owns text placement."""
+        if reflection.get("skill_operations"):
+            raise ValueError("Use resource updates with exact action/edge IDs; skill_operations must be empty")
+        for update in reflection.get("updates", []):
+            if not isinstance(update, dict):
+                raise ValueError("Each resource update must be an object")
+            resource, op = update.get("resource"), update.get("op", "upsert")
+            if resource not in {"transition_guard", "action_rule", "action_node", "slot_policy", "reference"}:
+                raise ValueError("Unknown resource")
+            if op not in {"upsert", "delete"} or (op == "delete" and resource in {"slot_policy", "reference"}):
+                raise ValueError("Unsupported resource operation")
+            if update.get("status") not in {"resolved", "uncertain"}:
+                raise ValueError("Resource status must be resolved or uncertain")
+            content = update.get("content", "")
+            if not isinstance(content, str) or (op == "upsert" and not content.strip()):
+                raise ValueError("Resource upsert requires nonempty prose")
+            if "<!--" in content or "-->" in content:
+                raise ValueError("Resource content is prose only; compiler owns all HTML markers")
 
     def _accumulate(self, records):
         labels = {node["id"]: node["label"] for node in self.graph["nodes"]}
@@ -477,13 +649,15 @@ class SGDStandardSkillAgent(SGDSkillAgent):
     def save(self, directory):
         if self.state:
             # Fail before overwriting any checkpoint with an invalid edit.
+            self._validate_skill_anchors()
             self.working_skill = merge_online_skill_additions(self.working_skill, self.state)
+            self._validate_skill_anchors()
         super().save(directory)
         if not self.state:
             return
         save_skill_dag(self.state, directory / "skill_dag_state.json")
         guards, reference = render_online_resources(self.state)
-        for name, text in {"skill.md": self.working_skill, "working_skill.md": self.working_skill,
+        for name, text in {"skill.md": self.runtime_skill_text(), "working_skill.md": self.working_skill,
                 "online_transition_guards.md": guards, "reference.md": self.base_reference + "\n" + reference,
                 "action_rules.md": self.base_action_rules + "\n" + render_online_action_rules(self.state),
                 "slot_policies.md": self.base_slot_policies + "\n" + render_online_slot_policies(self.state)}.items():
@@ -492,6 +666,14 @@ class SGDStandardSkillAgent(SGDSkillAgent):
             "family": self.family, "state": self.state, "working_skill": self.working_skill,
             "base_reference": self.base_reference, "base_action_rules": self.base_action_rules,
             "base_slot_policies": self.base_slot_policies})
+
+    def _validate_skill_anchors(self):
+        for name in ("ACTION_RULES", "ROUTING_SECTION"):
+            start, end = f"<!-- {name}_START -->", f"<!-- {name}_END -->"
+            if self.working_skill.count(start) != 1 or self.working_skill.count(end) != 1:
+                raise ValueError(f"skill has malformed {name} anchors")
+            if self.working_skill.index(start) >= self.working_skill.index(end):
+                raise ValueError(f"skill has reversed {name} anchors")
 
     def load(self, directory):
         path = directory / "sgd_standard_state.json"

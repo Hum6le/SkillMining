@@ -76,6 +76,38 @@ def gold_policy(dialogue: dict, turn_index: int) -> dict:
     return {"call": calls[0] if calls else None, "acts": canonical_acts(acts)}
 
 
+def evaluation_turn_indices(dialogue: dict, scope: str = 'policy') -> list[int]:
+    """Select labeled benchmark targets, independently of model predictions.
+
+    Prior non-CALL turns remain visible context. CALL-only selection never
+    tells the predictor the gold API method, parameters, or current response.
+    """
+    if scope not in {'policy', 'call'}:
+        raise ValueError('Evaluation scope must be policy or call')
+    indices = dialogue['target_indices']['policy_turn_indices']
+    return [index for index in indices
+            if scope == 'policy' or gold_policy(dialogue, index)['call'] is not None]
+
+
+def score_api_calls(gold: list[dict], predicted: list[dict]) -> dict:
+    """Backend-only view: action=(service, method), slots=named parameters."""
+    if len(gold) != len(predicted) or any(row['call'] is None for row in gold):
+        raise ValueError('Backend CALL scoring requires paired gold CALL targets')
+    action_correct = joint_correct = 0
+    for truth, guess in zip(gold, predicted):
+        expected, actual = truth['call'], guess['call']
+        action_ok = (not guess.get('_execution_error') and actual is not None
+            and (actual['service'], actual['method']) == (expected['service'], expected['method']))
+        action_correct += int(bool(action_ok))
+        joint_correct += int(bool(action_ok and actual == expected))
+    return {'turns': len(gold), 'action_correct': action_correct, 'joint_correct': joint_correct,
+        'api_action_exact': action_correct / len(gold) if gold else 0.0,
+        'api_slot_exact_given_action': joint_correct / action_correct if action_correct else 0.0,
+        'api_joint_ast': joint_correct / len(gold) if gold else 0.0,
+        'action_definition': 'actual service ID plus API method',
+        'slot_definition': 'complete named API parameter map; dialogue acts excluded'}
+
+
 def action_counter(policy: dict) -> Counter:
     heads = Counter({head: 1 for head in {
         (act["intent"], act["domain"]) for act in policy["acts"]
@@ -141,3 +173,50 @@ def metrics_from_counts(counts: Counter | dict) -> dict:
         "call_gate_f1": f1("call"),
         "api_joint_ast": ratio("api_joint_correct", "call_gold"),
     }
+
+
+def score_slot_items(gold: list[dict], predicted: list[dict]) -> dict:
+    """Additional named-slot diagnostics; leave strict turn scoring unchanged.
+
+    Each act's named slot/value is one item, including value-field presence.
+    Each API parameter is one item. Slotless acts and the API method are not
+    slot items. Multiplicity matters. Report both all-turn and action-correct
+    subsets, since conditional accuracy alone has a changing denominator.
+    """
+    if len(gold) != len(predicted):
+        raise ValueError('Gold and prediction counts differ')
+
+    def items(policy):
+        result = Counter((('act', a['intent'], a['domain'], a['slot']),
+                          'value' in a, a.get('value', ''))
+                         for a in policy['acts'] if a['slot'])
+        call = policy['call']
+        if call:
+            result.update((('parameter', call['service'], call['method'], key), True, value)
+                          for key, value in call['parameters'].items())
+        return result
+
+    def metrics(pairs):
+        tp = ng = np = matched_names = 0
+        for truth, guess in pairs:
+            expected, actual = items(truth), items(guess)
+            if guess.get('_execution_error'):
+                actual = Counter()
+            tp += sum((expected & actual).values())
+            ng += sum(expected.values())
+            np += sum(actual.values())
+            en, an = Counter(), Counter()
+            for (name, _, _), number in expected.items(): en[name] += number
+            for (name, _, _), number in actual.items(): an[name] += number
+            matched_names += sum((en & an).values())
+        return {'tp': tp, 'gold': ng, 'predicted': np, 'matched_slot_names': matched_names,
+            'precision': tp / np if np else 0., 'recall': tp / ng if ng else 0.,
+            'micro_f1': 2 * tp / (ng + np) if ng + np else 0.,
+            'slot_name_micro_f1': 2 * matched_names / (ng + np) if ng + np else 0.,
+            'value_exact_given_matched_slot_name': tp / matched_names if matched_names else 0.}
+    paired = list(zip(gold, predicted))
+    correct = [(g, p) for g, p in paired if not p.get('_execution_error')
+               and action_counter(g) == action_counter(p)]
+    return {'definition': 'Named act slots plus API parameters; multiset; exact strings and value presence',
+            'all_turns': metrics(paired), 'action_correct_turns': len(correct),
+            'given_correct_actions': metrics(correct)}

@@ -20,6 +20,16 @@ class SGDAWMAgent:
     The predictor is shared with the standard SGD evaluator; AWM only adds
     training-time induction and retrieved resources to its prompts.
     """
+    dataset_name = "SGD"
+    induction_task_contract = (
+        "Each turn's policy is one optional CALL(service, method, parameters) "
+        "plus an UNORDERED set of dialogue acts; never linearize simultaneous acts. "
+        "Specify when to call an API, how to bind required parameters from prior "
+        "user utterances, and what REQUEST/INFORM/OFFER/etc. act set to emit "
+        "after the observation. Generalize across service versions by using the "
+        "available schema, and never memorize concrete private values. "
+        "Do not claim a DB observation is visible before a correct API call."
+    )
 
     def __init__(
         self, *, family: str, model: str, ontology: dict, predictor: Callable,
@@ -51,16 +61,20 @@ class SGDAWMAgent:
         )
 
     @staticmethod
-    def _trajectory_row(dialogue: dict, turn_index: int, prediction: dict) -> dict:
+    def _trajectory_row(dialogue: dict, turn_index: int, prediction: dict, diagnostic: dict | None = None) -> dict:
         gold = gold_policy(dialogue, turn_index)
         exact = score_policies([gold], [prediction])["turn_joint_ast"] == 1.0
-        return {
+        row = {
             "turn_index": turn_index,
             "context": visible_context(dialogue, turn_index)[-1000:],
             "gold": gold,
             "prediction": prediction,
             "joint_correct": exact,
         }
+        if diagnostic and diagnostic.get("shared_observation") is not None:
+            row["shared_observation"] = diagnostic["shared_observation"]["observations"]
+            row["executor_protocol"] = diagnostic.get("executor_protocol")
+        return row
 
     def train_batch(
         self, dialogues: list[dict], *, batch_index: int,
@@ -82,8 +96,8 @@ class SGDAWMAgent:
         rows_by_dialogue = {d["dialogue_id"]: [] for d in dialogues}
         for outcome, (dialogue, turn_index) in zip(predictions, cases):
             try:
-                prediction, _ = require_value(outcome)
-                row = self._trajectory_row(dialogue, turn_index, prediction)
+                prediction, diagnostic = require_value(outcome)
+                row = self._trajectory_row(dialogue, turn_index, prediction, diagnostic)
             except Exception as exc:
                 record_error(trace_path.parent if trace_path else None, "train_rollout", exc,
                              dialogue_id=dialogue["dialogue_id"], turn_index=turn_index, batch_index=batch_index)
@@ -130,18 +144,12 @@ class SGDAWMAgent:
                                   for row in selected],
             })
         prompt = (
-            "You maintain an AWM workflow for SGD task-oriented dialogue. "
+            f"You maintain an AWM workflow for {self.dataset_name} task-oriented dialogue. "
             "Given a new batch of TRAINING rollouts and gold policy labels, output "
             "the COMPLETE updated workflow, not a diff. Keep valid old patterns; "
             "add missing conditional branches, refine incorrect ones, merge duplicates, "
             "and remove contradicted rules. Aim for 10-20 concise patterns.\n"
-            "Each turn's policy is one optional CALL(service, method, parameters) "
-            "plus an UNORDERED set of dialogue acts; never linearize simultaneous acts. "
-            "Specify when to call an API, how to bind required parameters from prior "
-            "user utterances, and what REQUEST/INFORM/OFFER/etc. act set to emit "
-            "after the observation. Generalize across service versions by using the "
-            "available schema, and never memorize concrete private values. "
-            "Do not claim a DB observation is visible before a correct API call.\n\n"
+            + self.induction_task_contract + "\n\n"
             "Existing workflow:\n" + (self.workflow.text or "(empty)")[:12000]
             + "\n\nNew batch (context is visible before each target turn):\n"
             + json.dumps(compact, ensure_ascii=False)[:30000]

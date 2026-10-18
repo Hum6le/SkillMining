@@ -215,6 +215,8 @@ def chat(
     client_kwargs = {"api_key": cfg["api_key"]}
     if cfg["base_url"]:
         client_kwargs["base_url"] = cfg["base_url"]
+    if os.getenv("SKILLMINING_LLM_MAX_RETRIES"):
+        client_kwargs["max_retries"] = int(os.environ["SKILLMINING_LLM_MAX_RETRIES"])
     client = OpenAI(**client_kwargs)
 
     # Build request
@@ -226,6 +228,11 @@ def chat(
     request_kwargs.update(kwargs)
     request_kwargs.pop("max_tokens", None)
     request_kwargs.pop("max_completion_tokens", None)
+    thinking = os.getenv("SKILLMINING_ENABLE_THINKING", "").strip().lower()
+    if thinking in ("true", "false") and "extra_body" not in request_kwargs:
+        request_kwargs["extra_body"] = {"enable_thinking": thinking == "true"}
+    if "timeout" not in request_kwargs and os.getenv("SKILLMINING_LLM_TIMEOUT_SECONDS"):
+        request_kwargs["timeout"] = float(os.environ["SKILLMINING_LLM_TIMEOUT_SECONDS"])
 
     # Call
     try:

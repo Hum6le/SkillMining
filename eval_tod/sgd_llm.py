@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
+from contextvars import ContextVar
 import math
 import os
 import random
@@ -11,8 +13,36 @@ import time
 
 
 log = logging.getLogger(__name__)
+_SELECTED_PAYLOAD_HEADS = ContextVar('sgd_selected_payload_heads', default=None)
 _RETRYABLE_STATUS = {429, 502, 503, 504}
 _WORKFLOW_HTTP_ERROR = re.compile(r"^Workflow HTTP error (\d{3}):")
+
+
+@contextmanager
+def selected_payload_heads(heads):
+    """Scope an already selected action set to this synchronous payload call.
+
+    None means the predictor must still make its own action decision. An empty
+    action set is a real fixed decision. The scope never consults gold labels
+    or parses dialogue/prompt text, and is reset even if grounding raises.
+    """
+    token = _SELECTED_PAYLOAD_HEADS.set(None if heads is None else tuple(tuple(head) for head in heads))
+    try:
+        yield
+    finally:
+        _SELECTED_PAYLOAD_HEADS.reset(token)
+
+
+def skipped_payload_requests(heads):
+    """Return requests whose payload is empty under the fixed action set."""
+    if heads is None:
+        return []
+    skipped = []
+    if not any(head[0] == 'call' for head in heads):
+        skipped.append('sgd_call_selection')
+    if not any(head[0] != 'call' for head in heads):
+        skipped.append('sgd_dialogue_acts')
+    return skipped
 
 
 def _http_status(error: Exception) -> int | None:
@@ -58,6 +88,14 @@ def sgd_chat_with_retry(messages, **kwargs) -> str:
     re-raises the provider error. A swallowed failure (empty reply) also
     aborts instead of becoming an apparently valid empty policy.
     """
+    # With a fixed action set, absent action kinds have no payload to bind.
+    # Return the deterministic empty payload before touching the provider or
+    # usage tracker. The caller still applies its original parsing and API
+    # observation gate. Baselines do not enter this explicit scope.
+    skipped = skipped_payload_requests(_SELECTED_PAYLOAD_HEADS.get())
+    tag = kwargs.get('call_tag', 'chat')
+    if tag in skipped:
+        return '{"call":null}' if tag == 'sgd_call_selection' else '{"acts":[]}'
     from llm import chat
     from eval_tod.sgd_usage import native_snapshot, record_attempt
 
@@ -86,9 +124,14 @@ def sgd_chat_with_retry(messages, **kwargs) -> str:
         record_attempt(before, messages, reply if isinstance(reply, str) else "",
                        tag=kwargs.get("call_tag", "chat"), success=isinstance(reply, str) and bool(reply.strip()))
         if not isinstance(reply, str) or not reply.strip():
-            raise RuntimeError(
-                "SGD LLM returned an empty or non-text response "
-                f"(tag={kwargs.get('call_tag', 'chat')}); aborting instead of scoring a failed request"
-            )
+            if attempt < attempts and os.getenv("SKILLMINING_RETRY_EMPTY_LLM") == "1":
+                wait = min(cap, delay * random.uniform(1.0, 1.25))
+                log.warning("SGD LLM returned empty/non-text response: tag=%s retry=%s/%s wait=%.2fs",
+                            kwargs.get("call_tag", "chat"), attempt + 1, attempts, wait)
+                time.sleep(wait)
+                delay = min(cap, delay * 2)
+                continue
+            raise RuntimeError("SGD LLM returned an empty or non-text response "
+                               f"(tag={kwargs.get('call_tag', 'chat')}); aborting instead of scoring a failed request")
         return reply
     raise AssertionError("Unreachable: retry loop must return or raise")

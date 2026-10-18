@@ -65,6 +65,20 @@ def _json_object(raw: str) -> dict:
 
 
 class SGDSkillAgent:
+    runtime_task_intro = (
+        "SGD backbone/residual skill: action nodes represent UNORDERED turn action sets. "
+        "Family names are templates, not literal service IDs; bind to current service schema. "
+        "Candidates and graph order are advisory: do not discard valid unlisted actions. "
+        "Use local routing rules and named-slot policies; do not copy training values.\n"
+    )
+    offline_task_intro = (
+        "Compile local SGD skill rules from TRAIN traces, without any agent rollout. "
+        "Nodes are unordered action-head bundles (intent, service FAMILY), not an ordering "
+        "of simultaneous acts. CALL function names and named arguments are payloads. "
+        "Actual service versions and legal methods must come from the runtime schema. "
+        "Infer observable routing conditions and named-slot grounding rules; "
+        "never memorize private example values or rely on future/current system utterances. "
+    )
     def __init__(self, *, family: str, model: str, ontology: dict, predictor: Callable,
                  candidate_limit: int = 3, reference_max_chars: int = 1800,
                  max_outgoing_edges: int = 3, min_branch_support: int = 2,
@@ -94,7 +108,7 @@ class SGDSkillAgent:
         self.workflow_ids = []
 
     def mine(self, dialogues: list[dict], directory: Path, *, cases_per_node: int = 3,
-             compile_batch_size: int = 8) -> None:
+             compile_batch_size: int = 8, compile_rules: bool = True) -> None:
         from skill_mining.backbone_workflow_mining import (
             mine_backbone_workflow_discriminative, mine_backbone_workflow_trace_cover,
         )
@@ -145,6 +159,8 @@ class SGDSkillAgent:
                 key = self.edge_key(edge)
                 self.resources["transition_guards"].setdefault(key, "Observed training transition; not a mandatory execution constraint.")
         self.save(directory)
+        if not compile_rules:
+            return  # Dataset compiler will populate the same native resources.
         nodes = self.graph["nodes"]
         groups = [nodes[start:start + compile_batch_size] for start in range(0, len(nodes), compile_batch_size)]
         compile_requests = []
@@ -167,12 +183,7 @@ class SGDSkillAgent:
                     "One-node offline evidence exceeds prompt budget; reduce --ours-cases-per-node"), node_ids=sorted(ids))
                 continue
             prompt = (
-                "Compile local SGD skill rules from TRAIN traces, without any agent rollout. "
-                "Nodes are unordered action-head bundles (intent, service FAMILY), not an ordering "
-                "of simultaneous acts. CALL function names and named arguments are payloads. "
-                "Actual service versions and legal methods must come from the runtime schema. "
-                "Infer observable routing conditions and named-slot grounding rules; "
-                "never memorize private example values or rely on future/current system utterances. "
+                self.offline_task_intro +
                 "Return JSON {\"updates\":[{\"resource\":\"action_rules|slot_policies|transition_guards\","
                 "\"key\":\"exact node ID or exact source => target\",\"text\":\"concise general rule\"}]}. "
                 "Only use listed node/edge IDs; unsupported distinctions should remain uncertain.\n"
@@ -239,10 +250,7 @@ class SGDSkillAgent:
         guards = [{"edge": self.edge_key(edge), "guard": self.resources["transition_guards"][self.edge_key(edge)]}
                   for edge in selected[:self.candidate_limit]]
         skill = (
-            "SGD backbone/residual skill: action nodes represent UNORDERED turn action sets. "
-            "Family names are templates, not literal service IDs; bind to current service schema. "
-            "Candidates and graph order are advisory: do not discard valid unlisted actions. "
-            "Use local routing rules and named-slot policies; do not copy training values.\n"
+            self.runtime_task_intro
             + json.dumps({"source": source, "candidate_cards": cards, "guards": guards}, ensure_ascii=False)
         )
         return {"skill_text": skill, "reference_text": json.dumps(references, ensure_ascii=False)[:self.reference_max_chars],
