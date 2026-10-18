@@ -1,0 +1,18 @@
+{
+  "qps_per_workflow": 3,
+  "rate_database": "outputs/workflow_rate.sqlite",
+  "methods": {
+    "awm": {
+      "workflow_ids": ["awm-id-1", "awm-id-2", "awm-id-3", "awm-id-4", "awm-id-5"],
+      "case_threads": 160
+    },
+    "trace2skill": {
+      "workflow_ids": ["t2-id-1", "t2-id-2", "t2-id-3", "t2-id-4", "t2-id-5"],
+      "case_threads": 160
+    },
+    "ours": {
+      "workflow_ids": ["ours-id-1", "ours-id-2", "ours-id-3", "ours-id-4", "ours-id-5"],
+      "case_threads": 160
+    }
+  }
+}
