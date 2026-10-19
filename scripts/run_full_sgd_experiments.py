@@ -20,6 +20,7 @@ if str(ROOT) in sys.path:
 sys.path.insert(0, str(ROOT))
 
 from eval_tod.sgd_adapter import metrics_from_counts
+from eval_tod.sgd_trace2skill_analysis import PROTOCOL as TRACE2SKILL_ANALYSIS_PROTOCOL
 from scripts.run_sgd_domain_eval import add_ours_arguments, validate_ours_arguments
 from scripts.llm_usage_utils import merge_usage_summaries
 
@@ -38,7 +39,7 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument("--model", default="deepseek-chat")
     parser.add_argument('--execution-protocol', choices=('legacy', 'aligned'), default='legacy')
     parser.add_argument('--eval-targets', choices=('policy', 'call'), default='policy')
-    parser.add_argument('--trace2skill-batch-dialogues', type=int, default=20)
+    parser.add_argument('--trace2skill-batch-dialogues', type=int, default=25)
     parser.add_argument('--trace2skill-max-train', type=int)
     parser.add_argument('--trace2skill-resource-root', type=Path)
     parser.add_argument("--max-dialogues", type=int)
@@ -184,7 +185,7 @@ def _domain_command(args, task: dict, output: Path) -> list[str]:
         if not trace2skill or getattr(args, 'workflow_ids', ''):
             command += ['--workflow-ids', args.workflow_ids]
     if trace2skill:
-        command += ['--batch-dialogues', str(getattr(args, 'trace2skill_batch_dialogues', 20))]
+        command += ['--batch-dialogues', str(getattr(args, 'trace2skill_batch_dialogues', 25))]
         if getattr(args, 'trace2skill_max_train', None):
             command += ['--max-train-dialogues', str(args.trace2skill_max_train)]
         if getattr(args, 'trace2skill_resource_root', None):
@@ -278,6 +279,7 @@ def main() -> None:
         "max_dialogues": args.max_dialogues, "tasks": tasks,
         'execution_protocol': args.execution_protocol, 'eval_targets': args.eval_targets,
         'trace2skill': {'batch_dialogues': args.trace2skill_batch_dialogues,
+            'analysis_protocol': TRACE2SKILL_ANALYSIS_PROTOCOL,
             'max_train': args.trace2skill_max_train,
             'resource_root': str(args.trace2skill_resource_root.resolve()) if args.trace2skill_resource_root else None},
         "awm": {

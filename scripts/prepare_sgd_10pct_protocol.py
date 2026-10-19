@@ -1,9 +1,10 @@
-"""Freeze the existing whole-dialogue 10% sample into a portable schema profile."""
+"""Freeze a whole-dialogue sample into a portable schema profile (legacy filename)."""
 import argparse
 from collections import Counter
 import gzip
 import hashlib
 import json
+import math
 from pathlib import Path
 
 
@@ -23,18 +24,21 @@ def prepare(source, output, schema_scope='seen'):
     if output.exists() and any(output.iterdir()):
         raise FileExistsError('Use a new immutable profile directory')
     original = json.loads((source/'INDEX.json').read_text(encoding='utf-8'))
-    if original.get('sample', {}).get('fraction') != .1:
-        raise ValueError('Expected an existing 10% dialogue sample')
+    fraction = original.get('sample', {}).get('fraction')
+    if (isinstance(fraction, bool) or not isinstance(fraction, (int, float))
+            or not math.isfinite(fraction) or not 0 < fraction <= 1):
+        raise ValueError('Expected an existing whole-dialogue sample with fraction in (0, 1]')
+    percentage = format(100 * fraction, '.8g').replace('.', 'p')
     output.mkdir(parents=True)
     index = {k: original[k] for k in ['source_archive', 'split_policy', 'train_families',
                                      'excluded_families', 'ontology_services', 'sample', 'counting_note']}
     index['source_archive'] = 'data/eval/sgd/data.zip'
     index['sample'] = {k: v for k, v in index['sample'].items() if k != 'source_dir'}
-    index['profile'] = {'version': 'sgd_dialogue_10pct_official_splits_v1',
+    index['profile'] = {'version': f'sgd_dialogue_{percentage}pct_official_splits_v1',
         'schema_scope': schema_scope, 'seed': original['sample']['seed'],
-        'sampling': 'Reuse original family-stratified 10% whole-dialogue IDs; no resampling or within-dialogue truncation.',
+        'sampling': f'Reuse original family-stratified {100*fraction:g}% whole-dialogue IDs; no resampling or within-dialogue truncation.',
         'schema_filter': 'Keep evaluation family views only if every target service occurs in sampled TRAIN for that family.' if schema_scope == 'seen' else 'Keep all sampled service versions; includes schema transfer.',
-        'filter_order': '10% sample first, schema filter second',
+        'filter_order': f'{100*fraction:g}% sample first, schema filter second',
         'source_index_sha256': sha(source/'INDEX.json'), 'evaluation_targets': 'policy',
         'global_act_rule': 'Retain source family-owned turns and single-family global acts; unassigned multi-family global acts remain context only.'}
     index['families'] = {}

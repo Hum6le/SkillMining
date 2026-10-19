@@ -129,7 +129,7 @@ class _EvolutionClient:
 
 
 def _evolve(records: list[dict], skill_dir: Path, output: Path, model: str,
-            workers: int, *, dataset_name='multiwoz') -> dict:
+            workers: int, *, dataset_name='multiwoz', task_contract='') -> dict:
     from skill_evolver.parallel_success_evolving_agent import (
         CombinedParallelSkillEvolver, normalize_mixed_records,
     )
@@ -138,13 +138,14 @@ def _evolve(records: list[dict], skill_dir: Path, output: Path, model: str,
     mixed = normalize_mixed_records(errors, successes)
     if not mixed:
         return {"total_llm_calls": 0, "changelog": [], "status": "no_records"}
+    task_options = {'task_name': dataset_name.upper(), 'task_contract': task_contract} if task_contract else {}
     evolver = CombinedParallelSkillEvolver(
         client=_EvolutionClient(model, f'trace2skill_{dataset_name.lower()}_evolution'), skill_dir=str(skill_dir), batch_size=8,
         merge_batch_size=5, max_workers=workers, max_merge_levels=5,
         temperature=0.3, verbose=False, dry_run=False,
         prompt_variant="generic", output_dir=output / "evolution",
         parse_failure_dir=output / "parse_failures", max_skill_lines=500,
-        skip_translation=False, patch_pipeline="json")
+        skip_translation=False, patch_pipeline="json", **task_options)
     result = evolver.run(mixed, input_mode="records")
     return {"total_llm_calls": result.get("total_llm_calls", 0),
             "changelog": result.get("changelog", []),

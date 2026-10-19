@@ -412,7 +412,9 @@ class SuccessParallelSkillEvolver(ParallelSkillEvolver):
 class CombinedParallelSkillEvolver(ParallelSkillEvolver):
     """Parallel evolver configured for mixed error and success records."""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, task_name="ABCD", task_contract="", **kwargs):
+        self.task_name = task_name
+        self.task_contract = task_contract
         super().__init__(*args, **kwargs)
         self._map_patterns_system_prompt = self._build_map_system_prompt_from_patterns()
         self._merge_system_prompt = (
@@ -430,12 +432,19 @@ class CombinedParallelSkillEvolver(ParallelSkillEvolver):
         # The upstream Trace2Skill MAP prompt is tied to spreadsheet editing.
         # Build the ABCD contract directly so irrelevant domain instructions
         # cannot compete with action/slot AST objectives.
-        return f"""You are the MAP-stage editor in a skill-evolution pipeline for an ABCD task-oriented dialogue agent.
+        evidence_policy = (self.task_contract if self.task_contract else """Verified AST evidence is authoritative for correcting the action name and the
+ordered slot list. Use it to distinguish action errors from slot errors and to
+preserve slot ordering. Generalize the rule rather than copying a private
+customer value into SKILL.md or a reference file.""")
+        diagnosis_status = ("attached observed TRAIN predictions and gold labels"
+                            if self.task_contract else "verified their AST corrections")
+        task_label = "an ABCD" if self.task_name == "ABCD" else f"a {self.task_name}"
+        return f"""You are the MAP-stage editor in a skill-evolution pipeline for {task_label} task-oriented dialogue agent.
 
 ## MAP Role
 
 The error-analysis stage has already diagnosed individual failed cases and
-verified their AST corrections. Your job is to integrate multiple analysis
+{diagnosis_status}. Your job is to integrate multiple analysis
 records into a small, coherent candidate patch. The input may also contain
 success memories. Use them to preserve and summarize successful behavior while
 resolving conflicts with failure evidence. Do not redo per-case diagnosis,
@@ -457,10 +466,7 @@ evidence and current skill supplied in the user message. Do not hard-code
 customer-specific slot values, invent hidden state, or optimize response style
 unless it directly supports the action/slot behavior described by the records.
 
-Verified AST evidence is authoritative for correcting the action name and the
-ordered slot list. Use it to distinguish action errors from slot errors and to
-preserve slot ordering. Generalize the rule rather than copying a private
-customer value into SKILL.md or a reference file.
+{evidence_policy}
 
 ## Edit Policy
 
@@ -527,6 +533,9 @@ unlinked resources. Every edit must have a concrete evidence-based rationale.
             total_batches,
             self.max_skill_lines,
             self.max_references,
+            evidence_label=("Observed TRAIN policy labels and predictions "
+                "(authoritative evidence for action heads and named payloads; "
+                "do not copy private values into the skill):" if self.task_contract else None),
         )
 
     def _build_map_user_message_from_patterns(

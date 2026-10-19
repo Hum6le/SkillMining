@@ -329,3 +329,12 @@ def _try_local_config(key: str) -> str | None:
 def clear_cache() -> None:
     """Clear the client cache (useful for testing)."""
     _CLIENT_CACHE.clear()
+
+
+# Workflow launches select this before any child imports llm. Keep one tracked
+# entry point on both machines; company config.py remains local and ignored.
+if os.getenv('SKILLMINING_LLM_BACKEND', '').strip().lower() == 'workflow':
+    from workflow_llm import (
+        chat, resolve_config, get_usage_summary, reset_usage_summary,
+        write_usage_summary, usage_scope, get_llm_config, _get_client, clear_cache,
+    )

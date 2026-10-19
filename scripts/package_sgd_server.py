@@ -20,7 +20,7 @@ def build(output, splits, llm_backend='openai'):
     output.parent.mkdir(parents=True, exist_ok=True)
     files = {Path('llm.py'), Path('requirements.txt'), Path('requirements-sgd-server.txt'),
              Path('configs/sgd_server.env.example'), Path('docs/SGD_10PCT_SERVER_PLAN.md'),
-             Path('data/eval/sgd/data.zip'), Path('llm_new.py'), Path('workflow_request_pool.py'),
+             Path('data/eval/sgd/data.zip'), Path('workflow_llm.py'), Path('workflow_request_pool.py'),
              Path('workflow_http_transport.py'),
              Path('configs/sgd_workflows.json.example'), Path('docs/SGD_WORKFLOW_PARALLEL.md')}
     files.update(Path('scripts')/name for name in SCRIPTS)
@@ -33,7 +33,7 @@ def build(output, splits, llm_backend='openai'):
     # Profile lives at a stable relative location after extraction, independent
     # of the local Windows path recorded by older source sampling scripts.
     entries = {str(p).replace('\\', '/'): ROOT/p for p in files}
-    if llm_backend == 'workflow': entries['llm.py'] = ROOT/'llm_new.py'
+    if llm_backend == 'workflow': entries['llm.py'] = ROOT/'workflow_llm.py'
     for path in splits.rglob('*'):
         if path.is_file():
             entries['data/eval/sgd/protocol_10pct_seed42_seen_schema_v1/'+str(path.relative_to(splits)).replace('\\', '/')] = path

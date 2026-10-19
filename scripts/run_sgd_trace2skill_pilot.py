@@ -9,7 +9,9 @@ from zipfile import ZipFile
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from scripts.run_multiwoz_trace2skill_pilot import _predict, _analysis_job, _evolve, _write_json
+from scripts.run_multiwoz_trace2skill_pilot import _predict, _evolve, _write_json
+from eval_tod.sgd_trace2skill_analysis import (PROTOCOL as ANALYSIS_PROTOCOL,
+    build_analysis_jobs, analyze_dialogue_job)
 from scripts.run_sgd_domain_eval import predict_policy
 from eval_tod.sgd_adapter import (gold_policy, score_policies, visible_context, iter_family_dialogues,
     evaluation_turn_indices, score_api_calls)
@@ -60,7 +62,13 @@ def run(args):
         validation = validation[:args.max_dialogues]
     output.mkdir(parents=True, exist_ok=True)
     manifest = {'protocol': 'sgd_train_seen_domain_policy_turns_v1', 'method': 'trace2skill',
-        'adapter': 'sgd_trace2skill_shared_predictor_map_reduce_apply_v1',
+        'adapter': 'sgd_trace2skill_shared_predictor_map_reduce_apply_v2',
+        'analysis_protocol': ANALYSIS_PROTOCOL,
+        'evolution_settings': {'map_batch_size': 8, 'merge_batch_size': 5,
+            'max_merge_levels': 5, 'max_skill_lines': 500, 'patch_pipeline': 'json',
+            'success_analysis_unit': 'dialogue_with_any_correct_turn',
+            'failure_analysis_unit': 'dialogue_with_any_failed_turn',
+            'analysis_batch_dialogues': 8, 'self_verifier': False},
         'model': args.model, 'domain': args.domain, 'split': args.split,
         'workers': args.workers, 'batch_dialogues': args.batch_dialogues,
         'train_dialogues': len(train), 'validation_dialogues': len(validation),
@@ -86,6 +94,12 @@ def run(args):
         ontology['_sgd_training_contract'] = training_contract(train)
         manifest['execution_protocol'] = PROTOCOL
         _write_json(output / 'data_manifest.json', manifest)
+    learning_contract = (
+        'The following task contract describes INFERENCE visibility. During this '
+        'TRAIN-only analysis/evolution, the attached gold policy labels and '
+        'prediction comparisons are permitted supervision. Never use evaluation '
+        'labels or turn-specific TRAIN values as reusable defaults.\n'
+        + (TASK if aligned else SGDAWMAgent.induction_task_contract))
     frozen = getattr(args, 'skill_resource_dir', None)
     skill_dir = frozen.resolve() if frozen else output / 'evolved_skill'
     if frozen:
@@ -95,7 +109,8 @@ def run(args):
         _write_json(output/'data_manifest.json', manifest)
     else:
         skill_dir.mkdir()
-        (skill_dir / 'SKILL.md').write_text(TASK if aligned else SEED_SKILL, encoding='utf-8')
+        (skill_dir / 'SKILL.md').write_text(
+            SEED_SKILL + ('\n## Shared executor contract\n\n' + TASK if aligned else ''), encoding='utf-8')
     batches = [] if frozen else [train[i:i + args.batch_dialogues] for i in range(0, len(train), args.batch_dialogues)]
     with (output / 'training_turns.jsonl').open('w', encoding='utf-8') as stream:
         for batch_number, batch in enumerate(batches, 1):
@@ -114,7 +129,8 @@ def run(args):
                     record_error(output, 'train_rollout', exc, dialogue_id=dialogue['dialogue_id'], turn_index=index)
                     prediction, diagnostic, correct = {'call': None, 'acts': [], '_execution_error': True}, {}, False
                 row = {'sample_id': f"{dialogue['dialogue_id']}:{index}", 'batch': batch_number,
-                    'context': visible_context(dialogue, index)[-1800:], 'gold': gold,
+                    'dialogue_id': dialogue['dialogue_id'], 'turn_index': index,
+                    'context': visible_context(dialogue, index)[-12000:], 'gold': gold,
                     'prediction': prediction, 'joint_correct': correct,
                     'api_observation': diagnostic.get('api_observation'),
                     'observation_visible': diagnostic.get('observation_visible', False)}
@@ -123,21 +139,14 @@ def run(args):
                 stream.flush()
             set_phase('trace2skill_analysis')
             skill = (skill_dir / 'SKILL.md').read_text(encoding='utf-8')
-            jobs = []
-            for kind in ['error', 'success']:
-                selected = [r for r in rows if r['joint_correct'] == (kind == 'success')]
-                for start in range(0, len(selected), 8):
-                    jobs.append((kind, batch_number * 1000 + start // 8,
-                        selected[start:start + 8], skill, output / 'analysis_raw'))
+            jobs = build_analysis_jobs(rows, batch_number, skill, output / 'analysis_raw')
             records = []
-            analyses = ordered_cases(lambda job: _analysis_job(job, args.model, dataset_name='SGD',
-                task_contract=(TASK if aligned else SGDAWMAgent.induction_task_contract)), jobs, workers=args.workers,
+            analyses = ordered_cases(lambda job: analyze_dialogue_job(job, args.model,
+                task_contract=learning_contract), jobs, workers=args.workers,
                 directory=output, phase=f'analysis_batch_{batch_number:04d}')
             for outcome, job in zip(analyses, jobs):
                 try:
-                    record = require_value(outcome)
-                    record['source_file'] = 'training_turns.jsonl'
-                    records.append(record)
+                    records.extend(require_value(outcome))
                 except Exception as exc:
                     record_error(output, 'trace2skill_analysis', exc, batch=batch_number, job=job[1])
             batch_dir = output / 'batches' / f'batch_{batch_number:04d}'
@@ -147,7 +156,8 @@ def run(args):
             before = native_snapshot()
             evolution_ok = False
             try:
-                evolved = _evolve(records, skill_dir, batch_dir, args.model, args.workers, dataset_name='sgd')
+                evolved = _evolve(records, skill_dir, batch_dir, args.model, args.workers,
+                    dataset_name='sgd', task_contract=learning_contract)
                 evolution_ok = True
             except Exception as exc:
                 record_error(output, 'trace2skill_evolution', exc, batch=batch_number)
@@ -206,7 +216,7 @@ def main():
     parser.add_argument('--execution-protocol', choices=['legacy', 'aligned'], default='legacy')
     parser.add_argument('--workers', type=int, default=4)
     parser.add_argument('--workflow-ids', default='', help='Request pool IDs in threaded workflow mode')
-    parser.add_argument('--batch-dialogues', type=int, default=20)
+    parser.add_argument('--batch-dialogues', type=int, default=25)
     parser.add_argument('--skill-resource-dir', type=Path, help='Frozen evolved skill; skip TRAIN evolution')
     parser.add_argument('--max-train-dialogues', type=int)
     parser.add_argument('--max-dialogues', type=int)

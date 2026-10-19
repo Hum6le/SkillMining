@@ -12,6 +12,7 @@ AWM/config.py
 # Local LLM routing client/config (workflow provider), not project content
 /config.py
 /llm_new.py
+/configs/sgd_workflows.json
 
 # Large data files (only keep dummy_data.json for testing)
 data/eval/multiwoz21/data.zip

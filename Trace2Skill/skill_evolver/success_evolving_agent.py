@@ -234,6 +234,7 @@ def format_mixed_records_for_prompt(
     records: list[dict],
     batch_idx: int,
     total_batches: int,
+    evidence_label: str | None = None,
 ) -> str:
     parts = [
         load_prompt_template("success_evolving_agent/combined_analysis_records_header").format(
@@ -251,7 +252,7 @@ def format_mixed_records_for_prompt(
             parts.append(f"Source File: {source_file}")
         ast_evidence = record.get("ast_evidence", [])
         if ast_evidence:
-            parts.append(
+            parts.append(evidence_label or
                 "Verified AST evidence (authoritative for exact action and "
                 "ordered-slot correction; do not copy private values into the skill):"
             )
@@ -291,6 +292,7 @@ def build_combined_user_message(
     total_batches: int,
     max_skill_lines: int,
     max_references: int,
+    evidence_label: str | None = None,
 ) -> str:
     parts: list[str] = []
     parts.append(load_prompt_template("success_evolving_agent/current_skill_folder_header"))
@@ -299,7 +301,7 @@ def build_combined_user_message(
         parts.append(f"### {path} ({n_lines} lines)")
         parts.append(f"```markdown\n{content}\n```\n")
 
-    parts.append(format_mixed_records_for_prompt(records, batch_idx, total_batches))
+    parts.append(format_mixed_records_for_prompt(records, batch_idx, total_batches, evidence_label))
     parts.append("")
     _append_size_status(parts, skill_state, max_skill_lines, max_references)
     return "\n".join(parts)

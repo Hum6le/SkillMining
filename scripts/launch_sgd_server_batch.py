@@ -51,7 +51,7 @@ def method_environment(args, method, env):
     env = env.copy()
     settings = workflow_settings(args, method)
     if settings:
-        env.update(SKILLMINING_SGD_EXECUTOR='thread',
+        env.update(SKILLMINING_LLM_BACKEND='workflow', SKILLMINING_SGD_EXECUTOR='thread',
             SKILLMINING_WORKFLOW_POOL_IDS=','.join(settings['workflow_ids']),
             SKILLMINING_WORKFLOW_ID=settings['workflow_ids'][0],
             SKILLMINING_WORKFLOW_QPS=str(settings['qps']),
@@ -192,7 +192,7 @@ def main():
         if args.resume: command += ['--resume']
         kwargs = {'creationflags': subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else {'start_new_session': True}
         with (args.output_dir/(method+'_coordinator.log')).open('ab') as stream:
-            process = subprocess.Popen(command, cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
+            process = subprocess.Popen(command, cwd=ROOT, env=method_environment(args, method, env), stdin=subprocess.DEVNULL,
                 stdout=stream, stderr=subprocess.STDOUT, **kwargs)
         launches[method] = {'pid': process.pid, 'command': command}
     atomic_json(args.output_dir/'launches.json', launches)
