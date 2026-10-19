@@ -1,5 +1,6 @@
 {
   "qps_per_workflow": 3,
+  "min_interval_seconds": 0.36,
   "rate_database": "outputs/workflow_rate.sqlite",
   "methods": {
     "awm": {

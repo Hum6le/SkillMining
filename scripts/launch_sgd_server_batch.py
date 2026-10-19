@@ -39,12 +39,17 @@ def workflow_settings(args, method):
     qps, workers = config.get('qps_per_workflow', 3), selected.get('case_threads', 160)
     if not isinstance(qps, int) or qps < 1 or not isinstance(workers, int) or workers < 2:
         raise ValueError('Workflow QPS must be positive; threaded mode needs at least two threads')
+    interval = config.get('min_interval_seconds', 1.08/qps)
+    import math
+    if (isinstance(interval, bool) or not isinstance(interval, (int, float))
+            or not math.isfinite(interval) or interval < 1.08/qps-1e-12):
+        raise ValueError('Workflow min_interval_seconds must be at least 1.08 / QPS')
     database = Path(config.get('rate_database', 'outputs/workflow_rate.sqlite'))
     if not database.is_absolute(): database = ROOT/database
     domains = selected.get('domain_workers', 1)
     if not isinstance(domains, int) or domains < 1: raise ValueError('domain_workers must be positive')
     return {'workflow_ids': ids, 'qps': qps, 'workers': workers, 'domain_workers': domains,
-            'database': str(database.resolve())}
+            'database': str(database.resolve()), 'min_interval_seconds': interval}
 
 
 def method_environment(args, method, env):
@@ -55,6 +60,7 @@ def method_environment(args, method, env):
             SKILLMINING_WORKFLOW_POOL_IDS=','.join(settings['workflow_ids']),
             SKILLMINING_WORKFLOW_ID=settings['workflow_ids'][0],
             SKILLMINING_WORKFLOW_QPS=str(settings['qps']),
+            SKILLMINING_WORKFLOW_MIN_INTERVAL_SECONDS=str(settings['min_interval_seconds']),
             SKILLMINING_WORKFLOW_RATE_DB=settings['database'])
     return env
 

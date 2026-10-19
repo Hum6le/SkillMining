@@ -16,8 +16,14 @@ if __name__ == '__main__':
     config = json.loads(args.config.read_text(encoding='utf-8'))
     database = Path(config.get('rate_database', 'outputs/workflow_rate.sqlite'))
     if not database.is_absolute(): database = Path(__file__).resolve().parent.parent/database
-    result = {}
+    if not database.is_file():
+        raise FileNotFoundError(f'No rate database at {database.resolve()}; check the running batch configuration')
+    result = {'_diagnostics': {'database': str(database.resolve()),
+        'rate_limiter_file': str(Path(sys.modules['workflow_request_pool'].__file__).resolve()),
+        'admission_clock': 'client_before_http_not_server_receive_time',
+        'note': 'Updating files or reading this status does not reload running worker processes.'}}
     for name, method in config['methods'].items():
-        pool = WorkflowRequestPool(database, method['workflow_ids'], config.get('qps_per_workflow', 3))
+        pool = WorkflowRequestPool(database, method['workflow_ids'], config.get('qps_per_workflow', 3),
+                                   min_interval_seconds=config.get('min_interval_seconds'))
         result[name] = pool.summary(args.window)
     print(json.dumps(result, indent=2, ensure_ascii=False))

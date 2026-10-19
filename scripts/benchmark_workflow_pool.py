@@ -36,9 +36,10 @@ def main():
         assert all(stamps[i+3]-stamps[i] >= 1 for i in range(len(stamps)-3))
     span = rows[-1][1]-rows[0][1]
     report = {'simulation_only': True, 'real_api_calls': 0, 'requests': args.requests,
+        'admission_policy': 'paced_per_workflow_v2',
         'case_threads': args.workers, 'simulated_transport_seconds': args.latency_seconds,
         'elapsed_seconds': round(elapsed, 3), 'rolling_3_qps_per_id_verified': True,
-        'steady_admission_qps_excluding_initial_burst': round(max(0,args.requests-15)/span,3) if span else None,
+        'steady_admission_qps_excluding_first_per_id': round(max(0,args.requests-len(pool.ids))/span,3) if span else None,
         'workflows': pool.summary()}
     (args.output_dir/'report.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
     print(json.dumps(report))
