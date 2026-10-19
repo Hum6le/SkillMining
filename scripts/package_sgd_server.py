@@ -11,7 +11,8 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ['run_full_sgd_experiments.py', 'run_sgd_domain_eval.py', 'run_sgd_trace2skill_pilot.py',
            'run_multiwoz_trace2skill_pilot.py', 'llm_usage_utils.py', 'launch_sgd_server_batch.py',
            'prepare_sgd_10pct_protocol.py', 'sample_sgd_by_domain.py', 'package_sgd_server.py',
-           'workflow_pool_status.py', 'benchmark_workflow_pool.py']
+           'workflow_pool_status.py', 'benchmark_workflow_pool.py',
+           'configure_sgd_workflow_limits.py', 'stop_sgd_server_batch.py']
 
 
 def build(output, splits, llm_backend='openai'):
@@ -22,7 +23,8 @@ def build(output, splits, llm_backend='openai'):
              Path('configs/sgd_server.env.example'), Path('docs/SGD_10PCT_SERVER_PLAN.md'),
              Path('data/eval/sgd/data.zip'), Path('workflow_llm.py'), Path('workflow_request_pool.py'),
              Path('workflow_http_transport.py'),
-             Path('configs/sgd_workflows.json.example'), Path('docs/SGD_WORKFLOW_PARALLEL.md')}
+             Path('configs/sgd_workflows.json.example'), Path('docs/SGD_WORKFLOW_PARALLEL.md'),
+             Path('docs/SGD_WORKFLOW_MODEL10.md')}
     files.update(Path('scripts')/name for name in SCRIPTS)
     for directory in ['eval_tod', 'skill_mining', 'awm', 'Trace2Skill/skill_evolver', 'Trace2Skill/src']:
         files.update(p.relative_to(ROOT) for p in (ROOT/directory).rglob('*')

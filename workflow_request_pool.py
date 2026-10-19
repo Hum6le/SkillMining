@@ -15,6 +15,7 @@ from pathlib import Path
 import sqlite3
 import threading
 import time
+import psutil
 
 _LOCAL = threading.local()
 _LOCKS = {}
@@ -23,7 +24,7 @@ _LOCKS_GUARD = threading.Lock()
 
 class WorkflowRequestPool:
     def __init__(self, database, workflow_ids, qps=3, *, clock=time.time, sleep=time.sleep,
-                 min_interval_seconds=None):
+                 min_interval_seconds=None, max_inflight=10, max_active_workflows=5):
         self.database = Path(database).resolve()
         with _LOCKS_GUARD:
             self.lock = _LOCKS.setdefault((os.getpid(), str(self.database)), threading.RLock())
@@ -37,6 +38,10 @@ class WorkflowRequestPool:
                 or not math.isfinite(interval) or interval < 1.08/qps-1e-12):
             raise ValueError('Workflow interval must be finite and at least 1.08 / QPS')
         interval = max(interval, 1.08/qps)
+        if (type(max_inflight) is not int or not 1 <= max_inflight <= 10
+                or type(max_active_workflows) is not int or not 1 <= max_active_workflows <= 5):
+            raise ValueError('Shared model limits require 1..10 inflight requests and 1..5 active workflows')
+        self.owner = (os.getpid(), psutil.Process().create_time())
         self.qps, self.clock, self.sleep = qps, clock, sleep
         self.database.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
@@ -50,13 +55,29 @@ class WorkflowRequestPool:
             db.execute('CREATE INDEX IF NOT EXISTS workflow_started ON workflow_requests(workflow, started)')
             if 'error_kind' not in {r[1] for r in db.execute('PRAGMA table_info(workflow_requests)')}:
                 db.execute('ALTER TABLE workflow_requests ADD COLUMN error_kind TEXT')
+            columns = {r[1] for r in db.execute('PRAGMA table_info(workflow_requests)')}
+            for column, kind in [('owner_pid', 'INTEGER'), ('owner_created', 'REAL')]:
+                if column not in columns:
+                    db.execute(f'ALTER TABLE workflow_requests ADD COLUMN {column} {kind}')
+            db.execute('CREATE INDEX IF NOT EXISTS workflow_status ON workflow_requests(status)')
+            db.execute('CREATE TABLE IF NOT EXISTS workflow_model_limit '
+                       '(singleton INTEGER PRIMARY KEY, max_inflight INTEGER NOT NULL, '
+                       'max_active_workflows INTEGER NOT NULL, peak_inflight INTEGER NOT NULL)')
+            db.execute('INSERT OR IGNORE INTO workflow_model_limit VALUES (1, ?, ?, 0)',
+                       (max_inflight, max_active_workflows))
+            db.execute('UPDATE workflow_model_limit SET max_inflight=min(max_inflight, ?), '
+                       'max_active_workflows=min(max_active_workflows, ?) WHERE singleton=1',
+                       (max_inflight, max_active_workflows))
             db.execute('CREATE TABLE IF NOT EXISTS workflow_pacing '
                        '(workflow TEXT PRIMARY KEY, min_interval REAL NOT NULL, '
                        'blocked_until REAL NOT NULL, last_throttled REAL, throttle_streak INTEGER NOT NULL)')
             for workflow in self.ids:
                 db.execute('INSERT OR IGNORE INTO workflow_limits VALUES (?, ?, ?)', (workflow, qps, '[]'))
-                if db.execute('SELECT qps FROM workflow_limits WHERE workflow=?', (workflow,)).fetchone()[0] != qps:
+                stored_qps = db.execute('SELECT qps FROM workflow_limits WHERE workflow=?', (workflow,)).fetchone()[0]
+                if qps > stored_qps:
                     raise ValueError('The shared database already has a different QPS for this workflow')
+                if qps < stored_qps:
+                    db.execute('UPDATE workflow_limits SET qps=? WHERE workflow=?', (qps, workflow))
                 db.execute('INSERT OR IGNORE INTO workflow_pacing VALUES (?, ?, 0, NULL, 0)',
                            (workflow, interval))
                 # A status reader or another process cannot silently loosen a
@@ -83,30 +104,68 @@ class WorkflowRequestPool:
             with self.connect() as db:
                 db.execute('BEGIN IMMEDIATE')
                 now = self.clock()
+                self._release_dead_owners(db, now)
+                max_inflight, max_active = db.execute('SELECT max_inflight,max_active_workflows '
+                    'FROM workflow_model_limit WHERE singleton=1').fetchone()
+                active = dict(db.execute('SELECT workflow,count(*) FROM workflow_requests '
+                                         'WHERE status="inflight" GROUP BY workflow'))
                 candidates = []
                 for workflow in self.ids:
-                    stamps = json.loads(db.execute('SELECT starts FROM workflow_limits WHERE workflow=?', (workflow,)).fetchone()[0])
+                    if sum(active.values()) >= max_inflight or (workflow not in active and len(active) >= max_active):
+                        continue
+                    qps, stamps_text = db.execute('SELECT qps,starts FROM workflow_limits WHERE workflow=?', (workflow,)).fetchone()
+                    stamps = json.loads(stamps_text)
                     interval, blocked_until = db.execute(
                         'SELECT min_interval,blocked_until FROM workflow_pacing WHERE workflow=?',
                         (workflow,)).fetchone()
                     # Small boundary margin protects a rolling one-second quota.
                     recent = [stamp for stamp in stamps if stamp > now-1.005]
-                    due = recent[-self.qps]+1.005 if len(recent) >= self.qps else now
+                    due = recent[-qps]+1.005 if len(recent) >= qps else now
                     # Never reserve future slots: after any late wake-up or
                     # idle period there is no backlog of permits to burst.
                     due = max(due, blocked_until, stamps[-1]+interval if stamps else now)
-                    candidates.append((due, stamps[-1] if stamps else -math.inf, workflow, recent))
-                due, _, workflow, recent = min(candidates, key=lambda c: (c[0], c[1], self.ids.index(c[2])))
+                    candidates.append((due, stamps[-1] if stamps else -math.inf, workflow, recent, qps))
+                due, _, workflow, recent, qps = min(candidates, key=lambda c: (c[0], c[1], self.ids.index(c[2]))) if candidates else (now+.05, 0, None, [], 0)
                 if due <= now:
                     recent.append(now)
                     db.execute('UPDATE workflow_limits SET starts=? WHERE workflow=?',
-                               (json.dumps(recent[-self.qps:]), workflow))
-                    cursor = db.execute('INSERT INTO workflow_requests(workflow,started,status,call_tag) VALUES (?,?,?,?)',
-                                        (workflow, now, 'inflight', call_tag))
+                               (json.dumps(recent[-qps:]), workflow))
+                    cursor = db.execute('INSERT INTO workflow_requests(workflow,started,status,call_tag,owner_pid,owner_created) VALUES (?,?,?,?,?,?)',
+                                        (workflow, now, 'inflight', call_tag, *self.owner))
+                    db.execute('UPDATE workflow_model_limit SET peak_inflight=max(peak_inflight, ?) WHERE singleton=1',
+                               (sum(active.values())+1,))
                     return workflow, cursor.lastrowid
                 delay = due-now
             # Never hold a database transaction while waiting or running HTTP.
             self.sleep(max(.001, delay))
+
+    @staticmethod
+    def _release_dead_owners(db, now):
+        owners = db.execute('SELECT DISTINCT owner_pid,owner_created FROM workflow_requests '
+                            'WHERE status="inflight" AND owner_pid IS NOT NULL').fetchall()
+        for pid, created in owners:
+            try:
+                process = psutil.Process(pid)
+                live = process.create_time() == created and process.status() != psutil.STATUS_ZOMBIE
+            except psutil.NoSuchProcess:
+                live = False
+            except psutil.AccessDenied:
+                live = True  # Cannot establish exit; retain the occupied slots.
+            if not live:
+                db.execute('UPDATE workflow_requests SET status="abandoned",finished=?,error_kind="owner_exited" '
+                           'WHERE status="inflight" AND owner_pid=? AND owner_created=?', (now, pid, created))
+
+    def global_summary(self):
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            self._release_dead_owners(db, self.clock())
+            cap, workflows, peak = db.execute('SELECT max_inflight,max_active_workflows,peak_inflight '
+                                             'FROM workflow_model_limit WHERE singleton=1').fetchone()
+            active = dict(db.execute('SELECT workflow,count(*) FROM workflow_requests WHERE status="inflight" GROUP BY workflow'))
+            legacy = db.execute('SELECT count(*) FROM workflow_requests WHERE status="inflight" AND owner_pid IS NULL').fetchone()[0]
+            return {'max_inflight': cap, 'current_inflight': sum(active.values()), 'peak_inflight': peak,
+                    'max_active_workflows': workflows, 'active_workflows': active,
+                    'unowned_legacy_inflight': legacy, 'database': str(self.database)}
 
     def finish(self, request_id, status, *, error=None):
         limited = getattr(error, 'status_code', None) == 429
@@ -171,7 +230,7 @@ class WorkflowRequestPool:
                     'rate_limit_responses_in_window': throttles,
                     'cooldown_remaining_seconds': round(max(0., blocked_until-now), 3),
                     'mean_transport_seconds': round(latency, 3) if latency is not None else None,
-                    'qps_limit': self.qps}
+                    'qps_limit': db.execute('SELECT qps FROM workflow_limits WHERE workflow=?', (workflow,)).fetchone()[0]}
         return result
 
 
@@ -184,8 +243,12 @@ def from_environment():
         raise ValueError('Workflow pooling requires one shared SKILLMINING_WORKFLOW_RATE_DB path')
     interval_text = os.getenv('SKILLMINING_WORKFLOW_MIN_INTERVAL_SECONDS', '').strip()
     interval = float(interval_text) if interval_text else None
-    key = (os.getpid(), database, tuple(ids), int(os.getenv('SKILLMINING_WORKFLOW_QPS', '3')), interval)
+    qps = int(os.getenv('SKILLMINING_WORKFLOW_QPS', '2'))
+    cap = int(os.getenv('SKILLMINING_WORKFLOW_MAX_INFLIGHT', '10'))
+    workflows = int(os.getenv('SKILLMINING_WORKFLOW_MAX_ACTIVE_IDS', '5'))
+    key = (os.getpid(), database, tuple(ids), qps, interval, cap, workflows)
     if getattr(_LOCAL, 'key', None) != key:
-        _LOCAL.pool = WorkflowRequestPool(database, ids, key[-2], min_interval_seconds=interval)
+        _LOCAL.pool = WorkflowRequestPool(database, ids, qps, min_interval_seconds=interval,
+                                        max_inflight=cap, max_active_workflows=workflows)
         _LOCAL.key = key
     return _LOCAL.pool
