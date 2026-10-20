@@ -12,15 +12,23 @@ def configure(args):
     os.environ.update(method_environment(args, args.workflow_pool_method, os.environ))
     os.environ.setdefault('SKILLMINING_LLM_MAX_RETRIES', '0')
     os.environ.setdefault('SKILLMINING_RETRY_EMPTY_LLM', '1')
-    # Imports may already hold the llm module. Bind its public entry points to
-    # the company implementation before starting any worker or request.
+    # Company machines install the workflow implementation as llm.py. Prefer
+    # that public module; the development filename llm_new.py is not a runtime
+    # dependency. The local relay shim may already have been imported before
+    # workflow mode was selected, so only that case needs the bundled backend.
     import llm
-    import llm_new as workflow
+    workflow = llm
+    if not callable(getattr(workflow, 'get_llm_config', None)):
+        import workflow_llm as workflow
+    required = ['chat', 'usage_scope', 'get_usage_summary', 'reset_usage_summary',
+                'write_usage_summary', 'resolve_config', 'get_llm_config', 'clear_cache']
+    missing = [name for name in required if not callable(getattr(workflow, name, None))]
+    if missing:
+        raise RuntimeError('Company llm.py lacks the parallel workflow interface: '+', '.join(missing))
     cfg = workflow.get_llm_config()
     if cfg.get('provider') != 'workflow':
         raise ValueError('Company config.py LLM_CONFIG must use provider=workflow')
-    for name in ['chat', 'usage_scope', 'get_usage_summary', 'reset_usage_summary',
-                 'write_usage_summary', 'resolve_config', 'get_llm_config', 'clear_cache']:
+    for name in required:
         setattr(llm, name, getattr(workflow, name))
     from workflow_request_pool import from_environment
     if from_environment() is None:

@@ -13,7 +13,7 @@ ROOT=Path(__file__).resolve().parents[1]
 def build(output):
     if output.exists():raise FileExistsError(output)
     files=set()
-    for name in ['llm.py','llm_new.py','workflow_llm.py','workflow_request_pool.py',
+    for name in ['workflow_llm.py','workflow_request_pool.py',
                  'workflow_http_transport.py','requirements.txt','requirements-sgd-server.txt']:
         files.add(Path(name))
     for name in ['eval_tod','skill_mining','awm','Trace2Skill/skill_evolver','Trace2Skill/src',
@@ -24,7 +24,8 @@ def build(output):
     files.add(Path('eval_tod/judge/config.py'))
     files.add(Path('docs/SGD_EXTRA_SERVER_20PCT.md'))
     output.parent.mkdir(parents=True,exist_ok=True)
-    manifest={'code_only':True,'data_included':False,'credentials_included':False,'files':{}}
+    manifest={'code_only':True,'data_included':False,'credentials_included':False,
+              'company_files_preserved':['llm.py','config.py','configs/sgd_workflows.json'],'files':{}}
     with tarfile.open(output,'w:gz') as archive:
         for relative in sorted(files):
             path=ROOT/relative;data=path.read_bytes()
