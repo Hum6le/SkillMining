@@ -61,6 +61,27 @@ class _Rule:
     strength: int = 2
 
 
+RULE_UPDATE_PROTOCOL = 'snapshot_numbered_operations_clean_replacements_v2'
+
+
+def _clean_rule(text: str, previous: str | None = None) -> str:
+    """Strip edit-control wrappers, preserving actual procedural instructions."""
+    text = text.strip()
+    text = re.sub(r'^(?:rule|replacement)\s*:\s*', '', text, flags=re.I)
+    text = re.sub(r'^(?:replace\s+)?rule\s+\d+\s+with\s*:?\s*', '', text, flags=re.I)
+    text = text.strip()
+    if text.startswith('`') and text.endswith('`'):
+        text = text[1:-1].strip()
+    if previous:
+        old, sep, new = text.partition(' -> ')
+        if sep and old.strip().rstrip('.') == previous.strip().rstrip('.'):
+            text = new.strip()
+        match = re.fullmatch(r'Replace ["\u201c](.+)["\u201d] with ["\u201c](.+)["\u201d]', text, re.I|re.S)
+        if match and match.group(1).strip().rstrip('.') == previous.strip().rstrip('.'):
+            text = match.group(2).strip()
+    return text.rstrip('.')+'.' if text else ''
+
+
 @dataclass
 class ExpeLRuleStore:
     """Persistent rule pool using ExpeL's operation semantics."""
@@ -82,22 +103,43 @@ class ExpeLRuleStore:
         return None
 
     def apply(self, operations: list[tuple[str, str]]) -> None:
-        # Match the official implementation: removals first, then agreement,
-        # edits, and additions, with weak rules pruned afterwards.
-        for operation, text in operations:
+        # Numbers refer to the rule list shown to the inducer, before any
+        # operation in this batch. Do not let ADD/EDIT retarget later updates.
+        snapshot = list(self.rules)
+        order = {'REMOVE':0, 'AGREE':1, 'EDIT':2, 'ADD':3}
+        for operation, text in sorted(operations, key=lambda row: order.get(row[0].split()[0], 9)):
             kind, _, number = operation.partition(" ")
-            index = self._find(text)
-            if kind == "REMOVE" and index is not None:
-                self.rules[index].strength -= 1
-            elif kind == "AGREE" and index is not None:
-                self.rules[index].strength += 1
-            elif kind == "EDIT" and number.isdigit() and 1 <= int(number) <= len(self.rules):
-                self.rules[int(number) - 1].text = text.strip()
-                self.rules[int(number) - 1].strength += 1
-            elif kind == "ADD" and self._find(text) is None and text.strip():
-                self.rules.append(_Rule(text=text.strip().rstrip("." ) + "."))
+            target = None
+            if number.isdigit():
+                if 1 <= int(number) <= len(snapshot):
+                    target = snapshot[int(number)-1]
+            elif kind in {'REMOVE','AGREE'}:
+                index = self._find(text)
+                target = self.rules[index] if index is not None else None
+            if kind == "REMOVE" and target is not None:
+                target.strength -= 1
+            elif kind == "AGREE" and target is not None:
+                target.strength += 1
+            elif kind == "EDIT" and target is not None:
+                cleaned = _clean_rule(text, target.text)
+                if cleaned:
+                    target.text = cleaned
+                    target.strength += 1
+            elif kind == "ADD":
+                cleaned = _clean_rule(text)
+                if cleaned and not any(r.text.casefold() == cleaned.casefold() for r in self.rules):
+                    self.rules.append(_Rule(text=cleaned))
 
-        self.rules = [rule for rule in self.rules if rule.strength > 0]
+        unique = {}
+        for rule in self.rules:
+            if rule.strength <= 0:
+                continue
+            key = rule.text.casefold()
+            if key in unique:
+                unique[key].strength = max(unique[key].strength, rule.strength)
+            else:
+                unique[key] = rule
+        self.rules = list(unique.values())
         self.rules.sort(key=lambda rule: rule.strength, reverse=True)
         self.rules = self.rules[: self.max_rules]
 
@@ -123,7 +165,8 @@ def _parse_operations(raw: str) -> list[tuple[str, str]]:
         kind = match.group(1).upper()
         number = match.group(2) or ""
         text = match.group(3).strip().splitlines()[0].strip()
-        if text and not any(token in text.upper() for token in ("<RULE", "EXISTING RULE")):
+        numbered_reference = bool(number) and kind in {'REMOVE','AGREE'}
+        if text and (numbered_reference or not any(token in text.upper() for token in ("<RULE", "EXISTING RULE"))):
             operations.append((f"{kind} {number}".strip(), text))
     return operations[:4]
 

@@ -17,6 +17,8 @@ import logging
 import json
 import os
 import threading
+from contextlib import contextmanager
+from contextvars import ContextVar
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -26,6 +28,7 @@ log = logging.getLogger(__name__)
 
 _TRACE2SKILL = Path(__file__).resolve().parent / "Trace2Skill"
 _CLIENT_CACHE: dict[str, object] = {}
+_CHAT_CLIENTS = threading.local()
 
 
 # The server-side replacement has a richer tracker. Keep the local client
@@ -35,6 +38,17 @@ _CLIENT_CACHE: dict[str, object] = {}
 _USAGE_LOCK = threading.Lock()
 _USAGE_STARTED_AT = datetime.now(timezone.utc).isoformat()
 _USAGE_CALLS: list[dict] = []
+_LOCAL_USAGE = ContextVar('openai_local_usage', default=None)
+
+
+@contextmanager
+def usage_scope():
+    """Isolate native accounting for concurrent local experiment cases."""
+    token = _LOCAL_USAGE.set({'calls': [], 'started_at': datetime.now(timezone.utc).isoformat()})
+    try:
+        yield
+    finally:
+        _LOCAL_USAGE.reset(token)
 
 
 def _estimate_tokens(text: str) -> int:
@@ -63,13 +77,15 @@ def _record_usage(messages: list[dict], response: str, *, model: str,
     if error_type:
         row["error_type"] = error_type
     with _USAGE_LOCK:
-        _USAGE_CALLS.append(row)
+        scoped = _LOCAL_USAGE.get()
+        (scoped['calls'] if scoped is not None else _USAGE_CALLS).append(row)
 
 
 def get_usage_summary() -> dict:
     with _USAGE_LOCK:
-        calls = list(_USAGE_CALLS)
-        started_at = _USAGE_STARTED_AT
+        scoped = _LOCAL_USAGE.get()
+        calls = list(scoped['calls'] if scoped is not None else _USAGE_CALLS)
+        started_at = scoped['started_at'] if scoped is not None else _USAGE_STARTED_AT
     def bucket(rows):
         out = {"calls": 0, "successful_calls": 0, "failed_calls": 0,
                "calls_with_usage": 0, "prompt_tokens": 0,
@@ -111,6 +127,11 @@ def get_usage_summary() -> dict:
 def reset_usage_summary() -> None:
     global _USAGE_STARTED_AT
     with _USAGE_LOCK:
+        scoped = _LOCAL_USAGE.get()
+        if scoped is not None:
+            scoped['calls'].clear()
+            scoped['started_at'] = datetime.now(timezone.utc).isoformat()
+            return
         _USAGE_STARTED_AT = datetime.now(timezone.utc).isoformat()
         _USAGE_CALLS.clear()
 
@@ -217,7 +238,16 @@ def chat(
         client_kwargs["base_url"] = cfg["base_url"]
     if os.getenv("SKILLMINING_LLM_MAX_RETRIES"):
         client_kwargs["max_retries"] = int(os.environ["SKILLMINING_LLM_MAX_RETRIES"])
-    client = OpenAI(**client_kwargs)
+    if os.getenv('SKILLMINING_REUSE_HTTP_CLIENT') == '1':
+        # Local runs issue many short requests. Preserve each worker's HTTP
+        # connection without sharing a client across unrelated threads.
+        identity = (cfg['api_key'], cfg['base_url'], client_kwargs.get('max_retries'), id(OpenAI))
+        if getattr(_CHAT_CLIENTS, 'identity', None) != identity:
+            _CHAT_CLIENTS.client = OpenAI(**client_kwargs)
+            _CHAT_CLIENTS.identity = identity
+        client = _CHAT_CLIENTS.client
+    else:
+        client = OpenAI(**client_kwargs)
 
     # Build request
     request_kwargs: dict = {

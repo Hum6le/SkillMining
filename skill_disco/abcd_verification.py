@@ -113,6 +113,7 @@ def verify_abcd_replay(
             process = subprocess.run(
                 [sys.executable, "-I", str(worker)], input=json.dumps(payload),
                 text=True, capture_output=True, timeout=timeout_seconds, check=False,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
             )
         except subprocess.TimeoutExpired:
             failures.append(f"{case['conversation_id']}: execution timed out")

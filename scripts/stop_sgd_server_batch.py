@@ -9,7 +9,8 @@ import psutil
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = {'launch_sgd_server_batch.py', 'run_full_sgd_experiments.py',
-           'run_sgd_domain_eval.py', 'run_sgd_trace2skill_pilot.py'}
+           'run_sgd_domain_eval.py', 'run_sgd_trace2skill_pilot.py',
+           'launch_sgd_extra_server.py', 'run_sgd_extra_baselines.py'}
 
 
 def resolved_argument(value, cwd):
