@@ -1,0 +1,4 @@
+# Optional, isolated graph-only experiment dependencies.
+# python -m venv --system-site-packages .venv-process-mining
+# .venv-process-mining/Scripts/python.exe -m pip install -r requirements-process-mining.txt
+pm4py==2.7.23

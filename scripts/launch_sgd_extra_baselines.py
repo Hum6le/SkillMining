@@ -121,9 +121,12 @@ def main():
     p.add_argument('--adopt-running',action='store_true',
                    help='Adopt matching existing method processes instead of launching duplicates')
     p.add_argument('--reflexion-workers',type=int,default=4)
+    p.add_argument('--expel-workers',type=int,default=4)
     args=p.parse_args()
     if not 1 <= args.reflexion_workers <= 8:
         p.error('--reflexion-workers must be between 1 and 8')
+    if not 1 <= args.expel_workers <= 12:
+        p.error('--expel-workers must be between 1 and 12')
     out=args.output_dir.resolve()
     out.mkdir(parents=True,exist_ok=True)
     if args.collect_only:
@@ -139,7 +142,8 @@ def main():
     overrides = read(out/'method_run_overrides.json', {})
     method_dirs = {m: Path(overrides[m]['output_dir']) if m in overrides else out/m
                    for m in ['react','reflexion','skill_disco','expel']}
-    method_workers = {m: (args.reflexion_workers if m == 'reflexion' else 4)
+    method_workers = {m: (args.reflexion_workers if m == 'reflexion' else
+                         args.expel_workers if m == 'expel' else 4)
                       for m in ['react','reflexion','skill_disco','expel']}
     concurrent = sum(max([method_workers[m] for m in lane
                          if not read(method_dirs[m]/'aggregate.json',{}).get('evaluation_complete')] or [0])

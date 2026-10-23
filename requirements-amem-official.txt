@@ -1,0 +1,11 @@
+-r requirements-sgd-server.txt
+# Official robust A-MEM import dependencies; optional isolated environment.
+numpy>=1.26,<3
+sentence-transformers>=3,<6
+transformers>=4.41,<6
+torch>=2.2,<3
+scikit-learn>=1.4,<2
+nltk>=3.8,<4
+rank-bm25==0.2.2
+litellm==1.106.2
+requests>=2.31,<3

@@ -366,7 +366,8 @@ def main():
     p.add_argument('--smoke', action='store_true')
     p.add_argument('--dry-run', action='store_true')
     args = p.parse_args()
-    max_workers = 10 if args.provider == 'workflow' else 8 if args.method == 'reflexion' else 4
+    max_workers = (10 if args.provider == 'workflow' else
+                   12 if args.method == 'expel' else 8 if args.method == 'reflexion' else 4)
     if args.workers < 1 or args.workers > max_workers or args.max_trials < 1 or args.batch_dialogues < 1:
         p.error(f'Use 1..{max_workers} workers for this method; trials/batch size must be positive')
     if any(v is not None and v < 1 for v in [args.max_train_dialogues,args.max_eval_dialogues,args.max_eval_turns]):
