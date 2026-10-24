@@ -21,10 +21,11 @@ ROOT = Path(__file__).resolve().parents[1]
 UPSTREAM = ROOT / "third_party/a-mem-official"
 COMMIT = "b31a1dddf56f87ec762cce3539418602d7e2ffb1"
 SOURCE_HASHES = {
-    "memory_layer.py": "9b49b3ca85044e5d8133f4971f71859b4c871dc66a1ae115643968e0c446743e",
-    "memory_layer_robust.py": "8bb1757e301434af89688f3283fbb395a784d7e2975214581851333ed13cb731",
-    "llm_text_parsers.py": "44f661c5ca2879a6daa571d5559741251d26c9dc9dfd9fa70c8a25411782f588",
-    "LICENSE": "dc109f631e462ed61faa782e465b9dca947b95b500baff6de873a179dae2c714",
+    # Canonical LF bytes from `git show COMMIT:path`, independent of checkout EOL.
+    "memory_layer.py": "dd8f871da00a57a2218de63ba9792336dd5bf040ec4502beaea22739bd865d3c",
+    "memory_layer_robust.py": "5214a4fb3094dd081b85176bebe6ef2362325fc3474c3f804850a682aff88197",
+    "llm_text_parsers.py": "c4106de7dfddf36ea1e397c2146579e223fc05d1758d3845582c7af73f5827a6",
+    "LICENSE": "025a4a7762131be135bc34c8916d82996844f4dce35c53a464149a672dab5001",
 }
 
 
@@ -37,11 +38,21 @@ def file_sha(path):
 
 
 def provenance(directory=UPSTREAM):
-    actual = {name: file_sha(Path(directory) / name) for name in SOURCE_HASHES}
-    if actual != SOURCE_HASHES:
-        raise ValueError("Official A-MEM source differs from pinned commit; use a new explicit protocol")
+    directory = Path(directory)
+    missing = [name for name in SOURCE_HASHES if not (directory / name).is_file()]
+    if missing:
+        raise FileNotFoundError(f"Official A-MEM files missing in {directory}: {', '.join(missing)}. "
+            "Extract the official-source repair package in the project root, or use --upstream-dir.")
+    actual = {name: hashlib.sha256((directory / name).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+              for name in SOURCE_HASHES}
+    mismatched = [name for name in SOURCE_HASHES if actual[name] != SOURCE_HASHES[name]]
+    if mismatched:
+        detail = "; ".join(f"{name}: expected {SOURCE_HASHES[name]}, actual {actual[name]}" for name in mismatched)
+        raise ValueError(f"Official A-MEM source differs from pinned commit {COMMIT} after CRLF-to-LF normalization. "
+                         + detail + ". Install the pinned source package; do not disable the check.")
     return {"repository": "https://github.com/WujiangXu/A-mem", "commit": COMMIT,
-            "entry": "memory_layer_robust.RobustAgenticMemorySystem", "files": actual}
+            "entry": "memory_layer_robust.RobustAgenticMemorySystem",
+            "source_hash_mode": "sha256_after_crlf_to_lf", "files": actual}
 
 
 def load_official(directory=UPSTREAM):

@@ -10,27 +10,34 @@ import tarfile
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def build(output):
+def build(output, repair_only=False):
     from amem_adapter.official import provenance, SOURCE_HASHES
     official = provenance()
     if output.exists():
         raise FileExistsError(output)
-    files = {Path(name) for name in ["workflow_llm.py", "workflow_request_pool.py", "workflow_http_transport.py",
-        "requirements.txt", "requirements-sgd-server.txt", "requirements-amem-official.txt",
-        "docs/SGD_AMEM_OFFICIAL.md"]}
-    for name in ["amem_adapter", "eval_tod", "skill_mining", "awm", "Trace2Skill/skill_evolver",
-                 "Trace2Skill/src", "scripts", "skill_disco", "expel_adapter", "reflexion_adapter"]:
-        files.update(p.relative_to(ROOT) for p in (ROOT / name).rglob("*") if p.is_file()
-            and p.suffix in {".py", ".txt"} and "__pycache__" not in p.parts and p.name != "config.py")
-    files.add(Path("eval_tod/judge/config.py"))
+    if repair_only:
+        files = {Path(name) for name in ["amem_adapter/official.py", "scripts/verify_amem_official.py",
+                                         "docs/SGD_AMEM_SOURCE_REPAIR.md"]}
+    else:
+        files = {Path(name) for name in ["workflow_llm.py", "workflow_request_pool.py", "workflow_http_transport.py",
+            "requirements.txt", "requirements-sgd-server.txt", "requirements-amem-official.txt",
+            "docs/SGD_AMEM_OFFICIAL.md", "docs/SGD_AMEM_SOURCE_REPAIR.md"]}
+        for name in ["amem_adapter", "eval_tod", "skill_mining", "awm", "Trace2Skill/skill_evolver",
+                     "Trace2Skill/src", "scripts", "skill_disco", "expel_adapter", "reflexion_adapter"]:
+            files.update(p.relative_to(ROOT) for p in (ROOT / name).rglob("*") if p.is_file()
+                and p.suffix in {".py", ".txt"} and "__pycache__" not in p.parts and p.name != "config.py")
+        files.add(Path("eval_tod/judge/config.py"))
     files.update(Path("third_party/a-mem-official") / name for name in SOURCE_HASHES)
     manifest = {"code_only": True, "data_included": False, "credentials_included": False,
-        "embedding_weights_included": False, "official": official,
+        "embedding_weights_included": False, "repair_only": repair_only, "official": official,
         "preserved": ["llm.py", "llm_new.py", "config.py", "configs/sgd_workflows.json"], "files": {}}
     output.parent.mkdir(parents=True, exist_ok=True)
     with tarfile.open(output, "w:gz") as archive:
         for relative in sorted(files):
             payload = (ROOT / relative).read_bytes()
+            if relative.parts[:2] == ("third_party", "a-mem-official"):
+                # Ship canonical Git blob bytes, even when built on Windows.
+                payload = payload.replace(b"\r\n", b"\n")
             if re.search(rb"sk-[A-Za-z0-9_-]{24,}", payload):
                 raise ValueError(f"Possible credential in {relative}")
             manifest["files"][relative.as_posix()] = hashlib.sha256(payload).hexdigest()
@@ -39,7 +46,9 @@ def build(output):
             info.mode = 0o644
             archive.addfile(info, io.BytesIO(payload))
         payload = json.dumps(manifest, indent=2).encode()
-        info = tarfile.TarInfo("SGD_AMEM_OFFICIAL_CODE_MANIFEST.json")
+        manifest_name = ("SGD_AMEM_OFFICIAL_SOURCE_REPAIR_MANIFEST.json" if repair_only
+                         else "SGD_AMEM_OFFICIAL_CODE_MANIFEST.json")
+        info = tarfile.TarInfo(manifest_name)
         info.size = len(payload)
         info.mode = 0o644
         archive.addfile(info, io.BytesIO(payload))
@@ -52,4 +61,6 @@ if __name__ == "__main__":
     sys.path.insert(0, str(ROOT))
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
-    print(json.dumps(build(parser.parse_args().output)))
+    parser.add_argument("--repair-only", action="store_true", help="Only source checker + pinned official files; preserve experiment code")
+    args = parser.parse_args()
+    print(json.dumps(build(args.output, repair_only=args.repair_only)))
