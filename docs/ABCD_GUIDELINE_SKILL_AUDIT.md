@@ -43,6 +43,37 @@ nohup python -u scripts/repair_abcd_guideline_extraction.py \
 
 最多三轮，仍失败则明确停止，不补括号猜测 JSON，不丢弃坏行，不把未完成算 absent。全部抽取完成后继续执行官方参考覆盖建议。根目录 `latest_extraction.json` 指出当前实际 source/rules 路径；覆盖结果写入 `coverage/`。同一条命令可续跑，成功块不重复调用 LLM。此流程仅以模拟响应验证过，不代表已在公司服务器完成实际补跑。
 
+## 引用行号反复越界：逐字引文补跑
+
+`ValueError: Source line range outside the supplied chunk` 表示模型生成了无效的局部行号。展示和校验都基于 splitlines，没有发现固定偏移；正文里的编号、短块及固定示例可能干扰模型，实际原因需结合 raw 响应判断。继续拆小并不能保证模型遵守编号约束。
+
+新增单文件工具 `scripts/repair_guideline_citations.py`，不修改现有 extractor、validator、repair helper 或批次冻结的代码 hash。它使用显式新协议 `literal_quote_extraction_repair_v1`：成功缓存仍以旧原始响应逐字重验；失败/缺失块改为要求最小连续逐字引文，严格检查引文属于该块、且位置唯一。拒绝近似匹配、空引文、重复定位及坏 JSON，不猜测、裁剪或平移行号，不静默丢弃错误规则。若旧失败响应已包含可验证的精确引文，可据此定位并记录原响应 hash；只有数字行号、没有引文的响应必须重新请求。
+
+对已启动的全量批次，可直接启动补跑：
+
+```bash
+nohup python -u scripts/repair_guideline_citations.py \
+  --batch-dir outputs/abcd_guideline_all_v1 \
+  --output-dir outputs/abcd_guideline_all_citations_v1 \
+  --workers 4 --qps 1.8 \
+  > outputs/abcd_guideline_all_citations_v1.log 2>&1 < /dev/null &
+```
+
+如旧批次仍持有运行锁，补跑会等待且不发起 API 请求，每约 30 秒打印等待状态。原批次退出后逐场景处理。已完成的场景（包括 shipping_issue）重新验证冻结证据后直接复用；失败场景从最近一次细分补跑的 actual source/rules 读取输入，保留成功块，只用新引用协议补失败块，再执行覆盖评测。原批次数据保持原样，新结果在新根目录的 `aggregate_summary.json`、`by_subflow.csv`、`assessments.json` 和 `progress.json`。之后续跑应重复这条引用补跑命令；不要把新结果目录交给旧批量入口作为原批次目录。
+
+各修复场景位于新根目录 `flows/<flow>/`，包含完整来源副本、独立抽取协议、原成功响应出处、每次新请求与原始响应，以及 `rules/summary.json` 中的 `response_origins`。新请求引用协议变化可能影响抽取描述性条数，不能把条数变化当作业务知识增长；正式结论仍需审查实际源证据。
+
+支持独立场景补跑：
+
+```bash
+python scripts/repair_guideline_citations.py \
+  --audit-dir 某个场景的run或repaired目录 \
+  --reference 某个场景的run/reference/reference.json \
+  --output-dir 独立的新结果目录
+```
+
+批量入口、引用补跑与旧 JSON 补跑链路已用模拟模型响应验证，尚未替代服务器上的实际 API 验证。
+
 ## 全量 coarse subflow 批量入口
 
 入口 `scripts/run_abcd_guideline_batch.py` 依赖现有 v4 工具及 JSON 失败块补跑脚本，无需覆盖公司客户端。先生成目录配置：
