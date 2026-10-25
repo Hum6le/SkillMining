@@ -26,6 +26,23 @@ tail -f "${NEW}.log"
 
 新版抽取把失败块的 method、source_file、last_error 写入 `summary.json` 的 `failed_chunk_details`。存在失败块时 CLI 退出码为 2，恢复脚本不会继续覆盖评测；重新执行同一恢复命令可复用新目录中的成功块，只补失败块。单纯 `--max-chunks` smoke 未完成且没有失败块时仍可正常退出，但评测仍拒绝不完整输入。
 
+## JSON 语法错误或截断：仅补失败块
+
+若已有 10 个成功块、少数块出现 `JSONDecodeError`，用 `scripts/repair_abcd_guideline_extraction.py` 补跑。`Unterminated string` 可能来自输出截断，不能仅凭 JSON 异常断言平台 token 上限；本地 workflow 传输也没有把 `chat(max_tokens=...)` 直接作为工作流生成参数发送，因此本脚本不假设修改客户端 max_tokens 可以解决平台限制。
+
+```bash
+nohup python -u scripts/repair_abcd_guideline_extraction.py \
+  --audit-dir outputs/abcd_guideline_shipping_core_v4 \
+  --reference outputs/abcd_guideline_shipping_20261025_154930/reference/reference.json \
+  --output-dir outputs/abcd_guideline_shipping_core_jsonfix_v1 \
+  --workers 1 --qps 1.8 \
+  > outputs/abcd_guideline_shipping_core_jsonfix_v1.log 2>&1 < /dev/null &
+```
+
+此工具只需新增该脚本，依赖已经安装的 v4 工具接口，不修改抽取提示、校验器或公司客户端。原始文档逐字保留；成功窗口的内容、身份和边界不变，复用缓存时仍逐字重验。失败窗口依次以约 1600、800、500 字符的上限细分，保留重叠，校验首尾与中间均无源文本缺口。每一轮有独立的 source inventory、规则和父子窗口映射；抽取粒度改变会影响抽取描述性数量，不将拆分带来的条数变化作为知识质量提升。
+
+最多三轮，仍失败则明确停止，不补括号猜测 JSON，不丢弃坏行，不把未完成算 absent。全部抽取完成后继续执行官方参考覆盖建议。根目录 `latest_extraction.json` 指出当前实际 source/rules 路径；覆盖结果写入 `coverage/`。同一条命令可续跑，成功块不重复调用 LLM。此流程仅以模拟响应验证过，不代表已在公司服务器完成实际补跑。
+
 ## 本次检查补齐的部分
 
 - ABCD `subflow/coarse_flow` 元数据识别；`--subflows` 与 `--families` 等价。
