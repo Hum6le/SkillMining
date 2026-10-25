@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import csv
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 import time
@@ -193,6 +194,8 @@ def evaluate(args):
     if args.dry_run:
         print(json.dumps(manifest, ensure_ascii=False, indent=2))
         return
+    if args.provider == 'existing' and args.workflow_id:
+        os.environ['SKILLMINING_LLM_BACKEND'] = 'workflow'
     import llm
     if args.provider == 'shubiaobiao':
         from eval_tod.sgd_local_config import configure, DEFAULT_ENV

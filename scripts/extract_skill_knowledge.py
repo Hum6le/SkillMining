@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import csv
 import hashlib
 import json
+import os
 from pathlib import Path
 import random
 import re
@@ -135,6 +136,10 @@ def extract(args):
     args.output_dir.mkdir(parents=True, exist_ok=True)
     for name in ("chunks", "raw"):
         (args.output_dir / name).mkdir(exist_ok=True)
+    # An explicit workflow selection must dispatch before importing the common
+    # llm.py entry point; otherwise its OpenAI default may already be bound.
+    if args.provider == "existing" and args.workflow_id:
+        os.environ["SKILLMINING_LLM_BACKEND"] = "workflow"
     # Import API clients only after source inventory checks; no secrets logged.
     import llm
     if args.provider == "shubiaobiao":
