@@ -74,7 +74,10 @@ def load_inputs(reference_path, source_dir, rules_dir, origins):
             raise ValueError('Frozen inventory changed: ' + filename)
     extraction = read(rules_dir / 'summary.json')
     if not extraction['complete']:
-        raise ValueError('Extraction is incomplete; resume extraction before coverage evaluation')
+        details = extraction.get('failed_chunk_details', [])
+        raise ValueError('Extraction is incomplete; resume extraction before coverage evaluation. '
+                         f"Successful={extraction.get('successful_chunks')}, failed={extraction.get('failed_chunks')}. "
+                         + json.dumps(details[:5], ensure_ascii=False))
     if extraction['source_inventory_sha256'] != sha(source_dir / 'inventory.json'):
         raise ValueError('Rules belong to a different source inventory')
     docs = {d['document_id']: d for d in read_lines(source_dir / 'documents.jsonl')}

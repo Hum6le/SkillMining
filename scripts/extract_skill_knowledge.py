@@ -23,7 +23,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from skill_mining.knowledge_extraction import (VERSION, discover_documents, chunk_document,
+from skill_mining.knowledge_extraction import (VERSION, OURS_CORE_NAMES, discover_documents, chunk_document,
     extraction_messages, validate_response, merge_rules, hash_text)
 
 
@@ -69,6 +69,8 @@ def scan(args):
             raise ValueError("Method labels must be unique alphanumeric names")
         roots[method] = str(Path(directory).resolve())
         options = {"snapshot": args.snapshot, "families": set(args.families.split(",")) if args.families else None}
+        if method.casefold() == "ours" and getattr(args, "ours_resources", "core") == "core" and args.snapshot == "final":
+            options["resource_names"] = OURS_CORE_NAMES
         if method in overrides:
             options["family_override"] = overrides[method]
         found, omissions = discover_documents(method, directory, **options)
@@ -97,6 +99,8 @@ def scan(args):
             "families": sorted({d["family"] for d in docs if d["method"] == method})} for method in sorted(roots)},
         "documents_sha256": sha(args.output_dir / "documents.jsonl"), "chunks_sha256": sha(args.output_dir / "chunks.jsonl"),
         "family_overrides": overrides,
+        "ours_resources": getattr(args, "ours_resources", "core"),
+        "ours_final_allowlist": sorted(OURS_CORE_NAMES) if getattr(args, "ours_resources", "core") == "core" and args.snapshot == "final" else None,
         "exclusions": "prompts, predictions, logs, raw exemplar memories, checkpoints, code, env files, seed resources; final excludes offline/offline_artifact",
         "resources": [{k: d[k] for k in ("method", "family", "snapshot", "source_file", "json_pointer", "file_sha256")} for d in docs],
         "duplicate_policy": "identical resource texts deduplicated only within method/family/snapshot; aliases retained",
@@ -162,13 +166,32 @@ def extract(args):
         raise ValueError("Extraction config/source changed; use a new output directory")
     reuse_dir = getattr(args, "reuse_responses_from", None)
     reuse_contract = None
+    reusable_chunks = None
     if reuse_dir:
         if reuse_dir.resolve() == args.output_dir.resolve():
             raise ValueError("Revalidation requires a separate new output directory")
         reuse_contract = read(reuse_dir / "extraction_config.json")
-        for key in ("documents_sha256", "chunks_sha256", "provider", "model", "workflow_id", "prompt_sha256"):
+        matching = getattr(args, "reuse_matching_chunks", False)
+        keys = ("provider", "model", "workflow_id", "prompt_sha256")
+        if not matching:
+            keys += ("documents_sha256", "chunks_sha256")
+        for key in keys:
             if reuse_contract.get(key) != contract.get(key):
                 raise ValueError("Cannot reuse responses with different " + key)
+        if matching:
+            old_source = Path(read(reuse_dir / "summary.json")["source_dir"])
+            old_inventory = read(old_source / "inventory.json")
+            for filename, key in (("documents.jsonl", "documents_sha256"), ("chunks.jsonl", "chunks_sha256")):
+                if sha(old_source / filename) != old_inventory[key] or old_inventory[key] != reuse_contract[key]:
+                    raise ValueError("Cached source inventory changed: " + filename)
+            old_docs = {d["document_id"]: d for d in read_lines(old_source / "documents.jsonl")}
+            old_chunks = {c["chunk_id"]: c for c in read_lines(old_source / "chunks.jsonl")}
+            # Exact chunk equality includes text, offsets, identity and node aliases.
+            # Document aliases can shrink when excluded duplicate files disappear.
+            comparable = lambda d: {k: v for k, v in d.items() if k != "aliases"}
+            reusable_chunks = {c["chunk_id"] for c in all_chunks
+                if old_chunks.get(c["chunk_id"]) == c and c["document_id"] in old_docs
+                and comparable(docs[c["document_id"]]) == comparable(old_docs[c["document_id"]])}
     dump(config_path, contract)
     gate = Gate(args.qps)
     def one(chunk):
@@ -180,7 +203,7 @@ def extract(args):
                 # Revalidate literal spans, including after copying to another machine.
                 validate_response(old["raw_response"], chunk, doc)
                 return old
-        if reuse_dir:
+        if reuse_dir and (reusable_chunks is None or chunk["chunk_id"] in reusable_chunks):
             old_path = reuse_dir / "chunks" / (chunk["chunk_id"] + ".json")
             if old_path.exists():
                 old = read(old_path)
@@ -265,8 +288,14 @@ def extract(args):
                           "categories": dict(Counter(r["category"] for r in own)),
                           "note": "counts are extraction descriptors, not correctness/coverage scores"}
     complete = len(results) == len(all_chunks) and all(r["status"] == "complete" for r in results)
+    chunk_index = {c["chunk_id"]: c for c in all_chunks}
+    failure_details = [{"chunk_id": r["chunk_id"], "method": chunk_index[r["chunk_id"]]["method"],
+        "source_file": docs[chunk_index[r["chunk_id"]]["document_id"]]["source_file"],
+        "last_error": r.get("attempts", [{}])[-1].get("error", "unknown") if r.get("attempts") else "unknown"}
+        for r in results if r["status"] == "failed"]
     summary = {"complete": complete, "inventory_chunks": len(all_chunks), "successful_chunks": sum(r["status"] == "complete" for r in results),
         "failed_chunks": sum(r["status"] == "failed" for r in results), "methods": counts,
+        "failed_chunk_details": failure_details,
         "source_dir": str(args.source_dir), "source_inventory_sha256": sha(args.source_dir / "inventory.json"),
         "revalidated_cached_chunks": sum("revalidated_response" in r for r in results),
         "literal_citations_verified": True, "semantic_support": "not evaluated; human review pending",
@@ -275,6 +304,7 @@ def extract(args):
         "estimated_tokens_including_cached_attempts": sum(a.get("estimated_prompt_tokens", 0)+a.get("estimated_completion_tokens", 0) for r in results for a in r["attempts"])}
     dump(args.output_dir / "summary.json", summary)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return summary
 
 
 def review(args):
@@ -324,6 +354,8 @@ def main():
     p.add_argument("--families", "--subflows", "--subflow", dest="families", help="Exact family/coarse-flow names, comma-separated")
     p.add_argument("--family-override", action="append", help="method=coarse_flow for a single-flow run with missing metadata; conflicting metadata is rejected")
     p.add_argument("--snapshot", choices=["final", "offline", "all"], default="final")
+    p.add_argument("--ours-resources", choices=["core", "all"], default="core",
+                   help="Final Ours default: skill.md + online action/slot/transition files; all restores the broad scan")
     p.add_argument("--chunk-chars", type=int, default=8000)
     p.add_argument("--overlap", type=int, default=400)
     p.add_argument("--archive", type=Path)
@@ -341,6 +373,8 @@ def main():
     p.add_argument("--max-chunks", type=int, help="Smoke only; incomplete inventory stays marked incomplete")
     p.add_argument("--reuse-responses-from", type=Path,
                    help="Revalidate cached raw responses in a NEW output directory; source/model/prompt must match")
+    p.add_argument("--reuse-matching-chunks", action="store_true",
+                   help="Allow a rescanned resource subset; reuse only exactly identical chunks/documents and prompts")
     p.set_defaults(func=extract)
     p = sub.add_parser("review", help="Seeded blinded CSV and separate private source key")
     p.add_argument("--extraction-dir", type=Path, required=True)
@@ -350,9 +384,14 @@ def main():
     p.add_argument("--per-method", type=int)
     p.set_defaults(func=review)
     args = parser.parse_args()
+    if args.command == "extract" and args.reuse_matching_chunks and not args.reuse_responses_from:
+        parser.error("--reuse-matching-chunks requires --reuse-responses-from")
     if args.command == "extract" and (args.workers < 1 or args.qps <= 0 or args.retries < 1 or args.max_chunks is not None and args.max_chunks < 1):
         parser.error("Positive workers/qps/retries/max-chunks required")
-    args.func(args)
+    result = args.func(args)
+    if args.command == "extract" and result["failed_chunks"]:
+        print("Extraction failed: see failed_chunk_details in summary.json; coverage was not started.", file=sys.stderr)
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":

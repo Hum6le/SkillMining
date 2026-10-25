@@ -23,6 +23,8 @@ OFFLINE_DIRS = {"offline", "offline_artifact"}
 NAMES = {"skill.md", "working_skill.md", "action_rules.md", "slot_policies.md", "reference.md",
          "online_transition_guards.md", "online_reference.md", "online_action_rules.md",
          "online_slot_policies.md", "awm_workflow.txt", "workflow.txt", "workflow.md"}
+OURS_CORE_NAMES = {"skill.md", "online_action_rules.md", "online_slot_policies.md",
+                   "online_transition_guards.md"}
 STATE_FILES = {"sgd_skill_state.json", "sgd_standard_state.json"}
 CATEGORIES = {"action_selection", "transition", "slot_binding", "missing_value", "retry_recovery", "resource_use", "other"}
 ORIGINS = {"procedural_rule", "executor_contract", "example_only", "uncertain"}
@@ -72,7 +74,8 @@ def node_aliases(directory):
         return {}
 
 
-def discover_documents(method, root, *, snapshot="final", families=None, family_override=None):
+def discover_documents(method, root, *, snapshot="final", families=None, family_override=None,
+                       resource_names=None):
     """Allowlisted resources only. No predictions, prompts, envs or exemplars."""
     root = Path(root).resolve()
     if not root.is_dir():
@@ -95,6 +98,10 @@ def discover_documents(method, root, *, snapshot="final", families=None, family_
             relative = path.relative_to(root).as_posix()
             parts = path.relative_to(root).parts
             lower = name.lower()
+            if resource_names is not None and lower not in resource_names:
+                if lower in NAMES or lower in STATE_FILES:
+                    skipped.append({"method": method, "file": relative, "reason": "excluded_by_resource_profile"})
+                continue
             stage = "offline" if any(p in OFFLINE_DIRS for p in parts) or root.name in OFFLINE_DIRS else "final"
             if snapshot == "offline" and stage != "offline":
                 continue
