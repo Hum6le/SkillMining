@@ -20,11 +20,19 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts.extract_skill_knowledge import Gate, dump, read, sha
 from scripts.benchmark_abcd_skill_guidelines import load_inputs, export_results, review_template
+from scripts import benchmark_abcd_skill_guidelines as benchmark
+from scripts import repair_guideline_citations as citation_repair
 from scripts.run_abcd_guideline_batch import METHODS, aggregate, collect_coverage
 from scripts.repair_guideline_citations import configure, extraction_locations, wait_for_batch
 from skill_mining.guideline_coverage import coverage_messages, validate_assessments
 
 VERSION = "coverage_id_repair_v1"
+LEGACY_RESOLVER_SCRIPTS = {
+    "71e8bde40f607fd01a9f3691be7f190eb2a49beb0b268b3edecd48f2f89d060a",
+    "8f0a1ebfe7589a9747aebe78296ff5b131e5b84777b8b6a7b9864cb78fb4bf36",
+    "137e52b7b6b5b208db0e0fc999008c5e2eb8c2adcab2e610535cba9949516182",
+    "900c0c453d9124d78be7981c07487f81a318215992d498f5d943c63fbd218686",
+}
 ID_FIELDS = ("support_rule_ids", "conflict_rule_ids", "condition_rule_ids")
 ROW_FIELDS = ("reference_id", "status", "reason", *ID_FIELDS)
 
@@ -85,14 +93,116 @@ def alias_messages(units, rules, error=None):
 
 
 def audit_locations(batch, flow, state):
+    markers = ("latest_extraction.json", "rules/summary.json", "sources/inventory.json",
+               "reference/reference.json", "coverage/protocol.json")
+    def is_audit(path):
+        return any((path / marker).is_file() for marker in markers)
     if state.get("audit_dir"):
-        return Path(state["audit_dir"])
+        explicit = Path(state["audit_dir"])
+        if is_audit(explicit):
+            return explicit
+        raise ValueError("Recorded audit directory has no saved audit artifacts: " + str(explicit))
     flat = batch / "flows" / flow
-    if (flat / "coverage/protocol.json").exists():
-        return flat  # literal-quote repaired batch layout
-    if (flat / "repaired/coverage/protocol.json").exists():
-        return flat / "repaired"
-    return flat / "run"
+    # An unfinished extraction has no coverage/protocol.json yet. It still uses
+    # the flat layout; never invent a /run suffix and mask its actual error.
+    for candidate in (flat, flat / "repaired", flat / "run"):
+        if is_audit(candidate):
+            return candidate
+    # Reused successful audits may live entirely outside this batch directory.
+    backup = batch / "coverage_id_repair_original/progress.json"
+    if backup.exists():
+        old = read(backup).get("flows", {}).get(flow, {})
+        if old.get("audit_dir") and is_audit(Path(old["audit_dir"])):
+            return Path(old["audit_dir"])
+    citation_config = batch / "citation_repair_config.json"
+    if citation_config.exists():
+        original = Path(read(citation_config)["original_batch_dir"])
+        old_progress = original / "progress.json"
+        if old_progress.exists():
+            old = read(old_progress).get("flows", {}).get(flow, {})
+            if old.get("audit_dir") and is_audit(Path(old["audit_dir"])):
+                return Path(old["audit_dir"])
+        for candidate in (original / "flows" / flow / "repaired", original / "flows" / flow / "run"):
+            if is_audit(candidate):
+                return candidate
+    raise FileNotFoundError("No saved audit found for " + flow + "; checked flat, repaired, run and prior-stage locations")
+
+
+def require_complete_extraction(audit):
+    source, rules = extraction_locations(audit)
+    summary_path = rules / "summary.json"
+    summary = read(summary_path)
+    if not summary.get("complete"):
+        raise ValueError("Extraction is still incomplete at " + str(summary_path)
+                         + f"; successful={summary.get('successful_chunks')}, failed={summary.get('failed_chunks')}; "
+                         + json.dumps(summary.get("failed_chunk_details", []), ensure_ascii=False))
+    return source, rules
+
+
+def save_repair_contract(config_path, contract, *, newly_initialized=()):
+    if config_path.exists():
+        previous = read(config_path)
+        if previous != contract:
+            old_fixed = {k: v for k, v in previous.items() if k not in {"script_sha256", "input_freezes"}}
+            new_fixed = {k: v for k, v in contract.items() if k not in {"script_sha256", "input_freezes"}}
+            old_inputs, new_inputs = previous.get("input_freezes", {}), contract.get("input_freezes", {})
+            inputs_preserved = all(new_inputs.get(k) == v for k, v in old_inputs.items())
+            additions_allowed = set(new_inputs) - set(old_inputs) <= set(newly_initialized)
+            same_or_legacy = previous.get("script_sha256") in LEGACY_RESOLVER_SCRIPTS or previous.get("script_sha256") == contract["script_sha256"]
+            if not same_or_legacy or old_fixed != new_fixed or not inputs_preserved or not additions_allowed:
+                raise ValueError("Coverage-repair code/inputs changed; inspect before resuming")
+            history = config_path.with_name("coverage_id_repair_config.before_resolver_fix.json")
+            if not history.exists():
+                dump(history, previous)
+            print("Updated compatible resume metadata; existing frozen inputs and grading semantics unchanged", flush=True)
+    dump(config_path, contract)
+
+
+def resume_extraction(audit, batch, flow, expected, args):
+    source, rules = extraction_locations(audit)
+    config = read(rules / "extraction_config.json")
+    if not config.get("source_audit_dir"):
+        raise ValueError("Unfinished extraction requires its quote-repair source_audit_dir; inspect " + str(rules / "summary.json"))
+    if not hasattr(citation_repair, "normalize_rule_container"):
+        raise ValueError("Upload both updated repair_guideline_citations.py and repair_guideline_coverage_ids.py")
+    original_audit = Path(config["source_audit_dir"])
+    candidates = [original_audit / "reference/reference.json", audit / "reference/reference.json"]
+    citation_config = batch / "citation_repair_config.json"
+    if citation_config.exists():
+        original_batch = Path(read(citation_config)["original_batch_dir"])
+        candidates.insert(0, original_batch / "flows" / flow / "run/reference/reference.json")
+    reference = next((p for p in candidates if p.exists() and sha(p) == config["reference_sha256"]), None)
+    if reference is None:
+        raise ValueError("Original frozen reference not found for " + flow)
+    official = read(reference)
+    if official["source_hashes"] != expected["source_hashes"] or official["subflows"] != [flow] or official["units"] != [u for u in expected["units"] if u["flow"] == flow]:
+        raise ValueError("Extraction resume reference differs from the batch reference")
+    summary = read(rules / "summary.json")
+    backup = rules / "summary.before_container_resume.json"
+    if not backup.exists():
+        dump(backup, summary)
+    print(f"RESUME EXTRACTION {flow}: {summary.get('failed_chunks')} failed chunks; successful chunks retained", flush=True)
+    citation_repair.repair_extraction(original_audit, audit, reference, args, evaluate=False)
+    dump(audit / "extraction_container_resume.json", {"flow": flow,
+        "helper_sha256": sha(ROOT / "scripts/repair_guideline_citations.py"),
+        "old_summary_sha256": sha(backup), "summary_sha256": sha(rules / "summary.json"),
+        "source_inventory_sha256": sha(source / "inventory.json")})
+
+
+def initialize_coverage(audit, original, args):
+    source, rules = require_complete_extraction(audit)
+    if (audit / "coverage/protocol.json").exists():
+        return False
+    if any((audit / "coverage/batches").glob("*.json")):
+        raise ValueError("Coverage batches exist without their frozen protocol; refusing to guess their inputs")
+    extraction_config = read(rules / "extraction_config.json")
+    from types import SimpleNamespace
+    benchmark.evaluate(SimpleNamespace(reference=audit / "reference/reference.json", source_dir=source,
+        rules_dir=rules, output_dir=audit / "coverage", origins="procedural_rule", provider=original["provider"],
+        model=original["model"], workflow_id=extraction_config.get("workflow_id"), batch_size=4,
+        workers=args.workers, qps=args.qps, max_prompt_chars=args.max_prompt_chars, max_batches=None, retries=args.retries,
+        dry_run=True))
+    return True
 
 
 def batch_origin(batch):
@@ -229,9 +339,7 @@ def run(args):
                     "reference_sha256": sha(batch / "reference_snapshot.json"), "provider": original["provider"], "model": original["model"],
                     "input_freezes": input_freezes}
         config_path = batch / "coverage_id_repair_config.json"
-        if config_path.exists() and read(config_path) != contract:
-            raise ValueError("Coverage-repair code/inputs changed; inspect before resuming")
-        dump(config_path, contract)
+        save_repair_contract(config_path, contract)
         backup = batch / "coverage_id_repair_original"
         backup.mkdir(exist_ok=True)
         for name in ("aggregate_summary.json", "progress.json", "by_subflow.csv", "assessments.json"):
@@ -243,9 +351,19 @@ def run(args):
         gate = Gate(args.qps)
         args.model = original["model"]
         for flow in ref["subflows"]:
+            audit = None
             try:
                 audit = audit_locations(batch, flow, previous.get(flow, {}))
-                source, rules_dir = extraction_locations(audit)
+                _, existing_rules = extraction_locations(audit)
+                extraction_done = read(existing_rules / "summary.json").get("complete")
+                if not extraction_done or not (audit / "reference/reference.json").exists():
+                    states[flow] = {"status": "running", "phase": "resume_extraction", "audit_dir": str(audit)}
+                    aggregate(batch, ref, all_rows, states)
+                    resume_extraction(audit, batch, flow, ref, args)
+                source, rules_dir = require_complete_extraction(audit)
+                if initialize_coverage(audit, original, args):
+                    contract["input_freezes"][flow] = sha(audit / "coverage/input_freeze.json")
+                    save_repair_contract(config_path, contract, newly_initialized={flow})
                 ref_path = audit / "reference/reference.json"
                 local_ref, methods, candidates = load_inputs(ref_path, source, rules_dir, "procedural_rule")
                 # This validates all frozen inputs and every already-successful raw response.
@@ -283,6 +401,8 @@ def run(args):
                 states[flow] = {"status": "completed", "audit_dir": str(audit)}
             except (OSError, ValueError, RuntimeError, KeyError, TypeError) as exc:
                 states[flow] = {"status": "failed", "error": str(exc)}
+                if audit is not None:
+                    states[flow]["audit_dir"] = str(audit)
                 print(f"FAILED {flow}: {exc}", flush=True)
             finally:
                 aggregate(batch, ref, all_rows, states)

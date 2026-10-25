@@ -95,6 +95,16 @@ nohup python -u scripts/repair_guideline_coverage_ids.py \
 
 补跑会等待同目录原任务退出，完成后原位更新 `aggregate_summary.json`、`by_subflow.csv`、逐项证据和各场景 provisional_summary/review CSV；已有复核字段保留。相同命令可以续跑。该工具也支持原始 `run_abcd_guideline_batch.py` 目录。若抽取尚不完整，该场景会明确报错，需先完成抽取，不会用本工具绕过。
 
+## 2026-10-26：account_access 的容器格式失败与阶段恢复
+
+如果 `rules/summary.json` 的 `complete=false` 且错误为 `Expected JSON object with a rules list`，说明仍有抽取失败，不能先评测。旧覆盖补跑入口只用 coverage/protocol.json 判断平铺目录，导致在该场景尚未评测时错误拼出 `/run/reference/reference.json`，掩盖了真实上游错误。
+
+更新两个文件 `repair_guideline_citations.py`、`repair_guideline_coverage_ids.py` 后，仍使用同一条覆盖补跑命令。入口按实际保存的 source/rules/latest_extraction 识别平铺或嵌套目录；错误状态保留实际 audit_dir。若已知引用补跑抽取未完成，先读取其 source_audit_dir 和原始参考 hash，仅恢复失败块；完成后才创建参考副本和覆盖协议。初始化覆盖使用 dry-run，不调用模型，后续直接按短 ID 判定。已完成场景、成功抽取块和成功覆盖批次保留。
+
+新的容器解析仅支持可证明不改变内容的 JSON 包装转换：完整规则数组包为 rules 对象、完整单条 typed rule 包成数组、一层 JSON 字符串解码。每条规则仍需通过原字段和逐字引文校验。`null`、缺失 rules、未知 schema、字符串规则列表、不完整 JSON 均不解释为空。原明确的空数组可解释为模型返回空规则集合。缓存中的失败响应优先重新校验，能转换则无需新调用；否则首次重试就明确要求抽取任务与顶层 rules 数组，避免执行源 skill 的任务说明。
+
+兼容升级只允许已知旧补跑脚本的确切代码指纹，以及冻结输入/模型/base prompt 不变的解析器恢复。旧配置另存；已存在的 input_freeze hash 不允许改变。新完成的场景可以在明确初始化后加入新的冻结记录。正常续跑无需新建总结果目录，不重跑已完成的九个场景。
+
 ## 全量 coarse subflow 批量入口
 
 入口 `scripts/run_abcd_guideline_batch.py` 依赖现有 v4 工具及 JSON 失败块补跑脚本，无需覆盖公司客户端。先生成目录配置：
