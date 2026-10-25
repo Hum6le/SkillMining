@@ -74,6 +74,27 @@ python scripts/repair_guideline_citations.py \
 
 批量入口、引用补跑与旧 JSON 补跑链路已用模拟模型响应验证，尚未替代服务器上的实际 API 验证。
 
+## 覆盖判断中的未知／重复 rule ID
+
+`Unknown/duplicate rule ID in .../support_rule_ids` 是同一条校验覆盖两种不同情况：列表内重复 ID，或引用不存在的 ID。不能仅从这一行判断是哪一种。工具 `scripts/repair_guideline_coverage_ids.py` 自动检查原始失败回答，并逐项记录诊断：
+
+- 已存在的 ID 在同一列表内重复，按集合语义去重；不改变 status、reason 或证据集合。不同参考条目间复用同一个正确规则 ID 仍合法。
+- 未知 ID 不做猜配、前缀匹配或丢弃。仅失败批次重新调用模型，用 `U1...`、`R1...` 短别名表示本批参考条目和已冻结候选规则。程序按显式映射恢复真实 ID，再调用原始完整校验器。覆盖的条件、字段和冲突要求保持原样。
+- 若短别名批量响应仍失败，细分参考条目直到单条重判，候选规则不做 top-k 截断；任何条目失败则原批次仍失败，不计 absent。
+
+在现有结果目录直接补覆盖评测，不重复抽取：
+
+```bash
+nohup python -u scripts/repair_guideline_coverage_ids.py \
+  --batch-dir outputs/abcd_guideline_all_citations_v1 \
+  --workers 4 --qps 1.8 \
+  > outputs/abcd_guideline_all_citations_v1_idrepair.log 2>&1 < /dev/null &
+```
+
+已完成批次先通过冻结输入与原始响应校验，然后直接保留；原始 skill、抽取规则及 input_freeze 四个文件不改。旧失败批次另存在每个场景的 `coverage/id_repairs/<batch_name>/original.json`，同目录 `diagnostics.json` 区分重复与未知，`request_*.json` 记录新调用、别名映射及原始响应。完成后的批次附带 `repair` 来源。批次根目录 `coverage_id_repair_original/` 保留补跑前的汇总和状态；`coverage_id_repair_config.json` 显式记录此输出修复扩展的版本、核心校验器和输入冻结 hash，没有把新增调用冒充原始脚本调用。
+
+补跑会等待同目录原任务退出，完成后原位更新 `aggregate_summary.json`、`by_subflow.csv`、逐项证据和各场景 provisional_summary/review CSV；已有复核字段保留。相同命令可以续跑。该工具也支持原始 `run_abcd_guideline_batch.py` 目录。若抽取尚不完整，该场景会明确报错，需先完成抽取，不会用本工具绕过。
+
 ## 全量 coarse subflow 批量入口
 
 入口 `scripts/run_abcd_guideline_batch.py` 依赖现有 v4 工具及 JSON 失败块补跑脚本，无需覆盖公司客户端。先生成目录配置：
