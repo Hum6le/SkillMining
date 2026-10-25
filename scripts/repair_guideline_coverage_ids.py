@@ -8,6 +8,7 @@ The source, extracted rules and input-freeze files are not changed.
 from __future__ import annotations
 
 import argparse
+import csv
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
 import json
@@ -24,7 +25,7 @@ from scripts import benchmark_abcd_skill_guidelines as benchmark
 from scripts import repair_guideline_citations as citation_repair
 from scripts.run_abcd_guideline_batch import METHODS, aggregate, collect_coverage
 from scripts.repair_guideline_citations import configure, extraction_locations, wait_for_batch
-from skill_mining.guideline_coverage import coverage_messages, validate_assessments
+from skill_mining.guideline_coverage import coverage_messages, summarize, validate_assessments
 
 VERSION = "coverage_id_repair_v1"
 LEGACY_RESOLVER_SCRIPTS = {
@@ -32,6 +33,8 @@ LEGACY_RESOLVER_SCRIPTS = {
     "8f0a1ebfe7589a9747aebe78296ff5b131e5b84777b8b6a7b9864cb78fb4bf36",
     "137e52b7b6b5b208db0e0fc999008c5e2eb8c2adcab2e610535cba9949516182",
     "900c0c453d9124d78be7981c07487f81a318215992d498f5d943c63fbd218686",
+    "0f344139e7292c4baaf756c7e94536b7562d0ce4ca78dbfc428d791b41779308",
+    "f9e4f34cd2275e5e2be541db2488faa27c7f0b6b12040c492d15a44eb54c6095",
 }
 ID_FIELDS = ("support_rule_ids", "conflict_rule_ids", "condition_rule_ids")
 ROW_FIELDS = ("reference_id", "status", "reason", *ID_FIELDS)
@@ -205,6 +208,87 @@ def initialize_coverage(audit, original, args):
     return True
 
 
+def export_report(batch, ref, all_rows, states):
+    included, excluded = [], []
+    for flow in ref["subflows"]:
+        small = {**ref, "subflows": [flow], "units": [u for u in ref["units"] if u["flow"] == flow]}
+        if summarize(small, METHODS, all_rows.get(flow, []))["complete"]:
+            included.append(flow)
+        else:
+            excluded.append(flow)
+    target = summarize(ref, METHODS, [r for f in ref["subflows"] for r in all_rows.get(f, [])])
+    complete = None
+    if included:
+        small = {**ref, "subflows": included, "units": [u for u in ref["units"] if u["flow"] in included]}
+        complete = summarize(small, METHODS, [r for f in included for r in all_rows.get(f, [])])
+    result = {"label_status": "model_proposal_pending_review", "target_subflows": ref["subflows"],
+        "target_complete": target["complete"], "included_common_subflows": included, "excluded_subflows": excluded,
+        "complete_case_summary": complete, "full_target_summary": target,
+        "remaining_errors": {f: states[f] for f in excluded},
+        "reporting_rule": "Primary table uses only subflows fully assessed for ALL three methods. Missing data are N/A, never absent/zero. Full-target scores remain null until complete.",
+        "unit": "official guideline step/instruction; not atomic rules"}
+    dump(batch / "report_summary.json", result)
+    table = []
+    if complete:
+        for method in ("awm", "trace2skill", "ours"):
+            own = complete["methods"][method]
+            cond = own["conditional_action"]
+            table.append({"method": method, "included_subflows": len(included), "all_covered": own["covered"],
+                "all_units": own["reference_units"], "all_coverage_pct": 100 * own["strict_coverage"],
+                "conditional_covered": cond["covered"], "conditional_units": cond["reference_units"],
+                "conditional_coverage_pct": None if cond["strict_coverage"] is None else 100 * cond["strict_coverage"],
+                "conflicting": own["conflicting"]})
+    fields = ["method", "included_subflows", "all_covered", "all_units", "all_coverage_pct", "conditional_covered", "conditional_units", "conditional_coverage_pct", "conflicting"]
+    with (batch / "report_table.csv").open("w", encoding="utf-8-sig", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(table)
+    text = ["# ABCD guideline coverage", "", "Label status: model proposals, pending review.",
+        f"Target: {len(ref['subflows'])} subflows; primary table: {len(included)} common, fully assessed subflows.",
+        "Included: " + (", ".join(included) or "none"),
+        "Excluded/incomplete: " + (", ".join(excluded) or "none"), "",
+        "| Method | Conditional covered / units | Conditional coverage | All covered / units | All coverage |",
+        "|---|---:|---:|---:|---:|"]
+    for row in table:
+        cp = "N/A" if row["conditional_coverage_pct"] is None else f"{row['conditional_coverage_pct']:.1f}%"
+        text.append(f"| {row['method']} | {row['conditional_covered']}/{row['conditional_units']} | {cp} | {row['all_covered']}/{row['all_units']} | {row['all_coverage_pct']:.1f}% |")
+    if not table:
+        text.append("| No common complete subflow | N/A | N/A | N/A | N/A |")
+    text += ["", "Incomplete subflows are excluded for all three methods together. They are not counted as uncovered.",
+             "The full-target denominators and unavailable scores are retained in report_summary.json.",
+             "This is saved-skill coverage against official-text units, not task success or a human-reviewed gold score."]
+    for flow in excluded:
+        text += ["", flow + ": " + str(states[flow].get("error", "incomplete"))]
+    report = "\n".join(text) + "\n"
+    (batch / "REPORT.md").write_text(report, encoding="utf-8")
+    print(report, flush=True)
+    return result
+
+
+def report_existing_locked(args):
+    batch = args.batch_dir.resolve()
+    original, _ = batch_origin(batch)
+    ref = read(batch / "reference_snapshot.json")
+    if original["reference"] != ref:
+        raise ValueError("Batch reference changed")
+    previous = read(batch / "progress.json")["flows"]
+    all_rows, states = {}, {}
+    for flow in ref["subflows"]:
+        try:
+            audit = audit_locations(batch, flow, previous.get(flow, {}))
+            require_complete_extraction(audit)
+            all_rows[flow] = collect_coverage(audit, flow, ref, provider=original["provider"], model=original["model"], require_complete=False)
+            small = {**ref, "subflows": [flow], "units": [u for u in ref["units"] if u["flow"] == flow]}
+            done = summarize(small, METHODS, all_rows[flow])["complete"]
+            states[flow] = {"status": "reused" if done else "failed", "audit_dir": str(audit)}
+            if not done:
+                states[flow]["error"] = "Coverage batches are incomplete"
+        except (OSError, ValueError, RuntimeError, KeyError, TypeError) as exc:
+            states[flow] = {"status": "failed", "error": str(exc)}
+    aggregate(batch, ref, all_rows, states)
+    return export_report(batch, ref, all_rows, states)
+
+
 def batch_origin(batch):
     if (batch / "batch_config.json").exists():
         return read(batch / "batch_config.json"), batch / "batch_config.json"
@@ -288,7 +372,7 @@ def repair_one(path, method, flow, units, rules, args, gate, client):
                 dump(repair_dir / f"request_{counter:04d}.json", {"ok": False, "messages": messages, "raw_response": raw,
                     "unit_alias_map": unit_map, "rule_alias_map": rule_map, "error": error})
                 errors.append({"error": error, "raw": raw, "request_file": f"request_{counter:04d}.json"})
-        if len(selected) > 1:
+        if len(selected) > 1 and not getattr(args, "final_attempt", False):
             midpoint = len(selected) // 2
             return judge(selected[:midpoint]) + judge(selected[midpoint:])
         raise RuntimeError("Single-unit coverage still failed: " + str(error))
@@ -324,6 +408,10 @@ def repair_one(path, method, flow, units, rules, args, gate, client):
 def run(args):
     batch = args.batch_dir.resolve()
     with wait_for_batch(batch):
+        final_record = batch / "final_attempt_record.json"
+        if getattr(args, "final_attempt", False) and final_record.exists():
+            print("Final repair pass already recorded; reporting cached evidence without API calls", flush=True)
+            return report_existing_locked(args)
         original, origin_path = batch_origin(batch)
         ref = read(batch / "reference_snapshot.json")
         if original["reference"] != ref:
@@ -340,6 +428,10 @@ def run(args):
                     "input_freezes": input_freezes}
         config_path = batch / "coverage_id_repair_config.json"
         save_repair_contract(config_path, contract)
+        if getattr(args, "final_attempt", False):
+            args.retries = 1
+            dump(final_record, {"status": "started", "script_sha256": sha(Path(__file__)),
+                "policy": "One request per remaining failed chunk/batch; subsequent final-attempt invocations report only"})
         backup = batch / "coverage_id_repair_original"
         backup.mkdir(exist_ok=True)
         for name in ("aggregate_summary.json", "progress.json", "by_subflow.csv", "assessments.json"):
@@ -408,6 +500,12 @@ def run(args):
                 aggregate(batch, ref, all_rows, states)
         dump(batch / "coverage_id_repair_summary.json", {"version": VERSION, "flows": states,
              "complete": all(s["status"] in ("completed", "reused") for s in states.values())})
+        report = export_report(batch, ref, all_rows, states)
+        if getattr(args, "final_attempt", False):
+            dump(final_record, {"status": "finished", "target_complete": report["target_complete"],
+                "included_common_subflows": report["included_common_subflows"], "excluded_subflows": report["excluded_subflows"],
+                "policy": "No further automatic repair; rerun final-attempt or report-only to read cached evidence"})
+            return report
         if any(s["status"] == "failed" for s in states.values()):
             raise RuntimeError("Some subflows still failed; successful batches retained. See progress.json and id_repairs diagnostics.")
         print("Coverage complete: " + str(batch / "aggregate_summary.json"), flush=True)
@@ -420,13 +518,25 @@ def main():
     parser.add_argument("--qps", type=float, default=1.8)
     parser.add_argument("--retries", type=int, default=3)
     parser.add_argument("--max-prompt-chars", type=int, default=400000)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--final-attempt", action="store_true", help="One last bounded pass, then report complete common subflows; never repeat API calls on rerun")
+    mode.add_argument("--report-only", action="store_true", help="No API calls; validate cached evidence and export a common-subflow report")
     args = parser.parse_args()
     if args.workers < 1 or args.qps <= 0 or args.retries < 1 or args.max_prompt_chars < 1:
         parser.error("Positive workers/QPS/retries/prompt budget required")
     try:
-        run(args)
+        if args.report_only:
+            with wait_for_batch(args.batch_dir.resolve()):
+                report_existing_locked(args)
+        else:
+            run(args)
     except (OSError, ValueError, RuntimeError, KeyError, TypeError) as exc:
         print("Coverage repair stopped: " + str(exc), file=sys.stderr)
+        if args.final_attempt:
+            print("Final pass stopped; exporting verified cached results without additional API calls", flush=True)
+            with wait_for_batch(args.batch_dir.resolve()):
+                report_existing_locked(args)
+            return
         raise SystemExit(2)
 
 

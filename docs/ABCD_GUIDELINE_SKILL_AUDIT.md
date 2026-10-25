@@ -105,6 +105,29 @@ nohup python -u scripts/repair_guideline_coverage_ids.py \
 
 兼容升级只允许已知旧补跑脚本的确切代码指纹，以及冻结输入/模型/base prompt 不变的解析器恢复。旧配置另存；已存在的 input_freeze hash 不允许改变。新完成的场景可以在明确初始化后加入新的冻结记录。正常续跑无需新建总结果目录，不重跑已完成的九个场景。
 
+## 最后一轮与直接报告
+
+`--final-attempt` 将本轮剩余抽取块和覆盖批次各限制为一次新请求；覆盖批次失败后也不再递归细分重判。已完成块/批次和可机械修复的缓存照常复用。抽取类别标签只允许大小写、空格、连字符到标准枚举的拼写规范化；真正未知的 origin/category 不做语义猜配，也不默认升级为 procedural_rule。重试明确列出合法枚举并要求单一值，原始值和规范化保留在响应记录中。
+
+```bash
+python -u scripts/repair_guideline_coverage_ids.py \
+  --batch-dir outputs/abcd_guideline_all_citations_v1 \
+  --final-attempt --workers 4 --qps 1.8
+```
+
+根目录 `final_attempt_record.json` 记录最后一轮。一旦开始过，同一 final-attempt 命令再次执行只导出缓存结果，不再调用 API。若启动后意外中断，下一次也遵守该限制，不自动继续 API 修复。
+
+最后一轮无论是否补齐目标，都会生成并在控制台打印 `REPORT.md`，另存 `report_table.csv` 和 `report_summary.json`。主表只使用三方法全部完成的共同 subflow。完整目标的分母和未完成状态另存 full_target_summary，不将错误样本算 absent/零分。若仅 account_access 未完成，则主表为其余九个场景，343 个有效参考单元，其中 125 个含条件单元；account_access 对三个方法同时排除并明确标记，不伪称全十场景结果。若全部补齐，则主表自动覆盖十个场景。
+
+`--report-only` 完全不调用 API，直接验证并汇总现有证据：
+
+```bash
+python scripts/repair_guideline_coverage_ids.py \
+  --batch-dir outputs/abcd_guideline_all_citations_v1 --report-only
+```
+
+这些结果仍为待复核的模型判定。最终模式以“生成有明确范围的报告”为结束条件，退出成功不代表全目标 complete=true；应查看 report_summary.json 的 target_complete/included_common_subflows/excluded_subflows。
+
 ## 全量 coarse subflow 批量入口
 
 入口 `scripts/run_abcd_guideline_batch.py` 依赖现有 v4 工具及 JSON 失败块补跑脚本，无需覆盖公司客户端。先生成目录配置：

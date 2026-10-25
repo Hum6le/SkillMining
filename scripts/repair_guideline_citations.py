@@ -24,13 +24,15 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts.extract_skill_knowledge import Gate, dump, read, read_lines, sha, write_lines
 from scripts.run_abcd_guideline_batch import METHODS, aggregate, collect_coverage, exclusive_output, path_at_root
-from skill_mining.knowledge_extraction import FIELDS, merge_rules, validate_response
+from skill_mining.knowledge_extraction import CATEGORIES, FIELDS, ORIGINS, merge_rules, validate_response
 
 PROTOCOL = "literal_quote_extraction_repair_v1"
-CONTAINER_POLICY = "lossless_typed_rule_containers_v1"
+CONTAINER_POLICY = "lossless_rule_containers_and_label_spelling_v2"
 LEGACY_QUOTE_SCRIPTS = {
     "0e4562f39b7984aea3af979d259df14aea275619d16e3cdea1c24a34f883b3e2",
     "774c876153f87cc778755ec008ecbb36103431b3dc75322e8a8f1f048f0bc314",
+    "e6e52f3a9a6749ad28593e4c6193acbb4aaa0cfc2b59755e1fbe6b44c28601ca",
+    "fd89a50e8b8ac3a65e7403ce2fdf28a789c8f2d74d161f7b5dca2d8dd02721a0",
 }
 
 
@@ -56,6 +58,8 @@ def quote_messages(chunk, error=None):
         "resource_text": chunk["text"], "display_only_node_aliases": chunk.get("node_context", {}).get("aliases", {})}
     if error:
         user["previous_validation_error"] = str(error)[:800]
+        user["allowed_category_values"] = sorted(CATEGORIES)
+        user["allowed_origin_values"] = sorted(ORIGINS)
     messages = [{"role": "system", "content": system}, {"role": "user", "content": json.dumps(user, ensure_ascii=False)}]
     if error:
         messages.append({"role": "user", "content": (
@@ -63,7 +67,10 @@ def quote_messages(chunk, error=None):
             'Return a complete JSON object with a rules ARRAY, exactly {"rules":[...]}. '
             'Each rule must contain all fields in return_schema and an exact quote from resource_text. '
             'Use {"rules":[]} only if there are no explicit statements to extract. Do not return null, an action payload, '
-            'a prose summary, a skills list, or an object without rules. Preserve conditions and every supported statement.')})
+            'a prose summary, a skills list, or an object without rules. Preserve conditions and every supported statement. '
+            'category must be ONE exact string from allowed_category_values; origin must be ONE exact string from allowed_origin_values. '
+            'The pipe-separated strings in return_schema describe alternatives: never copy the whole pipe-separated string. '
+            'Do not invent label names or promote examples to procedural_rule merely to pass validation.')})
     return messages
 
 
@@ -92,6 +99,16 @@ def normalize_rule_container(raw):
         if isinstance(data, dict):
             shape += f", keys={list(data)[:12]!r}, rules_type={type(data.get('rules')).__name__}"
         raise ValueError('Expected {"rules":[...]}; ' + shape + "; null/missing/unknown schemas are not treated as empty")
+    for index, row in enumerate(data["rules"]):
+        if not isinstance(row, dict):
+            continue
+        for field, allowed in (("category", CATEGORIES), ("origin", ORIGINS)):
+            value = row.get(field)
+            if isinstance(value, str):
+                spelling = re.sub(r"[ -]+", "_", value.strip().casefold())
+                if spelling in allowed and spelling != value:
+                    row[field] = spelling
+                    operations.append({"rule_index": index, "field": field, "from": value, "to": spelling})
     return data, operations
 
 
@@ -113,6 +130,9 @@ def validate_quotes(raw, chunk, doc):
     for row in data["rules"]:
         if not isinstance(row, dict):
             raise ValueError("Expected a rule object")
+        if row.get("category") not in CATEGORIES or row.get("origin") not in ORIGINS:
+            raise ValueError(f"Unknown category/origin: category={row.get('category')!r}, origin={row.get('origin')!r}; "
+                             f"choose one category from {sorted(CATEGORIES)!r} and one origin from {sorted(ORIGINS)!r}")
         quote = row.get("quote")
         if not isinstance(quote, str) or not quote.strip() or quote not in chunk["text"]:
             raise ValueError("Quote must be a verbatim contiguous substring of resource_text; do not return line numbers")
