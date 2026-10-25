@@ -43,6 +43,49 @@ nohup python -u scripts/repair_abcd_guideline_extraction.py \
 
 最多三轮，仍失败则明确停止，不补括号猜测 JSON，不丢弃坏行，不把未完成算 absent。全部抽取完成后继续执行官方参考覆盖建议。根目录 `latest_extraction.json` 指出当前实际 source/rules 路径；覆盖结果写入 `coverage/`。同一条命令可续跑，成功块不重复调用 LLM。此流程仅以模拟响应验证过，不代表已在公司服务器完成实际补跑。
 
+## 全量 coarse subflow 批量入口
+
+入口 `scripts/run_abcd_guideline_batch.py` 依赖现有 v4 工具及 JSON 失败块补跑脚本，无需覆盖公司客户端。先生成目录配置：
+
+```bash
+python scripts/run_abcd_guideline_batch.py --write-template abcd_guideline_batch.json
+```
+
+编辑 JSON 中的 `methods`：每种方法既可使用目录模板（`{flow}` 自动替换成 coarse subflow），也可用 `{"account_access": "一个独立目录", "order_issue": "另一个独立目录", ...}` 逐场景配置。**Ours 不要求有统一父目录**：新模板已列出全部十个 flow，分别把 `methods.ours.<flow>` 的 null 填成实际最终产物目录即可；已经 reuse 的场景可以保留 null。Ours 必须指向各场景选定的最终 arm，不能指向包含多个 ablation 的公共父目录。AWM、Trace2Skill 示例填入之前已知的运行目录，但仍需以服务器实际目录为准。`*` 通配符必须唯一匹配目录，不会自动挑最新文件夹。
+
+`overrides` 支持 `{"account_access": {"ours": "单独的最终产物目录"}}` 覆盖模板。`reuse` 支持 `{"shipping_issue": "outputs/abcd_guideline_shipping_core_jsonfix_v1"}` 复用已经完成的完整三方法审计；它会逐字重验原始引用、冻结快照、参考条目和原始覆盖判定，不读取一个汇总百分比就当作完成。复用来源的 provider/model/参考协议须一致。要重做某个场景，从 reuse 中删除该条；其三个产物路径仍需有效。
+
+先零 LLM 调用预检查，再后台运行：
+
+```bash
+python scripts/run_abcd_guideline_batch.py \
+  --manifest abcd_guideline_batch.json --all --dry-run
+
+nohup python -u scripts/run_abcd_guideline_batch.py \
+  --manifest abcd_guideline_batch.json --all \
+  --provider existing --workers 4 --qps 1.8 \
+  --output-dir outputs/abcd_guideline_all_v1 \
+  > outputs/abcd_guideline_all_v1.log 2>&1 < /dev/null &
+```
+
+预检查会扫描全部配置、列出实际文件、拒绝缺失/多重匹配/混合 Ours arm，并验证复用结果，任一出错则不会调用 LLM。正式运行时先检查 workflow 配置，每个 subflow 独立运行，场景内共享 workers/QPS；不会同时开启 10 组 workers。初始分块为约 1600 字符，失败场景自动调用细分补跑脚本。每个输出目录有操作系统文件锁，防止重复启动同一批次；失败退出后锁自动释放。成功请求有缓存，同一命令可断点续跑。
+
+结果：
+
+- `aggregate_summary.json`：全局严格覆盖、含条件单元覆盖、各场景/类别、整体及条件覆盖的 flow macro；单场景失败不会从分母删去，未完成全局分数为 null。
+- `by_subflow.csv`：每个 subflow × 方法一行，包含分母、完整覆盖数、条件完整覆盖数及比率（0–1）。
+- `assessments.json`：全部可用的逐项判定与源证据；标签仍为模型建议待复核。
+- `progress.json`：已完成/失败场景、当前阶段、runner PID 和每个场景日志位置。
+- `flows/<flow>/run/`：单场景原始参考、扫描和抽取产物；如需细分补跑，位于同级 `repaired/`。
+- `logs/<flow>.log`：单场景 API 抽取及覆盖日志。
+
+```bash
+python scripts/run_abcd_guideline_batch.py \
+  --output-dir outputs/abcd_guideline_all_v1 --status
+```
+
+默认处理全部 10 个 coarse subflow，也可用 `--subflows account_access,order_issue`。改变产物、模型、参考或核心脚本后应使用新输出目录；workers/QPS 可在停止后调整。当前全量参考为 359 个有效单元、其中 129 个含条件单元，三方法共 1077 项判定。已有 shipping_issue 若通过复用校验，可免去该场景的抽取和模型覆盖调用。跨场景运行与汇总已用模拟 LLM 响应验证，实际产物与 API 仍需在服务器预检查和执行。
+
 ## 本次检查补齐的部分
 
 - ABCD `subflow/coarse_flow` 元数据识别；`--subflows` 与 `--families` 等价。

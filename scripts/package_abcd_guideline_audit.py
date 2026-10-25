@@ -13,6 +13,7 @@ FILES = [
     'scripts/package_abcd_guideline_audit.py', 'skill_mining/knowledge_extraction.py',
     'scripts/recover_abcd_guideline_audit.py',
     'scripts/repair_abcd_guideline_extraction.py', 'tests/test_guideline_extraction_repair.py',
+    'scripts/run_abcd_guideline_batch.py', 'tests/test_abcd_guideline_batch.py',
     'skill_mining/guideline_coverage.py', 'docs/ABCD_GUIDELINE_SKILL_AUDIT.md',
     'docs/SKILL_KNOWLEDGE_EXTRACTION.md', 'tests/test_knowledge_extraction.py',
     'tests/test_abcd_guideline_coverage.py', 'data/eval/abcd/data/guidelines.json',
